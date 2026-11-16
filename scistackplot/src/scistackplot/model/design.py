@@ -110,6 +110,7 @@ DESIGN_FIELDS: dict[str, SyncClass] = {
     "location_filter": _D,
     "factor_variables": _D,
     "level_groups": _D,
+    "where_check": _D,
 }
 
 #: What the banner calls each design field.
@@ -129,6 +130,7 @@ LABELS: dict[str, str] = {
     "location_filter": "Schema locations",
     "factor_variables": "Joined factors",
     "level_groups": "Combines",
+    "where_check": "where= check",
 }
 
 

@@ -186,6 +186,15 @@ def generate_plot_function(
     settle it (``autosize.settle`` at the spec's size), and the chosen sizes
     are emitted as literals: the generated code does not search.
     """
+    if spec.where_check:
+        # The check's factors are attached by the source and are not mirrored
+        # here (synthetic-factors invariant 4): the function would draw a
+        # different figure from the one on screen. `capabilities` says so too.
+        raise ValueError(
+            "A where= check cannot be exported as code: its Yes/No factors are "
+            "not part of the exported function. Apply the filter to the node, "
+            "then plot normally."
+        )
     auto, note = _export_auto(spec, table)
     token = _EXPORT_AUTO.set(auto.reference if auto is not None else None)
     try:

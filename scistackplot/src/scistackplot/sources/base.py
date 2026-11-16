@@ -20,6 +20,7 @@ from .dedup import SingleFlight
 from ..text.framesize import format_extent, frame_extent
 from ..model.spec import FactorVariable
 from ..model.table import LongTable
+from ..model.where_check import WhereCheck
 
 LAYER = "scistackplot"
 
@@ -78,6 +79,7 @@ class DataSource(Protocol):
         *,
         x_measure: str | None = None,
         factor_variables: "list[FactorVariable] | None" = None,
+        where_check: "WhereCheck | None" = None,
     ) -> LongTable:
         """The long-format table for a plot's measures.
 
@@ -174,6 +176,7 @@ class BaseSource:
         *,
         x_measure: str | None = None,
         factor_variables: "list[FactorVariable] | None" = None,
+        where_check: "WhereCheck | None" = None,
     ) -> LongTable:
         """The long table for these measures, built once per distinct request.
 
@@ -211,13 +214,15 @@ class BaseSource:
         # never reached.
         self._revalidate(
             [*measures, *([x_measure] if x_measure else []),
-             *(group.variable for group in (factor_variables or ()))]
+             *(group.variable for group in (factor_variables or ())),
+             *(f.variable for f in (where_check.filters if where_check else ()))]
         )
         memo = self._current_table_cache()
         key = (
             tuple(measures),
             x_measure,
             tuple(factor_variables or ()),
+            where_check,
         )
         label = f"get_table({', '.join(measures)})"
         if key in memo:
@@ -242,7 +247,10 @@ class BaseSource:
             with Log.timer(label, layer=LAYER) as timer:
                 with timer.phase("build_table"):
                     table = self._build_table(
-                        measures, x_measure=x_measure, factor_variables=factor_variables
+                        measures,
+                        x_measure=x_measure,
+                        factor_variables=factor_variables,
+                        where_check=where_check,
                     )
                     table = self._attach_project_sources(table)
                 # Size the result in cells and SAMPLES, not just rows: a row count
@@ -379,11 +387,13 @@ class BaseSource:
         *,
         x_measure: str | None = None,
         factor_variables: "list[FactorVariable] | None" = None,
+        where_check: "WhereCheck | None" = None,
     ) -> LongTable:
         # `factor_variables` is accepted and ignored: a flat table's factors are
         # already columns of every row, so there is nothing to join in
         # (`groupable_with` returns none). Accepting it keeps one call shape for
         # every source rather than making callers branch on which they hold.
+        # `where_check` likewise: a flat table has no variable to check a filter against.
         table = self._table()
         requested = [*measures, *([x_measure] if x_measure else [])]
         unknown = [m for m in requested if m not in table.measure_names]

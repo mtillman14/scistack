@@ -114,7 +114,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     dry_run = opts.dry_run;
     do_save = opts.save;
     as_table_raw = opts.as_table;
-    where_filter = opts.where;
+    where_filter = scidb.all_of(opts.where);  % a cell means AND
 
     % --- Resolve function name + source hash (needed by Step 0's log
     %     lines and error messages, so this runs ahead of everything else,

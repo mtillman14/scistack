@@ -13,6 +13,8 @@ from scidb.run.foreach_config import RunOptions
 from scidb.provenance.graph import constants_identity_key
 from scifor.failures import ActionableError
 
+from scistack_gui.services import where_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -863,6 +865,9 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         or None,
         # The exact selection, beside the schema_filter projection above.
         locations=params.get("schema_selection") or None,
+        # The node's stored filters, as every other run path reads them.
+        where=where_service.matlab_where_for_node(db, _node_id, route="matlab run")
+        or None,
         output_types=output_types if output_types else None,
         project_root=project_root,
         entities_script=_entities_script(),
@@ -1202,6 +1207,10 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 # every step and ignored each node's selection.
                 "locations": pipeline_store.get_node_config(db, node_id).get(
                     "schemaSelection"
+                )
+                or None,
+                "where": where_service.matlab_where_for_node(
+                    db, node_id, route=f"matlab pipeline {pipeline_id}"
                 )
                 or None,
                 "parameter_names": _collect_declared_names(

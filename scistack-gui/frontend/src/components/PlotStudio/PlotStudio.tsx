@@ -280,6 +280,13 @@ export interface Props {
    */
   plotNode?: string
   /**
+   * Open as a where= check (whereCheck.ts): the node's filters and which one
+   * was clicked. Sent once with the opening `plot_describe`, which builds the
+   * figure and the table with the Yes/No factors. Never a dependency of the
+   * open effect: it is what the tab OPENED on.
+   */
+  whereCheck?: Record<string, unknown>
+  /**
    * Design-only: just the Data and Structure groups, editing a spec the CALLER
    * owns (StatStudio's rail; docs/claude/studio-unification.md). No figure,
    * no toolbar, no saved-plots rail, and no resolve: only the capability
@@ -1060,7 +1067,13 @@ export default function PlotStudio(props: Props) {
           Save data (CSV)
         </button>
         {!capabilities?.custom && (
-          <button type="button" style={styles.toolButton} onClick={handleExport}>
+          <button
+            type="button"
+            style={styles.toolButton}
+            onClick={handleExport}
+            disabled={capabilities?.code_export?.available === false}
+            title={capabilities?.code_export?.available === false ? capabilities.code_export.reason ?? undefined : undefined}
+          >
             Export code
           </button>
         )}
@@ -1070,7 +1083,13 @@ export default function PlotStudio(props: Props) {
             error. "Export code" stays: plot_export is db_optional and
             works from a CSV. */}
         {!csvPath && !capabilities?.custom && (
-          <button type="button" style={styles.toolPrimaryButton} onClick={handleAddToPipeline}>
+          <button
+            type="button"
+            style={styles.toolPrimaryButton}
+            onClick={handleAddToPipeline}
+            disabled={capabilities?.code_export?.available === false}
+            title={capabilities?.code_export?.available === false ? capabilities.code_export.reason ?? undefined : undefined}
+          >
             Add to pipeline
           </button>
         )}

@@ -47,6 +47,7 @@ from scistack_gui.domain.variant_resolver import (
 )
 from scistack_gui.project.step_names import step_name_of
 from scistack_gui.services.run_failures import RunFailures, on_error_from_config
+from scistack_gui.services import where_service
 from scistack_gui.services.run_report_service import matlab_reports_since, reports_wire
 from scistack_gui.stores import intent_store
 from scistack_gui.stores import pipeline_store as _ps
@@ -221,12 +222,6 @@ def _run_phase(run_id: str, phase: str):
         )
 
 
-class WhereFilterSpec(BaseModel):
-    variable: str  # variable type name, e.g. "Side"
-    op: str  # "==", "!=", "<", "<=", ">", ">=", "IN"
-    value: str  # always string, coerced on backend
-
-
 class RunRequest(BaseModel):
     function_name: str
     variants: list[dict] = []  # list of constants dicts; empty = run all known
@@ -237,7 +232,6 @@ class RunRequest(BaseModel):
     schema_selection: dict | None = None
     schema_level: list[str] | None = None  # which schema keys to iterate; None = all
     run_options: dict | None = None  # {dry_run, save, distribute}; all optional
-    where_filters: list[WhereFilterSpec] | None = None  # data filters for where= param
     # The canvas node the user actually clicked Run on. Optional for back-
     # compat, but required to disambiguate once >1 node shares function_name
     # with a different wiring (see execution_service.derive_target_for_node)
@@ -356,7 +350,6 @@ def _run_in_thread(
     schema_selection: dict | None = None,
     schema_level: list[str] | None = None,
     run_options: dict | None = None,
-    where_filters: list[WhereFilterSpec] | None = None,
     node_id: str | None = None,
     node_output_types: list[str] | None = None,
 ):
@@ -377,13 +370,12 @@ def _run_in_thread(
     """
     logger.info(
         "[run_thread] Thread started for run_id=%s, function=%s, variants=%d, "
-        "schema_level=%s, schema_selection=%s, where_filters=%s, run_options=%s",
+        "schema_level=%s, schema_selection=%s, run_options=%s",
         run_id,
         function_name,
         len(variants or []),
         schema_level,
         _summarize_selection(schema_selection),
-        len(where_filters) if where_filters else 0,
         run_options,
     )
     # Register this run so cancel_run/force_cancel_run can find it.
@@ -414,7 +406,7 @@ def _run_in_thread(
     if fn is None:
         return
     with _run_phase(run_id, "prepare"):
-        prep = _prepare_run(run, variants, schema_level, run_options, where_filters)
+        prep = _prepare_run(run, variants, schema_level, run_options)
     if prep is None:
         return
     with _run_phase(run_id, "execute"):
@@ -456,7 +448,6 @@ def _prepare_run(
     variants: list[dict],
     schema_level: list[str] | None,
     run_options: dict | None,
-    where_filters: list[WhereFilterSpec] | None,
 ) -> "_PreparedRun | None":
     """What this run executes and how, or None after ending the run (nothing
     to run). Each step is its own function, timed as ``prepare.<step>``."""
@@ -480,13 +471,17 @@ def _prepare_run(
     with _run_phase(run_id, "prepare.level"):
         level = _resolve_level(run, unique_targets, schema_level)
 
-    # Build where= argument from where_filters.
-    logger.info("[run_thread] Building where filters (run_id=%s)", run_id)
-    where_arg = _build_where(where_filters)
-    if where_arg:
-        logger.debug(
-            "[run_thread] Where filters built: %s (run_id=%s)", where_arg, run_id
-        )
+    # The node's STORED filters, the one route every run path reads
+    # (where_service). A row that cannot be used ends the run with its reason
+    # rather than running unfiltered.
+    with _run_phase(run_id, "prepare.where"):
+        try:
+            where_arg = where_service.where_for_node(
+                run.db, run.node_id, route="python run"
+            )
+        except ValueError as exc:
+            _end_run_early(run_id, str(exc), "unusable where= filter", cancelled=False)
+            return None
 
     logger.info(
         "[run_thread] Starting execution of %d target(s) for '%s' "
@@ -1286,38 +1281,6 @@ def notify_records_changed() -> None:
     push_message({"type": "dag_updated"})
 
 
-def _build_where(where_filters: list[WhereFilterSpec] | None):
-    """Convert frontend WhereFilterSpec list into scidb filter objects.
-
-    Returns None (no filter), a single Filter, or EachOf(filter1, filter2, ...).
-    """
-    if not where_filters:
-        return None
-
-    import ast
-
-    from scidb.model.filters import VariableFilter
-
-    def _coerce(s: str):
-        try:
-            return ast.literal_eval(s)
-        except (ValueError, SyntaxError):
-            return s
-
-    scidb_filters = []
-    for f in where_filters:
-        var_cls = registry.get_variable_class(f.variable)
-        val = _coerce(f.value)
-        scidb_filters.append(VariableFilter(var_cls, f.op, val))
-
-    if len(scidb_filters) == 1:
-        return scidb_filters[0]
-
-    from scidb import EachOf
-
-    return EachOf(*scidb_filters)
-
-
 def _summarize_selection(selection: dict | None) -> str:
     """Compact one-line summary of a schema selection for logging."""
     from scistack_gui.domain.schema_selection import as_selection, is_empty
@@ -1479,7 +1442,7 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
     logger.info("[run_service] start_run (%s) - Validating request", transport)
     logger.debug(
         "[run_service] Request: function_name=%s, node_id=%s, variants=%d, run_id=%s, "
-        "schema_selection=%s, schema_level=%s, run_options=%s, where_filters=%d, "
+        "schema_selection=%s, schema_level=%s, run_options=%s, "
         "language=%s",
         req.function_name,
         req.node_id,
@@ -1488,7 +1451,6 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
         _summarize_selection(req.schema_selection),
         req.schema_level,
         req.run_options,
-        len(req.where_filters) if req.where_filters else 0,
         req.language,
     )
 
@@ -1541,7 +1503,6 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
                 req.schema_selection,
                 req.schema_level,
                 req.run_options,
-                req.where_filters,
                 req.node_id,
                 req.output_types,
             )

@@ -55,6 +55,12 @@ export interface PlotTarget {
   plotNode?: string;
   plotFunction?: string;
   /**
+   * Open as a where= check (issue #13): the node's filters and which one was
+   * clicked. Opaque here, like `location`: the webview hands it to
+   * `plot_describe`, which builds the opening figure.
+   */
+  whereCheck?: Record<string, unknown>;
+  /**
    * Which database to plot from, as a session id. The canvas stamps its own
    * (see `dagPanel.ts`), so a plot opened from one pipeline reads that
    * pipeline's database even when another tab was focused last.
@@ -225,6 +231,18 @@ export class PlotPanel {
           return;
         }
 
+        if (method === 'open_plot_panel') {
+          // A where= check opened from an ordinary figure
+          // ("Check a where= filter…"): a sibling tab of the same session.
+          // Host-side: only the host can open a tab.
+          await vscode.commands.executeCommand('scistack.openPlotPanel', {
+            ...((msg.params ?? {}) as Record<string, unknown>),
+            sessionId: this.session.id,
+          });
+          this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          return;
+        }
+
         if (method === 'broadcast_panels') {
           // Plot <-> stats design sync: tell every tab of THIS session (never
           // another database's). Each tab decides whether the message is for it.
@@ -305,6 +323,10 @@ export class PlotPanel {
       return this.session.isPlotOnly ? what : `${what} · ${this.session.label}`;
     }
     if (this.target.csvPath) return `Plot — ${path.basename(this.target.csvPath)}`;
+    if (this.target.whereCheck && this.target.variable) {
+      const what = `where= check — ${this.target.variable}`;
+      return this.session.isPlotOnly ? what : `${what} · ${this.session.label}`;
+    }
     const variable = this.target.plotFunction
       ? `Plot — ${this.target.plotFunction}`
       : this.target.variable ? `Plot — ${this.target.variable}` : 'Plot';
@@ -338,6 +360,7 @@ export class PlotPanel {
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
       plotNode: this.target.plotNode ?? null,
+      whereCheck: this.target.whereCheck ?? null,
       from: this.target.from ?? null,
       statNode: this.target.statNode ?? null,
     });

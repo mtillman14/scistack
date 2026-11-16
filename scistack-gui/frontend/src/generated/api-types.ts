@@ -292,6 +292,7 @@ export interface ApiParams {
   set_schema_key_type: SchemaKeyTypeUpdate
   set_shown_argument: ShownArgument
   set_step_value: StepValueSet
+  set_where_filters: WhereFiltersUpdate
   share_as_library: ShareRequest
   share_library_defaults: LibraryPipelineRef
   start_matlab_sidecar_run: SidecarRunRequest
@@ -330,6 +331,7 @@ export interface ApiParams {
   variable_variants: VariableRef
   verify_reproduction: VerifyRequest
   watch_matlab_terminal_run: MatlabTerminalRunRequest
+  where_check_nodes: WhereCheckNodesRequest
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -961,6 +963,7 @@ export interface PlotSpec {
   style?: StyleOptions | null
   time_zone?: string
   variant_sets?: VariantSet[]
+  where_check?: WhereCheck | null
   x_measure?: string | null
   y_axis?: YAxis
 }
@@ -1267,6 +1270,31 @@ export interface VariantSet {
   variable?: string | null
 }
 /**
+ * ``scistackplot.WhereCheck``: the filters a figure is checking, and the
+ * function node they belong to.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "WhereCheckWire".
+ */
+export interface WhereCheck {
+  filters?: WhereCheckFilter[]
+  function_name?: string | null
+  node_id?: string | null
+}
+/**
+ * ``scistackplot.WhereCheckFilter``: one filter of a where= check.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "WhereCheckFilterWire".
+ */
+export interface WhereCheckFilter {
+  column?: string | null
+  enabled?: boolean
+  op?: string
+  value?: string
+  variable: string
+}
+/**
  * ``scistackplot.YAxis``. A limit is a number, or ISO date text on a
  * datetime axis.
  *
@@ -1308,6 +1336,7 @@ export interface DescribeRequest {
   csv_path?: string | null
   refresh?: boolean | null
   variable?: string | null
+  where_check?: object | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1836,6 +1865,14 @@ export interface StepValueSet {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "WhereFiltersUpdate".
+ */
+export interface WhereFiltersUpdate {
+  filters?: object[]
+  node_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "ShareRequest".
  */
 export interface ShareRequest {
@@ -1876,16 +1913,6 @@ export interface RunRequest {
   schema_level?: string[] | null
   schema_selection?: object | null
   variants?: object[]
-  where_filters?: WhereFilterSpec[] | null
-}
-/**
- * This interface was referenced by `ApiParams`'s JSON-Schema
- * via the `definition` "WhereFilterSpec".
- */
-export interface WhereFilterSpec {
-  op: string
-  value: string
-  variable: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -2207,4 +2234,11 @@ export interface MatlabTerminalRunRequest {
   label?: string | null
   node_id?: string | null
   run_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "WhereCheckNodesRequest".
+ */
+export interface WhereCheckNodesRequest {
+  variable: string
 }

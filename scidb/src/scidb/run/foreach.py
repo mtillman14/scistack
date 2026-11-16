@@ -77,7 +77,7 @@ from scifor import schema_types as _scifor_schema_types
 from scidb.run.selection_axis import SELECTION_PARAM, selection_axes_of
 from scidb.store.schema_values import schema_str, scidb_key_type_errors
 from scidb.model.variant import match_bare_name
-from scidb.model.filters import Filter
+from scidb.model.filters import Filter, as_filter
 from scidb.run.foreach_call import ForEachCall, RunContext, RunSelection
 from scidb.run.foreach_config import ForEachConfig, RunOptions
 from scidb.model.log import Log
@@ -384,7 +384,9 @@ def for_each(
         as_table=as_table,
         db=db,
         distribute=distribute,
-        where=where,
+        # A list means AND. Read here, before a deferred (pipeline=) step is
+        # registered, so a Step never holds the raw list.
+        where=as_filter(where),
         introspect=introspect,
         skip_computed=skip_computed,
         schema_filter=schema_filter,
@@ -505,6 +507,7 @@ def _normalize_where(where: Any) -> Any:
     """A string ``where=`` becomes a RawFilter that remembers the original
     string (for the version keys). An EachOf wrapper is left alone — its
     alternatives are normalized in their own runs."""
+    where = as_filter(where)  # a list means AND (filters.all_of)
     if not isinstance(where, str):
         return where
 

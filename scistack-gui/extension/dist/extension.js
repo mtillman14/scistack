@@ -42,15 +42,86 @@ var path6 = __toESM(require("path"));
 var import_child_process3 = require("child_process");
 var vscode6 = __toESM(require("vscode"));
 
+// src/schemaKeysText.ts
+function parseSchemaText(text2) {
+  const trimmed = text2.trim();
+  if (!trimmed)
+    return { branches: [], error: "Provide at least one schema key" };
+  const branches = trimmed.split(";").map(
+    (part) => part.split(",").map((k) => k.trim()).filter(Boolean)
+  );
+  const parent = /* @__PURE__ */ new Map();
+  for (const branch of branches) {
+    if (branch.length === 0)
+      return { branches, error: "A schema key branch cannot be empty." };
+    const seen = /* @__PURE__ */ new Set();
+    let previous = null;
+    for (const key of branch) {
+      if (seen.has(key)) {
+        return { branches, error: `Schema key '${key}' is repeated within the branch ${branch.join(", ")}.` };
+      }
+      seen.add(key);
+      if (parent.has(key) && parent.get(key) !== previous) {
+        return {
+          branches,
+          error: `Schema key '${key}' has two different parents: '${parent.get(key)}' and '${previous}'. A key sits under one parent.`
+        };
+      }
+      if (!parent.has(key))
+        parent.set(key, previous);
+      previous = key;
+    }
+  }
+  return { branches, error: null };
+}
+function formatSchemaText(branches) {
+  return branches.map((b) => b.join(", ")).join("; ");
+}
+function flatKeys(branches) {
+  const out = [];
+  for (const b of branches)
+    for (const k of b)
+      if (!out.includes(k))
+        out.push(k);
+  return out;
+}
+function schemaArg(branches) {
+  return branches.map((b) => b.join(",")).join(";");
+}
+function describeSchema(branches) {
+  if (branches.length === 1)
+    return `${branches[0].length} key(s): ${branches[0].join(" \u2192 ")}`;
+  return `${branches.length} branches: ` + branches.map((b) => b.join(" \u2192 ")).join("  |  ");
+}
+function declarationOf(branches) {
+  return branches.length === 1 ? branches[0] : branches;
+}
+function declarationArg(d) {
+  return isBranched(d) ? schemaArg(d) : d.join(",");
+}
+function declarationText(d) {
+  return isBranched(d) ? formatSchemaText(d) : d.join(", ");
+}
+function isBranched(d) {
+  return d.length > 0 && Array.isArray(d[0]);
+}
+
 // src/bundleImportCore.ts
+function isBranched2(schema) {
+  return schema.length > 0 && Array.isArray(schema[0]);
+}
 var BUNDLE_CLI_MODULE = "scistack_gui.bundle_cli";
 function buildInfoArgs(bundle) {
   return ["-m", BUNDLE_CLI_MODULE, "bundle-info", bundle, "--json"];
 }
 function buildImportArgs(c) {
   const args = ["-m", BUNDLE_CLI_MODULE, "import", c.bundle, "--into", c.into, "--json"];
-  if (c.schema && c.schema.length > 0)
-    args.push("--schema", ...c.schema);
+  if (c.schema && c.schema.length > 0) {
+    if (isBranched2(c.schema))
+      args.push("--schema", schemaArg(c.schema));
+    else
+      args.push("--schema", ...c.schema);
+  }
   for (const [from, to] of Object.entries(c.keyMap ?? {})) {
     args.push("--map", `${from}=${to ?? ""}`);
   }
@@ -2132,7 +2203,7 @@ function buildServerArgs({
 }) {
   const args = ["-m", "scistack_gui.server", "--db", dbPath];
   if (schemaKeys && schemaKeys.length > 0) {
-    args.push("--schema-keys", schemaKeys.join(","));
+    args.push("--schema-keys", declarationArg(schemaKeys));
   }
   if (projectRoot) {
     args.push("--project-root", projectRoot);
@@ -2654,7 +2725,7 @@ var SessionManager = class {
       describe: [
         `  DB: ${dbPath}`,
         `  Project root: ${projectRoot ?? "(none \u2014 server will fall back, see above)"}`,
-        ...schemaKeys ? [`  Schema keys: [${schemaKeys.join(", ")}] (new DB)`] : []
+        ...schemaKeys ? [`  Schema keys: [${declarationText(schemaKeys)}] (new DB)`] : []
       ]
     });
     if (!python)
@@ -3081,14 +3152,21 @@ async function importProjectBundle(log, openProject) {
   if (!folderName)
     return;
   const into = path6.join(parent[0].fsPath, folderName.trim());
+  const exporterBranches = info.schema_branches ?? [info.schema_keys];
   const schemaInput = await vscode6.window.showInputBox({
-    prompt: "Your schema keys, top-down (the exporter's are suggested)",
-    value: info.schema_keys.join(", "),
-    validateInput: (v) => v.split(",").map((s) => s.trim()).filter(Boolean).length ? null : "At least one key"
+    prompt: "Your schema keys, top-down; a semicolon starts another branch (the exporter's are suggested)",
+    value: formatSchemaText(exporterBranches),
+    validateInput: (v) => {
+      const parsed = parseSchemaText(v);
+      if (parsed.error)
+        return parsed.error;
+      return { message: describeSchema(parsed.branches), severity: vscode6.InputBoxValidationSeverity.Info };
+    }
   });
   if (schemaInput === void 0)
     return;
-  const schema = schemaInput.split(",").map((s) => s.trim()).filter(Boolean);
+  const schemaBranches = parseSchemaText(schemaInput).branches;
+  const schema = flatKeys(schemaBranches);
   const keyMap = {};
   const free = schema.filter((k) => !info.schema_keys.includes(k));
   for (const key of keysNeedingAChoice(info.schema_keys, schema)) {
@@ -3151,11 +3229,11 @@ async function importProjectBundle(log, openProject) {
       return;
     valueRules = choice.yes;
   }
-  const sameSchema = schema.join("\0") === info.schema_keys.join("\0");
+  const sameSchema = formatSchemaText(schemaBranches) === formatSchemaText(exporterBranches);
   const args = buildImportArgs({
     bundle,
     into,
-    schema: sameSchema ? void 0 : schema,
+    schema: sameSchema ? void 0 : declarationOf(schemaBranches),
     keyMap,
     pathRoots,
     importHistory,
@@ -3311,6 +3389,14 @@ var PlotPanel = class _PlotPanel {
           this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
           return;
         }
+        if (method === "open_plot_panel") {
+          await vscode7.commands.executeCommand("scistack.openPlotPanel", {
+            ...msg.params ?? {},
+            sessionId: this.session.id
+          });
+          this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          return;
+        }
         if (method === "broadcast_panels") {
           const params = msg.params ?? {};
           const delivered = params.method ? this.session.plots.send({ method: params.method, params: params.params ?? {} }) : 0;
@@ -3391,6 +3477,10 @@ var PlotPanel = class _PlotPanel {
     }
     if (this.target.csvPath)
       return `Plot \u2014 ${path7.basename(this.target.csvPath)}`;
+    if (this.target.whereCheck && this.target.variable) {
+      const what = `where= check \u2014 ${this.target.variable}`;
+      return this.session.isPlotOnly ? what : `${what} \xB7 ${this.session.label}`;
+    }
     const variable = this.target.plotFunction ? `Plot \u2014 ${this.target.plotFunction}` : this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
     return this.session.isPlotOnly ? variable : `${variable} \xB7 ${this.session.label}`;
   }
@@ -3419,6 +3509,7 @@ var PlotPanel = class _PlotPanel {
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
       plotNode: this.target.plotNode ?? null,
+      whereCheck: this.target.whereCheck ?? null,
       from: this.target.from ?? null,
       statNode: this.target.statNode ?? null
     });
@@ -3528,16 +3619,20 @@ function activate(context) {
         const fileName = nameInput.trim().endsWith(".duckdb") ? nameInput.trim() : `${nameInput.trim()}.duckdb`;
         dbPath = path8.join(folderPath, fileName);
         const keysInput = await vscode8.window.showInputBox({
-          prompt: "Schema keys (comma-separated, top-down)",
-          placeHolder: "e.g. subject, session",
+          prompt: "Schema keys (comma-separated, top-down; a semicolon starts another branch)",
+          placeHolder: "e.g. subject, session   or   brand, category, item; brand, location, person",
+          // The rules are scifor's SchemaTree.from_paths; the live line shows
+          // the mistake (a key with two parents) or the branches it read.
           validateInput: (v) => {
-            const parts = v.split(",").map((s) => s.trim()).filter(Boolean);
-            return parts.length === 0 ? "Provide at least one schema key" : null;
+            const parsed = parseSchemaText(v);
+            if (parsed.error)
+              return parsed.error;
+            return { message: describeSchema(parsed.branches), severity: vscode8.InputBoxValidationSeverity.Info };
           }
         });
         if (!keysInput)
           return;
-        schemaKeys = keysInput.split(",").map((s) => s.trim()).filter(Boolean);
+        schemaKeys = declarationOf(parseSchemaText(keysInput).branches);
       }
       await sessions.open(dbPath, schemaKeys);
       updateStatusBar();

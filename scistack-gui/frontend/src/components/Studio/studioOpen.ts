@@ -20,6 +20,7 @@ export const STUDIO_ENTRY_POINTS = [
   'csv',               // Explorer: Plot CSV File
   'plot-studio',       // Plot Studio's StatStudio button
   'saved',             // a saved plot or table, opened in its studio
+  'where-chip',        // a where= filter chip on a function node (issue #13)
 ] as const
 
 export type StudioEntryPoint = typeof STUDIO_ENTRY_POINTS[number]

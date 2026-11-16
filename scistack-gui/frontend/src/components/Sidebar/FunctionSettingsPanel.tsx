@@ -3,7 +3,8 @@
  *
  * Sections:
  *   1. Variants — read-only Cartesian product of constant node values and multi-type inputs.
- *   2. Filters — where= filter definitions (structured form).
+ *   2. Filters — where= filters, one row each; several rows mean AND.
+ *      Read from the STORED config by every run path (where_service.py).
  *   3. Schema keys — which schema locations the node runs at, chosen in
  *      the same two-pane picker the plotting tab uses.
  *   4. Run Options — dry_run, save, distribute toggles.
@@ -99,6 +100,9 @@ export interface RunOptions {
 
 export interface WhereFilter {
   variable: string
+  // One column of a table variable (`Gait["Side"] == "L"`); absent or
+  // empty = the variable's own value.
+  column?: string | null
   op: string
   value: string
 }
@@ -166,7 +170,8 @@ interface VariableColumns {
   note?: string
 }
 
-const OPERATORS = ['==', '!=', '<', '<=', '>', '>=', 'IN'] as const
+// The comparisons scidb.model.filters.FILTER_OPS accepts.
+const OPERATORS = ['==', '!=', '<', '<=', '>', '>='] as const
 
 interface Props {
   id: string
@@ -235,6 +240,21 @@ function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, 
     onSave: val => onUpdate(index, { value: val }),
   })
 
+  // A table variable's columns, read live like the Inputs section's picker
+  // (variable_service.input_columns). A variable holding one value has one
+  // column and gets no picker.
+  const [columns, setColumns] = useState<string[]>([])
+  useEffect(() => {
+    let stale = false
+    if (!isValidVar || filter.variable === '') { setColumns([]); return }
+    callBackend('get_variable_columns', { variable_type: filter.variable })
+      .then(d => { if (!stale) setColumns((d as VariableColumns).data_columns ?? []) })
+      .catch(() => { if (!stale) setColumns([]) })
+    return () => { stale = true }
+  }, [filter.variable, isValidVar])
+  const column = filter.column ?? ''
+  const showColumn = columns.length > 1 || column !== ''
+
   return (
     <div style={filterRowStyle}>
       <input
@@ -246,6 +266,22 @@ function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, 
         placeholder="Variable"
         {...varInput}
       />
+      {showColumn && (
+        <select
+          style={filterColumnSelectStyle}
+          value={column}
+          title="Which column of the table to compare"
+          onChange={e => onUpdate(index, { column: e.target.value || null })}
+        >
+          <option value="">column&</option>
+          {column !== '' && !columns.includes(column) && (
+            <option value={column}>{column}</option>
+          )}
+          {columns.map(c => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      )}
       <select
         style={filterOpSelectStyle}
         value={filter.op}
@@ -1146,7 +1182,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
 
         {whereFilters.length > 1 && (
           <div style={styles.filterHint}>
-            Each filter runs as a separate variant (EachOf).
+            A record must pass every filter (where=[...] means AND).
           </div>
         )}
       </section>
@@ -1364,6 +1400,17 @@ const filterVarInputStyle: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'monospace',
   padding: '2px 4px',
+}
+const filterColumnSelectStyle: React.CSSProperties = {
+  flex: '2 1 0',
+  minWidth: 0,
+  background: '#1e1e3a',
+  border: '1px solid #2a2a4a',
+  borderRadius: 3,
+  color: '#ccc',
+  fontSize: 11,
+  fontFamily: 'monospace',
+  padding: '2px 2px',
 }
 const filterOpSelectStyle: React.CSSProperties = {
   flex: '0 0 auto',

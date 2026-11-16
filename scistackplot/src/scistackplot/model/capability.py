@@ -548,6 +548,18 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # and the depth picker's choices with the header each would write —
         # the same answer `export.plot_data` validates against.
         "data_export": data_export_options(spec, roles, collapsed, shape).to_dict(),
+        # "Export code" and "Add to pipeline": a where= check's factors are built
+        # by the source and are not mirrored in codegen, so the generated
+        # function would draw a different figure (synthetic-factors invariant 4).
+        "code_export": {
+            "available": not spec.where_check,
+            "reason": (
+                "A where= check is for looking: its Yes/No factors are not part of "
+                "the exported function. Apply the filter to the node, then plot normally."
+                if spec.where_check
+                else None
+            ),
+        },
         "default": str(
             default_plot(
                 raw_shape if categorical else shape,

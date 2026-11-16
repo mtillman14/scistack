@@ -152,6 +152,27 @@ class LevelGroupWire(_Wire):
     active: bool = _absent()
 
 
+class WhereCheckFilterWire(_Wire):
+    """``scistackplot.WhereCheckFilter``: one filter of a where= check."""
+
+    model_config = ConfigDict(title="WhereCheckFilter")
+    variable: str
+    column: str | None = _absent()
+    op: str = _absent()
+    value: str = _absent()
+    enabled: bool = _absent()
+
+
+class WhereCheckWire(_Wire):
+    """``scistackplot.WhereCheck``: the filters a figure is checking, and the
+    function node they belong to."""
+
+    model_config = ConfigDict(title="WhereCheck")
+    node_id: str | None = _absent()
+    function_name: str | None = _absent()
+    filters: list[WhereCheckFilterWire] = _absent()
+
+
 class FactorVariableWire(_Wire):
     """``scistackplot.FactorVariable``: a variable (or one column) joined in
     as a factor. ``variant`` is the selection as an object."""
@@ -421,6 +442,7 @@ class PlotSpecWire(_Wire):
     location_filter: LocationFilterWire = _absent()
     factor_variables: list[FactorVariableWire] = _absent()
     level_groups: list[LevelGroupWire] = _absent()
+    where_check: WhereCheckWire | None = _absent()
     variant_sets: list[VariantSetWire] = _absent()
 
 

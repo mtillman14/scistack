@@ -532,6 +532,7 @@ classdef BaseVariable < dynamicprops
             % generator returned by DatabaseManager.load() in Python. A
             % specific record_id resolves to a single record (n==1); passing
             % version_id straight through lets scidb's load() dispatch on it.
+            where = scidb.all_of(where);  % a cell means AND, as in for_each
             if isempty(where)
                 bulk = py.scimatlab.bridge.load_and_extract( ...
                     py_class, py_metadata, ...

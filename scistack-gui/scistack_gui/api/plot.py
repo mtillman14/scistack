@@ -58,6 +58,7 @@ the database by their own routes; ``plot_invalidate`` only drops a dict.
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -87,6 +88,15 @@ class DescribeRequest(BaseModel):
     refresh: bool | None = False
     # Set to plot a CSV instead of the project database (the standalone path).
     csv_path: str | None = None
+    #: Open as a where= check (services/where_check_service.py): the node's
+    #: filters, which one was clicked (`filter_index`) and whether the click
+    #: plots `variable` against the filter's variable (`against`).
+    where_check: dict[str, Any] | None = None
+
+
+class WhereCheckNodesRequest(BaseModel):
+    #: The plotted variable: which filtered function nodes take it as input.
+    variable: str
 
 
 class DescribeFunctionRequest(BaseModel):
@@ -367,8 +377,18 @@ class ScopeNavigationRequest(BaseModel):
 
 def _describe(db, req: DescribeRequest) -> dict:
     return plot_service.describe(
-        db, req.variable, refresh=bool(req.refresh), csv_path=req.csv_path
+        db,
+        req.variable,
+        refresh=bool(req.refresh),
+        csv_path=req.csv_path,
+        where_check=req.where_check,
     )
+
+
+def _where_check_nodes(db, req: WhereCheckNodesRequest) -> list:
+    from scistack_gui.services import where_service
+
+    return where_service.check_targets(db, req.variable)
 
 
 def _describe_function(db, req: DescribeFunctionRequest) -> dict:
@@ -648,6 +668,11 @@ def _scope_navigation(req: ScopeNavigationRequest) -> dict:
 # are deliberately NOT marked: writing an endpoint into the project, saving
 # variant sets and dropping the cache are all things a CSV has nowhere to put.
 PLOT_HANDLERS: tuple[Handler, ...] = (
+    # "Check a where= filter…" in an ordinary figure: the nodes it can open on.
+    Handler(
+        "where_check_nodes", "/plot/where-check-nodes", WhereCheckNodesRequest,
+        _where_check_nodes, http_errors=_NOT_INSTALLED, undoable=False,
+    ),
     Handler(
         "plot_describe", "/plot/describe", DescribeRequest, _describe,
         holds_db_lock=False, http_errors=_NOT_INSTALLED, db_optional=True, undoable=False,

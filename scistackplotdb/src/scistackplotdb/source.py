@@ -30,6 +30,15 @@ from scistackplot.text.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource, UnknownMeasureError
 from scistackplot.reduce.variants import VARIABLE_COLUMN
 from scistackplot.reduce.temporal import is_temporal_column
+from scistackplot.model.where_check import (
+    LEVEL_ORDER,
+    LEVEL_YES,
+    MATCHING_FACTOR,
+    WhereCheck,
+    filter_factor_name,
+    matching_verdict,
+    verdict_level,
+)
 
 from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
@@ -589,6 +598,7 @@ class ScidbSource(BaseSource):
         *,
         x_measure: str | None = None,
         factor_variables: list[FactorVariable] | None = None,
+        where_check: WhereCheck | None = None,
     ) -> LongTable:
         """
         Build the long table for a plot's variables.
@@ -645,6 +655,11 @@ class ScidbSource(BaseSource):
                 f"{text_measures} hold a variable's TEXT fields, which plot on "
                 f"their own: they cannot stack with another variable or pair with "
                 f"an x measure."
+            )
+        if where_check and len(measures) > 1:
+            raise ValueError(
+                "A where= check looks at ONE variable's locations; "
+                f"got {measures}. Remove the variant rows that add other variables."
             )
         if len(measures) > 1:
             return self._stacked_table(measures, factor_variables)
@@ -721,6 +736,11 @@ class ScidbSource(BaseSource):
         frame, group_depths = self._attach_groupings(
             frame, levels, factor_variables, own
         )
+        check_factors: list[str] = []
+        if where_check:
+            frame, check_factors = self._attach_where_check(
+                frame, levels, where_check, measures[0]
+            )
 
         # Variant columns first, and code versions lead within them (see
         # `attach_variants`). The variants are what a reader has to make a
@@ -732,6 +752,7 @@ class ScidbSource(BaseSource):
         # Keys: the attached factor names, in the order they were joined.
         factors.extend(group_depths)
         factors.extend(c for c in field_columns if c in frame.columns)
+        factors.extend(check_factors)
         factor_origins = {axis["column"]: axis for axis in variant_axes}
         factor_depths = dict(group_depths)
 
@@ -739,6 +760,9 @@ class ScidbSource(BaseSource):
             name: self._level_order(name, frame, is_field=name in field_columns)
             for name in factors
         }
+        for name in check_factors:
+            present = set(frame[name].unique())
+            level_order[name] = [lv for lv in LEVEL_ORDER if lv in present]
 
         table = LongTable.from_frame(
             frame,
@@ -770,6 +794,77 @@ class ScidbSource(BaseSource):
         if len(measures) == 1:
             table.absent = self._absent_locations(frame, levels)
         return table
+
+    def _attach_where_check(self, frame, levels: list[str], check: WhereCheck, target: str):
+        """The where= check's factor columns: ``Matching`` plus, for two or
+        more filters, one per filter.
+
+        The verdicts are scidb's (``filter_report``); this only joins them
+        onto the rows by schema key, as text on both sides (a key's spelling
+        differs between the frame and ``_schema``). A row at a location the
+        report does not know, or whose verdict is "no value", says so: it is
+        never dropped (the same promise as :data:`MISSING_LEVEL`).
+        Logs the counts the plan asks for under ``[where_check]``.
+        """
+        from scidb.model.filters import VERDICT_PREFIX, filter_report, is_blank_filter_dict
+        from scidb.model.variable import BaseVariable
+
+        rows = [f for f in check.filters if not is_blank_filter_dict(f.filter_dict())]
+        if not rows:
+            return frame, []
+        variable = base_variable(target)
+        target_class = BaseVariable._all_subclasses.get(variable)
+        if target_class is None:
+            raise ValueError(f"Cannot check where= on '{variable}': not a known variable.")
+        report, keys = filter_report(
+            self._db,
+            target_class,
+            [f.filter_dict() for f in rows],
+            BaseVariable._all_subclasses.get,
+        )
+        on = [k for k in levels if k in report.columns and k in frame.columns]
+        verdict_columns = [f"{VERDICT_PREFIX}{n}" for n in range(len(rows))]
+        right = report[[*on, *verdict_columns]].copy()
+        temp = {k: f"__where_key_{k}" for k in on}
+        for k in on:
+            right[temp[k]] = right[k].astype(object).map(lambda v: None if v is None else str(v))
+        right = right.drop(columns=on).drop_duplicates(subset=list(temp.values()))
+        left = frame.copy()
+        for k in on:
+            left[temp[k]] = left[k].astype(object).map(lambda v: None if v is None else str(v))
+        joined = left.merge(right, on=list(temp.values()), how="left")
+        joined = joined.drop(columns=list(temp.values()))
+        for col in verdict_columns:
+            joined[col] = joined[col].fillna("no value")
+
+        enabled_columns = [c for c, f in zip(verdict_columns, rows, strict=True) if f.enabled]
+        names = [MATCHING_FACTOR]
+        if len(rows) > 1:
+            names.extend(filter_factor_name(n) for n in range(len(rows)))
+        clash = [n for n in names if n in frame.columns]
+        if clash:
+            raise ValueError(
+                f"A where= check would add column(s) {clash}, which this table already has."
+            )
+        if enabled_columns:
+            joined[MATCHING_FACTOR] = [
+                matching_verdict(list(v)) for v in joined[enabled_columns].itertuples(index=False)
+            ]
+        else:
+            joined[MATCHING_FACTOR] = LEVEL_YES
+        if len(rows) > 1:
+            for column, name in zip(verdict_columns, names[1:], strict=True):
+                joined[name] = joined[column].map(verdict_level)
+        joined = joined.drop(columns=verdict_columns)
+        Log.info(
+            "[where_check] target=%s filters=%s rows=%d matching=%s",
+            variable,
+            keys,
+            len(joined),
+            joined[MATCHING_FACTOR].value_counts().to_dict(),
+            layer=LAYER,
+        )
+        return joined, names
 
     def _absent_locations(self, frame, levels: list[str]):
         """The variable's "No record" locations (`scidb.provenance.inventory.

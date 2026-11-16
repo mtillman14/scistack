@@ -1029,6 +1029,23 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
     return {"ok": True, "shownArguments": names}
 
 
+def set_where_filters(db, node_id: str, filters: list) -> dict:
+    """Replace one function node's ``whereFilters`` (the Filters section's
+    rows), merged into the rest of its saved config. The where= check's
+    Apply and a node chip's Remove call it; every run path reads this
+    stored list (`services/where_service`), so there is no second place
+    the filters live."""
+    config = pipeline_store.get_node_config(db, node_id)
+    logger.info(
+        "[layout_service] set_where_filters (node_id=%r) -> %d filter(s)",
+        node_id,
+        len(filters),
+    )
+    pipeline_store.update_node_config(db, node_id, {**config, "whereFilters": list(filters)})
+    _notify_dag_updated("set_where_filters")  # the node's chips change
+    return {"ok": True, "whereFilters": list(filters)}
+
+
 def set_distribute(db, node_id: str, value: bool) -> dict:
     """Set one function node's ``distribute`` run option:
     ``runOptions.distribute`` in its saved config, merged into the rest. The

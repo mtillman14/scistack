@@ -27,6 +27,7 @@ import LabelsSection from './LabelsSection'
 import { type Labelable } from './aliasEdit'
 import ColorsSection from './ColorsSection'
 import { type Colorable, plotMarkColor } from './colorEdit'
+import WhereCheckSection, { WhereCheckEntry } from './WhereCheckSection'
 
 /** The rail's Data group, moved verbatim out of PlotStudio's render. */
 export function DataGroup({ s }: { s: PlotStudioState }) {
@@ -56,6 +57,9 @@ export function DataGroup({ s }: { s: PlotStudioState }) {
     stackable,
     hasVariants,
     temporalMeta,
+    dispatchSpec,
+    onClose,
+    setNotice,
   } = s
   return (
     <Group
@@ -68,6 +72,13 @@ export function DataGroup({ s }: { s: PlotStudioState }) {
         filterCount: (spec?.filters ?? []).length,
       })}
     >
+      <WhereCheckSection
+        spec={spec}
+        dispatchSpec={dispatchSpec}
+        onClose={onClose}
+        onNotice={setNotice}
+      />
+      <WhereCheckEntry spec={spec} variable={describe?.variable ?? variable} csvPath={csvPath} />
       {(() => {
         // A wide variable with text AND other fields is two measures
         // (the catalog's `text_of`): one link to the other half, so no

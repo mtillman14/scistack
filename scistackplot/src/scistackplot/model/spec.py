@@ -22,6 +22,7 @@ from typing import Any
 from ..reduce.compare import Comparison
 from ..reduce.diffbars import DifferenceBar, Derived, StatMarks
 from ..reduce.panels import Y_TITLES_EVERY_PANEL, PanelOverride
+from .where_check import WhereCheck
 
 
 class Role(str, Enum):
@@ -1596,6 +1597,9 @@ class PlotSpec:
     #: Combines: factors derived by combining another factor's levels, each
     #: replacing its source while active (:class:`LevelGroup`).
     level_groups: list[LevelGroup] = field(default_factory=list)
+    #: A where= check: Yes/No factors from a node's filters, attached at the
+    #: source (:mod:`.where_check`). None = an ordinary figure.
+    where_check: WhereCheck | None = None
     #: Named variants to plot — one entry per row of the GUI's Variants section.
     #:
     #: One entry is a pin: the figure shows that variant and nothing else.
@@ -1744,6 +1748,7 @@ class PlotSpec:
         raw["location_filter"] = self.location_filter.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
+        raw["where_check"] = self.where_check.to_dict() if self.where_check else None
         raw["factor_variables"] = [f.to_dict() for f in self.factor_variables]
         raw["groups"] = list(self.groups)
         raw["show_sample"] = list(self.show_sample)
@@ -1832,6 +1837,7 @@ class PlotSpec:
             variant_sets=[
                 VariantSet.from_dict(s) for s in (raw.get("variant_sets") or [])
             ],
+            where_check=WhereCheck.from_dict(raw.get("where_check")),
         )
 
     def to_json(self, *, indent: int | None = 2) -> str:

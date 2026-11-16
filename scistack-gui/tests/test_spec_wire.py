@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 
 from scistack_gui.api import spec_wire as w
 from scistack_gui.api.wire_schema import api_json_schema
+from scistackplot.model.where_check import WhereCheck, WhereCheckFilter
 from scistackplot import (
     Aggregation,
     Alias,
@@ -237,6 +238,11 @@ def _maximal_plot_spec() -> PlotSpec:
                 name="Phase", source="session", mapping={"1": "A"}, unmatched="B", active=False
             )
         ],
+        where_check=WhereCheck(
+            node_id="n1",
+            function_name="fn",
+            filters=(WhereCheckFilter("Force", "col", ">", "3", enabled=False),),
+        ),
         variant_sets=[
             VariantSet(
                 name="v1",

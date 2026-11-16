@@ -2403,6 +2403,13 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         schema_iterables = {
             k: all_iterables[k] for k in level.iterate_keys() if k in all_iterables
         }
+        # This node's own where= filters, as its Run button uses them. Until
+        # 2026-11-16 a pipeline run ignored them (issue #13).
+        from scistack_gui.services import where_service
+
+        step_where = where_service.where_for_node(
+            db, node_id, route=f"python pipeline {pipeline_id}"
+        )
         seen_target_keys: set = set()
         for target in targets:
             target_key = (
@@ -2440,6 +2447,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                     "schemaSelection"
                 )
                 or None,
+                where=step_where,
                 distribute=step_options.distribute,
                 as_table=step_options.as_table,
                 # The node's step name (Q6), so a compiled run and its code

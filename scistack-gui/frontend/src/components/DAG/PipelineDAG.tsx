@@ -48,6 +48,7 @@ import ExpectedLocationsPopup, { type ExpectedFilter } from '../Expectation/Expe
 import { ExpectationBadgesProvider, useExpectationBadgeFetch } from '../../context/ExpectationBadgesContext'
 import { useRunReport } from '../../context/RunReportContext'
 import { OPEN_DATA_PREVIEW_EVENT, type DataPreviewTarget } from '../DataPreview/dataPreview'
+import { OPEN_WHERE_CHECK_EVENT, whereCheckOpen, type WhereCheckTarget } from '../PlotStudio/whereCheck'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
 import { SourceLocationDialog } from '../SourceLocationDialog'
@@ -162,7 +163,7 @@ export default function PipelineDAG() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // Browser-mode fallback only: in the extension the studio is its own tab.
   const [plotTarget, setPlotTarget] = useState<
-    { variable: string; csvPath?: string; location?: PathStep[]; plotNode?: string } | null
+    { variable: string; csvPath?: string; location?: PathStep[]; plotNode?: string; whereCheck?: Record<string, unknown> } | null
   >(null)
   // Which variable's schema locations are being inspected, or null. Separate
   // from plotTarget: looking at integrity is not the same act as opening a
@@ -364,6 +365,23 @@ export default function PipelineDAG() {
     } else {
       setPlotTarget({ variable, location })
     }
+  }, [])
+
+  // A where= check: an ordinary figure plus Yes/No factors, opened from a
+  // chip on a function node (components/DAG/WhereChips.tsx). Same funnel.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const { variable, where_check } = whereCheckOpen((e as CustomEvent<WhereCheckTarget>).detail)
+      if (isVSCodeMode) {
+        callBackend('open_plot_panel', { variable, whereCheck: where_check, from: 'where-chip' }).catch(() =>
+          setPlotTarget({ variable, whereCheck: where_check })
+        )
+      } else {
+        setPlotTarget({ variable, whereCheck: where_check })
+      }
+    }
+    window.addEventListener(OPEN_WHERE_CHECK_EVENT, open)
+    return () => window.removeEventListener(OPEN_WHERE_CHECK_EVENT, open)
   }, [])
 
   // A plot_ node: the user's own function draws the figure, its edges bind the
@@ -1215,6 +1233,7 @@ export default function PipelineDAG() {
           csvPath={plotTarget.csvPath}
           initialLocation={plotTarget.location}
           plotNode={plotTarget.plotNode}
+          whereCheck={plotTarget.whereCheck}
           onClose={() => setPlotTarget(null)}
         />
       )}

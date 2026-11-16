@@ -404,3 +404,7 @@ scidb.for_each(@fn, struct('x', GaitData("force")), {Out()}, ...
 ## Related
 
 - [[variant-branch-param-pinning]] — `Variant` threads a `branch_params_filter` through `_load_input` the same way `where=` is threaded, and the two now coexist on the `load_all_as_df` fast path.
+
+> **2026-11-16.** `where=[a, b]` is AND; filters can be held as dicts (`filter_from_dict`); the GUI's
+> Filters section and where= check are in `where-in-gui.md`. Variants are told apart by consumed
+> locations, not by `__where` string matching (the Strategy 1 text below is historical).

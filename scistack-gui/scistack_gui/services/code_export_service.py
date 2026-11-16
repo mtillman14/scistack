@@ -347,6 +347,7 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
     finally:
         _discard_compiled(built)
 
+    from scidb.model.filters import where_source
     from scifor.project.names import function_name, library_of
 
     lines = [_py_header(db), ""]
@@ -378,6 +379,10 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
             call += ", distribute=True"
         if spec.options.get("as_table"):
             call += f", as_table={spec.options['as_table']!r}"
+        # The node's filters, written as the list they mean (scidb owns the
+        # spelling). Their variable classes come from the header's imports.
+        if spec.options.get("where") is not None:
+            call += f", where={where_source(spec.options['where'])}"
         # Not identity, but an exported script must stop where the GUI run
         # would (the preview and the export behave alike).
         if spec.options.get("on_error", "continue") != "continue":
@@ -546,6 +551,7 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
         on_error_from_config,
     )
     from scistack_gui.project.step_names import step_name_of
+    from scistack_gui.services import where_service
 
     pending_consts = ps.get_pending_constants(db)
 
@@ -581,6 +587,9 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
                             "step": step_name_of(db, node_id),
                             "on_error": on_error_from_config(
                                 (ps.get_node_config(db, node_id) or {}).get("runOptions")
+                            ),
+                            "where": where_service.matlab_where_for_node(
+                                db, node_id, route="matlab export"
                             ),
                         },
                         options,
@@ -680,6 +689,8 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
             call += f", 'step', {_matlab_str(target['step'])}"
         if target.get("on_error", "continue") != "continue":
             call += f", 'on_error', {_matlab_str(target['on_error'])}"
+        if target.get("where"):
+            call += f", 'where', {target['where']}"
         if iter_args:
             call += f", {iter_args}"
         call += ");"

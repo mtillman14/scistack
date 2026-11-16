@@ -376,6 +376,9 @@ export interface Capabilities {
   has_sample: boolean
   /** "Save data (CSV)": availability and the depth picker's choices. */
   data_export?: DataExport
+  /** "Export code" / "Add to pipeline": unavailable in a where= check, with why
+   *  (`capability.py` `code_export`). */
+  code_export?: { available: boolean; reason: string | null }
   default: string
   available: string[]
   kinds: KindInfo[]

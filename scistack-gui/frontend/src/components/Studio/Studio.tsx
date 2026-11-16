@@ -134,6 +134,7 @@ export default function Studio({ initial }: { initial: PlotViewConfig | StatView
               csvPath={csvPath}
               initialLocation={initial.view === 'plot' ? initial.location ?? undefined : undefined}
               plotNode={plotNode ?? undefined}
+              whereCheck={initial.view === 'plot' ? initial.whereCheck ?? undefined : undefined}
               openedFrom={initial.from ?? undefined}
               embedded
               onClose={() => undefined}

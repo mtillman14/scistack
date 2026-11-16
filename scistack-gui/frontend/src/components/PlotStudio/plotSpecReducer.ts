@@ -23,6 +23,7 @@ import type { PanelOverride, YTitles } from './panelOverrides.js'
 import { joinSetting, sampleColorSetting, toggleShowSample, type JoinChoice } from './showSample.js'
 import type { SpecAliases } from './aliasEdit.js'
 import type { SpecColors } from './colorEdit.js'
+import { editCheckFilter } from './whereCheck.js'
 
 import type {
   Aggregation,
@@ -33,6 +34,7 @@ import type {
   PlotSpec,
   Statistic,
   StyleOptions,
+  WhereCheckFilter,
   YAxis,
 } from '../../generated/api-types.js'
 
@@ -58,6 +60,7 @@ export type PlotSpecAction =
   // Data
   | { type: 'setXMeasure'; name: string | null }
   | { type: 'setTimeZone'; mode: string }
+  | { type: 'editWhereCheck'; index: number; patch: Partial<Pick<WhereCheckFilter, 'op' | 'value' | 'enabled'>> }
   // Chart
   | { type: 'setCategorical'; patch: CategoricalOptions }
   | { type: 'setBarStack'; stack: boolean }
@@ -97,6 +100,8 @@ export function plotSpecReducer<S extends PlotSpecFields>(spec: S | null, action
       return { ...spec, x_measure: action.name, kind: kindForXMeasure(spec.kind, action.name) }
     case 'setTimeZone':
       return { ...spec, time_zone: action.mode }
+    case 'editWhereCheck':
+      return editCheckFilter(spec, action.index, action.patch)
     case 'setCategorical':
       return { ...spec, categorical: { ...(spec.categorical ?? {}), ...action.patch } }
     case 'setBarStack':

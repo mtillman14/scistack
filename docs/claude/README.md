@@ -124,6 +124,7 @@ Rules:
 - [Variant Selection](variant-selection.md) — `variant-selection.md`
 - [What a variant row selects](variant-row-selection.md) — `variant-row-selection.md`
 - [`__where` Provenance and Merge Constituent Loading](where-provenance-and-merge.md) — `where-provenance-and-merge.md`
+- [`where=` in the GUI: filters on every run, chips, the check figure](where-in-gui.md) — `where-in-gui.md`
 - [`distribute` vs the spread rule — two ways rows become records](distribute-vs-spread.md) — `distribute-vs-spread.md`
 - [as_table Column Type Normalization](as-table-column-types.md) — `as-table-column-types.md`
 - [for_columns — Column-Wise Iteration + Reassembly](for-columns-iteration.md) — `for-columns-iteration.md`

@@ -27,7 +27,7 @@ import { inputPorts, optionalPorts, OPTIONAL_ARGS_ATTR } from './inputPorts'
 import type { OptionalPort } from './inputPorts'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { describeOutputHandle } from '../Sidebar/columnGroups'
-import type { WhereFilterSpec } from '../../generated/api-types'
+import WhereChips, { type WhereChip } from './WhereChips'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -83,6 +83,10 @@ interface FunctionNodeData {
   // Set to 'matlab' for functions backed by a .m file. The extension uses this
   // to intercept start_run and route to handleMatlabRun instead of calling
   // into the Python registry (which doesn't know about MATLAB functions).
+  // The where= filters, as stored (the check's rows) and as the backend words
+  // them (graph_builder.where_chips: one chip each).
+  whereFilters?: { variable: string; column?: string | null; op: string; value: string }[]
+  whereChips?: WhereChip[]
   language?: string
 }
 
@@ -254,7 +258,6 @@ function PipelineFunctionNode({ id, data }: Props) {
       }
     }
 
-    const wf = (data as unknown as Record<string, unknown>).whereFilters as WhereFilterSpec[] | undefined
     try {
       await callBackend('start_run', {
         function_name: data.label,
@@ -266,7 +269,8 @@ function PipelineFunctionNode({ id, data }: Props) {
         run_options: runOptionsPatch
           ? { ...(data.runOptions ?? {}), ...runOptionsPatch }
           : (data.runOptions ?? null),
-        where_filters: (wf && wf.length > 0) ? wf : null,
+        // where= is not sent: the backend reads the node's stored filters
+        // (where_service), the same on every run path.
         // A hint only. The BACKEND decides whether this is a MATLAB run
         // (api/run.route_matlab_single_run asks matlab_registry), so a
         // browser session works the same as the VS Code host.
@@ -584,6 +588,14 @@ function PipelineFunctionNode({ id, data }: Props) {
           })}
         </div>
       )}
+
+      <WhereChips
+        nodeId={id}
+        functionName={data.label}
+        chips={data.whereChips ?? []}
+        filters={data.whereFilters ?? []}
+        inputVariables={[...new Set(Object.values(data.input_params ?? {}).filter(Boolean))]}
+      />
 
       {(() => {
         // Variant rows: one per constant-value call site of this wiring,

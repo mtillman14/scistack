@@ -1050,6 +1050,7 @@ def generate_matlab_command(
     parameter_names: "dict[str, str] | None" = None,
     locations: "dict | None" = None,
     step: "str | None" = None,
+    where: "str | None" = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -1241,6 +1242,9 @@ def generate_matlab_command(
         template_locations_str = _format_locations_pair(locations)
         if template_locations_str:
             template_tail += f", ...\n        {template_locations_str}"
+        template_where_str = _format_where_pair(where)
+        if template_where_str:
+            template_tail += f", ...\n        {template_where_str}"
         lines.append("try")
         lines.extend(_iteration_tally_reset_lines(run_id))
         lines.append("    % Run (fill in inputs/outputs)")
@@ -1315,6 +1319,7 @@ def generate_matlab_command(
             run_options=run_options,
             parameter_names=parameter_names,
             locations=locations,
+            where=where,
         )
     )
 
@@ -1490,6 +1495,7 @@ def _for_each_call_lines(
     run_options: dict | None = None,
     parameter_names: "dict[str, str] | None" = None,
     locations: "dict | None" = None,
+    where: "str | None" = None,
 ) -> list[str]:
     """One (indented) ``<matlab_fn>(@function_name, ...)`` block per grouped
     (inputs, constants) entry — the call body shared between a single
@@ -1577,6 +1583,10 @@ def _for_each_call_lines(
             opts_str = (
                 f"{opts_str}, ...\n{indent}    {locations_str}" if opts_str else locations_str
             )
+        # The node's where= filters (where_service.matlab_where_source).
+        where_str = _format_where_pair(where)
+        if where_str:
+            opts_str = f"{opts_str}, ...\n{indent}    {where_str}" if opts_str else where_str
 
         lines.append(f"{indent}% Run")
         lines.append(f"{indent}{matlab_fn}(@{function_name}, ...")
@@ -1607,6 +1617,14 @@ def _format_locations_pair(locations: "dict | None") -> str:
         return ""
     text = json.dumps(selection.to_dict(), sort_keys=True)
     return f"'locations', {_format_matlab_value(text)}"
+
+
+def _format_where_pair(where: "str | None") -> str:
+    """``'where', <filters>`` for ``+scidb/for_each.m``, or ``""`` for no
+    filter. *where* is already MATLAB text, worded by
+    ``where_service.matlab_where_source`` (one filter bare, several as the
+    cell for_each reads as AND)."""
+    return f"'where', {where}" if where else ""
 
 
 def _format_parameter_names_pair(parameter_names: "dict[str, str] | None") -> str:
@@ -1855,6 +1873,7 @@ def generate_matlab_pipeline_command(
                 run_options=step.get("run_options"),
                 parameter_names=step.get("parameter_names"),
                 locations=step.get("locations"),
+                where=step.get("where"),
             )
         )
     for comment in skip_comments:
@@ -2319,7 +2338,7 @@ MATLAB_OPTION_EMISSION: dict[str, str] = {
     "schema_keys": "emitted as key=[] metadata iterables (_format_schema_kwargs)",
     "skip_computed": "a Pipeline run option (pipe.run_all), not a for_each one",
     "db": "the script opens the database with scidb.configure_database",
-    "where": "the GUI has no where= filter",
+    "where": BINDING,  # _format_where_pair
     "introspect": "a Python-only debugging aid",
     "schema_key_types": "the database already records key types",
     "share_limits": "set in the user's own call, not from the canvas",

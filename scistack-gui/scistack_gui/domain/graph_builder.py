@@ -3522,6 +3522,33 @@ _SAVED_CONFIG_KEYS = (
 )
 
 
+def where_chips(rows) -> list[dict]:
+    """One chip per filled filter row: its text (scidb's `filter_label`, the
+    one spelling) and the variable / column it names. The frontend draws
+    these and never words a filter itself (docs/claude/where-in-gui.md).
+    A half-filled row is a chip saying so rather than a missing one."""
+    from scidb.model.filters import filter_label, is_blank_filter_dict
+
+    chips = []
+    for index, row in enumerate(rows if isinstance(rows, list) else []):
+        if is_blank_filter_dict(row):
+            continue
+        try:
+            text = filter_label(row)
+        except ValueError as error:
+            logger.warning("[where] chip for row %d: %s", index, error)
+            text = f"{row.get('variable') or '?'} (incomplete)"
+        chips.append(
+            {
+                "index": index,
+                "text": text,
+                "variable": str(row.get("variable") or ""),
+                "column": str(row.get("column") or "") or None,
+            }
+        )
+    return chips
+
+
 def _apply_saved_config(node_data: dict, config: dict | None) -> None:
     """Copy a node's saved settings onto its React Flow ``data``."""
     if not config:
@@ -3529,6 +3556,8 @@ def _apply_saved_config(node_data: dict, config: dict | None) -> None:
     for key in _SAVED_CONFIG_KEYS:
         if key in config:
             node_data[key] = config[key]
+    if "whereFilters" in config:
+        node_data["whereChips"] = where_chips(config["whereFilters"])
 
 
 def apply_placement_configs(

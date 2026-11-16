@@ -85,7 +85,7 @@ from scidb.model.exceptions import (
     SciStackError,
 )
 from scidb.store.exclusions import exclude_schema, include_schema, list_exclusions
-from scidb.model.filters import raw_sql, schema_key
+from scidb.model.filters import all_of, raw_sql, schema_key
 
 # Batch execution (Layer 2 — DB-backed, no lineage)
 from scidb.run.foreach import for_each
@@ -260,6 +260,7 @@ __all__ = [
     "set_schema",
     "get_schema",
     # Filter utilities
+    "all_of",
     "raw_sql",
     "schema_key",
     # Schema exclusions

@@ -63,6 +63,7 @@ from scistackplot import (
     reconcile,
     restore_spec,
 )
+from scistackplot.model.where_check import WhereCheck, WhereCheckFilter
 from scistackplot.reduce.variants import stale_role_names, strip_answered_roles
 
 
@@ -212,6 +213,11 @@ def full_spec() -> PlotSpec:
                 "Phase", "session", {"pre": "base", "post": "after"}, "other", active=False
             )
         ],
+        where_check=WhereCheck(
+            node_id="n1",
+            function_name="fn",
+            filters=(WhereCheckFilter("Filtered", "col", ">", "3", enabled=False),),
+        ),
         variant_sets=[
             VariantSet(
                 name="baseline",

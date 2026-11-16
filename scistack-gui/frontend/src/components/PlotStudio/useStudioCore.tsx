@@ -33,6 +33,7 @@ export function useStudioCore({
   embedded = false,
   initialLocation,
   plotNode,
+  whereCheck,
   design,
   openedFrom,
   onClose,
@@ -314,7 +315,11 @@ export function useStudioCore({
     setSavedError('')
     ;(plotNode
       ? callBackend('plot_describe_function', { node_id: plotNode })
-      : callBackend('plot_describe', { variable: variable || undefined, ...sourceParams }))
+      : callBackend('plot_describe', {
+          variable: variable || undefined,
+          ...(whereCheck ? { where_check: whereCheck } : {}),
+          ...sourceParams,
+        }))
       .then(raw => {
         if (cancelled) return
         const response = raw as DescribeResponse

@@ -161,6 +161,8 @@ FIELD_CLASSES: dict[str, FieldClass] = {
     "location_filter": _T,
     "factor_variables": _R,
     "level_groups": _T,
+    # A look at a node's filters, never stored with a preset.
+    "where_check": _D,
 }
 
 #: Blocks classified field by field rather than as a whole.

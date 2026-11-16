@@ -351,6 +351,7 @@ def describe(
     *,
     refresh: bool = False,
     csv_path: str | None = None,
+    where_check: dict | None = None,
 ) -> dict:
     """
     Everything the panel needs to open on a variable.
@@ -390,11 +391,18 @@ def describe(
             with timing.phase("acquire_connection"):
                 hold.enter_context(db_connection("plot_describe", needed=not csv_path))
             return _describe(
-                db, variable, refresh=refresh, csv_path=csv_path, timing=timing
+                db,
+                variable,
+                refresh=refresh,
+                csv_path=csv_path,
+                timing=timing,
+                where_check=where_check,
             )
 
 
-def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
+def _describe(
+    db, variable, *, refresh, csv_path, timing=None, where_check=None
+) -> dict:
     """:func:`describe`'s body, run with the database connection held.
 
     ``timing`` is :func:`describe`'s live timer; callers without one (the
@@ -433,6 +441,15 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
 
     with phase("opening_spec"):
         spec = opening_spec(db, table, variable)
+    if where_check:
+        # A where= check opens on its own spec and the table it is drawn from
+        # (the Yes/No factors are columns of that table).
+        from scistack_gui.services.where_check_service import opening_check_spec
+
+        with phase("where_check"):
+            spec, table = opening_check_spec(
+                source, variable, spec, where_check, table_for=_table_for
+            )
 
     # Offers AND refusals: the variant picker draws every variable node on the
     # canvas, so one it cannot offer has to say why in place.
@@ -2073,6 +2090,7 @@ def _table_for(source, spec):
         spec.variant_variables(),
         x_measure=spec.x_measure,
         factor_variables=list(spec.factor_variables),
+        where_check=spec.where_check,
     )
 
 

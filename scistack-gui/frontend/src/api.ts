@@ -312,6 +312,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     set_shown_argument:     { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/arguments`, method: 'PUT', body: true },
     set_output_ports:       { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/outputs`, method: 'PUT', body: true },
     set_distribute:         { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/distribute`, method: 'PUT', body: true },
+    set_where_filters:      { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/where`, method: 'PUT', body: true },
     start_run:              { path: '/api/run', method: 'POST', body: true },
     get_schema_level:       { path: '/api/schema-level', method: 'POST', body: true },
     run_report:             { path: '/api/run-report', method: 'POST', body: true },
@@ -397,6 +398,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     // Plot Studio (docs/claude/plotting-library-design.md). All POST + body:
     // a spec is a nested object, not something to squeeze into a query string.
     plot_describe:          { path: '/api/plot/describe', method: 'POST', body: true },
+    where_check_nodes:      { path: '/api/plot/where-check-nodes', method: 'POST', body: true },
     plot_describe_function: { path: '/api/plot/describe-function', method: 'POST', body: true },
     plot_capabilities:      { path: '/api/plot/capabilities', method: 'POST', body: true },
     plot_resolve:           { path: '/api/plot/resolve', method: 'POST', body: true },

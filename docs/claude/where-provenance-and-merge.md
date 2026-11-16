@@ -158,3 +158,7 @@ sync.
 
 - [[where-filter-system]] — the general `where=` filter system (Strategy 2 / schema-id resolution, filter class hierarchy, SchemaKey filters).
 - [[scidb-for-each-internals]] — the broader for_each prepare/loop/save pipeline.
+
+> **2026-11-16.** `__where` is display only since the where= redesign; variant selection is semantic
+> (consumed input locations). The text above that describes string matching is historical. See
+> `where-in-gui.md` for the GUI side.

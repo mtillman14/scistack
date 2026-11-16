@@ -538,6 +538,9 @@ class BaseVariable(metaclass=VariableMeta):
         from scidb.model.exceptions import AmbiguousVersionError, NotFoundError
 
         _db = db or get_database()
+        from scidb.model.filters import as_filter
+
+        where = as_filter(where)  # a list means AND, as in for_each
 
         # Specific record_id fast path
         if version not in ("latest", "all"):
