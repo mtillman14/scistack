@@ -181,6 +181,70 @@ class TestForEachNumericDeclared:
         assert n_after_second == n_after_first
 
 
+class TestDiscoveryStateSpellsLikeTheRun:
+    """The canvas badge and the location picker compare FILES ON DISK against
+    SAVED locations. The run saves a numeric-declared key canonically ("1"),
+    so the check must spell discovery the same way, or a zero-padded loader
+    ("6mwt-001.xlsx") reads red forever with every location counted twice:
+    once up to date (the run) and once "never run" (the raw disk spelling).
+    Regression for loadXSENSOneFile, 2026-11-17.
+    """
+
+    def _run_discovery(self, padded_tree):
+        from scidb.provenance.state import clear_discovery_cache
+
+        clear_discovery_cache()
+        pi = _scifor.PathInput(
+            "{subject}/6MWT-{trial}.mat",
+            root_folder=str(padded_tree),
+            name="{subject}/6MWT-{trial}.mat",
+        )
+        for_each(read_name, {"filepath": pi}, [PathName], subject=[], trial=[])
+        return pi
+
+    def test_node_green_after_discovery_run(self, db_numeric, padded_tree):
+        from scidb.provenance.state import check_node_state
+
+        self._run_discovery(padded_tree)
+        result = check_node_state(read_name, [PathName], db=db_numeric)
+        assert result["counts"] == {"up_to_date": 2, "stale": 0, "missing": 0}
+        assert result["state"] == "green"
+
+    def test_pathinput_check_counts_each_file_once(self, db_numeric, padded_tree):
+        from scidb.provenance.state import check_pathinput_node_state
+
+        pi = self._run_discovery(padded_tree)
+        result = check_pathinput_node_state(read_name, [], {"filepath": pi}, db=db_numeric)
+        assert result["discovered"] == 2
+        assert sorted(c["schema_combo"]["trial"] for c in result["combos"]) == ["1", "2"]
+        assert result["state"] == "green"
+
+    def test_padded_grid_matches_canonical_save(self, db_numeric, padded_tree):
+        from scidb.provenance.state import check_pathinput_node_state
+
+        pi = self._run_discovery(padded_tree)
+        result = check_pathinput_node_state(
+            read_name, [], {"filepath": pi}, db=db_numeric, trial=["001"]
+        )
+        assert result["counts"] == {"up_to_date": 1, "stale": 0, "missing": 0}
+
+    def test_location_picker_agrees(self, db_numeric, padded_tree):
+        from scidb.provenance.locations import location_states
+
+        self._run_discovery(padded_tree)
+        tree = location_states(PathName, db=db_numeric)
+        assert tree.counts == {"green": 2, "amber": 0, "red": 0, "grey": 0}
+
+    def test_string_key_keeps_disk_spelling(self, db_string, padded_tree):
+        from scidb.provenance.state import check_node_state
+
+        self._run_discovery(padded_tree)
+        assert sorted(db_string.distinct_schema_values("trial")) == ["001", "002"]
+        result = check_node_state(read_name, [PathName], db=db_string)
+        assert result["state"] == "green"
+        assert result["counts"]["missing"] == 0
+
+
 class TestForEachUndeclared:
     def test_resolution_raises_declare_error(self, db_undeclared, padded_tree):
         with pytest.raises(SchemaKeyTypeError, match="set_schema_key_type"):

@@ -42,7 +42,7 @@ from scidb.run.selection_axis import selection_axes_of
 from scidb.store.database import database_or_none
 from scidb.store.database import dataset_schema_keys_of
 from scidb.store.schema_values import schema_str
-from scidb.store.schema_values import scidb_key_type_errors
+from scidb.store.schema_values import canonical_discovered_combos, scidb_key_type_errors
 from scifor import ColName
 from scifor import Fixed
 from scifor import for_each as _scifor_for_each
@@ -614,15 +614,9 @@ def _resolve_iterables(
         # de-duplicated so one identity is not iterated twice.
         canon_keys = [k for k, t in _sk_types.items() if t == "numeric"]
         if _discovered_combos is not None and canon_keys:
-            with scidb_key_type_errors():
-                canonical = _scifor_schema_types.canonicalize_combos(
-                    _discovered_combos, _sk_types
-                )
-            for combo in canonical:
-                for k in canon_keys:
-                    if k in combo:
-                        combo[k] = schema_str(combo[k])
-            _discovered_combos[:] = canonical
+            _discovered_combos[:] = canonical_discovered_combos(
+                _discovered_combos, _sk_types
+            )
             Log.debug(
                 f"canonicalized numeric schema key(s) {canon_keys} in "
                 f"{len(_discovered_combos)} discovered combo(s)"

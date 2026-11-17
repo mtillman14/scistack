@@ -30,7 +30,11 @@ from typing import Literal
 from scidb.model.input_spec import find_pathinput
 from scidb.model.log import Log
 from scifor.project.names import function_name
-from scidb.store.schema_values import schema_str
+from scidb.store.schema_values import (
+    canonical_discovered_combos,
+    canonical_numeric_value,
+    schema_str,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -830,15 +834,39 @@ def check_pathinput_node_state(
             seen.add(key)
             should.append(c)
 
+    # Declared key types: discovery and the grid must be spelled the way a run
+    # SAVES them, or a zero-padded file ("6mwt-001.xlsx" -> trial "001") never
+    # matches its saved location (trial "1") and the node reads red forever.
+    key_types = getattr(db, "dataset_schema_key_types", {}) or {}
+    numeric_keys = {k for k, t in key_types.items() if t == "numeric"}
+
+    def _grid_value(k, x):
+        if k in numeric_keys and x is not None:
+            return schema_str(canonical_numeric_value(k, x))
+        return schema_str(x)
+
     grid_keys = [k for k, v in iteration.items() if v]
-    grid_sets = {k: {schema_str(x) for x in iteration[k]} for k in grid_keys}
+    grid_sets = {k: {_grid_value(k, x) for x in iteration[k]} for k in grid_keys}
 
     pi = find_pathinput(inputs)
     discovered = 0
     if pi is not None:
+        raw = pi.discover()
+        discovered = len(raw)
+        canonical = canonical_discovered_combos(raw, key_types)
+        if raw and canonical != raw:
+            logger.debug(
+                "pathinput node %s: discovered spellings canonicalized for "
+                "numeric key(s) %s, e.g. %s -> %s (%d on disk -> %d location(s))",
+                fn_name,
+                sorted(numeric_keys),
+                raw[0],
+                canonical[0],
+                len(raw),
+                len(canonical),
+            )
         # Discovered combos that satisfy the grid (the intersection).
-        for combo in pi.discover():
-            discovered += 1
+        for combo in canonical:
             c = _norm(combo)
             if all(c.get(k) in grid_sets[k] for k in grid_keys):
                 _add(c)

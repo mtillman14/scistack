@@ -87,6 +87,41 @@ def canonical_numeric_value(key: str, value: Any) -> Any:
         return _scifor_canonical_numeric_value(key, value)
 
 
+def canonical_discovered_combos(
+    combos: list[dict],
+    key_types: "dict[str, str] | None",
+    log=None,
+) -> list[dict]:
+    """Filesystem-discovered combos in the spelling a run SAVES them under.
+
+    ``PathInput.discover()`` returns disk spellings (``trial="001"`` from
+    ``6mwt-001.xlsx``). A ``numeric``-declared key is stored canonically
+    (``"1"``), so anything that compares discovered locations with saved
+    ones must convert first. The ONE owner of that conversion: the run
+    (``foreach_prepare``) and the canvas/picker discovery check
+    (``state.check_pathinput_node_state``) both call this. Until 2026-11-17
+    only the run did, and every zero-padded loader read red forever
+    (``docs/claude/pathinput-discovery-state.md``).
+
+    Numeric keys go through scifor's rule then :func:`schema_str`; other keys
+    keep their spelling. Combos that collapse to one identity (``-1`` and
+    ``-001`` both on disk) are de-duplicated. Returns new dicts.
+    """
+    from scifor.schema_types import canonicalize_combos
+
+    key_types = key_types or {}
+    numeric = [k for k, t in key_types.items() if t == "numeric"]
+    if not combos or not numeric:
+        return [dict(c) for c in combos]
+    with scidb_key_type_errors():
+        out = canonicalize_combos(combos, key_types, log=log)
+    for combo in out:
+        for k in numeric:
+            if combo.get(k) is not None:
+                combo[k] = schema_str(combo[k])
+    return out
+
+
 @contextmanager
 def scidb_key_type_errors():
     """Re-raise scifor's ``SchemaKeyTypeError`` as scidb's (its subclass), for

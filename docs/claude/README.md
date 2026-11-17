@@ -120,6 +120,7 @@ Rules:
 - [PathInput spelling aliases](pathinput-folder-aliases.md) — `pathinput-folder-aliases.md`
 - [PathInput: disambiguating adjacent placeholders with `key_regex`](pathinput-key-regex.md) — `pathinput-key-regex.md`
 - [PathInput: zero-padded numeric filename matching](pathinput-zero-padded-matching.md) — `pathinput-zero-padded-matching.md`
+- [How a PathInput loader's node colour is decided (discovery gate + spelling rule)](pathinput-discovery-state.md) — `pathinput-discovery-state.md`
 - [Three identity layers, and how a PathInput-fed step moves through them](identity-layers-pathinput.md) — `identity-layers-pathinput.md`
 - [Variant Selection](variant-selection.md) — `variant-selection.md`
 - [What a variant row selects](variant-row-selection.md) — `variant-row-selection.md`
