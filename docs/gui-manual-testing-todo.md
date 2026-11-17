@@ -11,6 +11,38 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. "Schema keys…" header button; a rename reaches everything — added 2026-11-17
+
+**What changed:** The pipeline header has a **Schema keys…** button (before **Clear data…**). It opens
+**Change the schema keys** without a failed run: the right-hand list starts as the current keys; add,
+delete, reorder or rename, then **Change keys** (an empty dataset) or **Add keys** (a dataset with
+data: only new keys after the existing ones). Afterwards a **Schema keys changed** view shows
+`old → new`, **Renamed everywhere it was named** (scistack.toml tables, entities-file PathInputs,
+node settings, submodule bindings, saved plots/stats) and **Still to check by hand** (anything that
+names a DELETED key, which is kept, never removed; PathInputs declared in code). **Done** closes it
+and refreshes the canvas; the header's `schema: [...]` label updates at once (it used to keep the
+startup keys after any change, the remedy route included). The remedy popup's route is unchanged but
+shows the same result view. Owners: `scidb.project.key_rename` + `KeyMap` shapes; each bundle
+section's `rename_keys`; docs/claude/changing-schema-keys.md.
+
+**Backend steps:** Restart the Python process (backend changed); both bundles are rebuilt. Use an
+EMPTY project with keys `[subject, session]` and, for the rename check, a scistack.toml with
+`[schema_keys] session = ["BL", "FU"]` and an `[aliases.session]` entry.
+
+**Frontend steps:**
+1. Click **Schema keys…**. The list shows `subject`, `session`, each tagged **existing key**.
+2. Click **Add key** twice, type `trial` and `cycle`, click **Change keys**.
+3. Expected: **Schema keys changed** with `subject, session → subject, session, trial, cycle`, no
+   "Renamed…" and no "Still to check…" section. **Done**: the header reads
+   `schema: [subject, session, trial, cycle]`.
+4. Open it again, rename `session` to `visit`, **Change keys**. Expected: "Renamed everywhere it was
+   named" lists `scistack.toml: [schema_keys], [aliases]` (and Node settings / PathInputs if you
+   had any). scistack.toml now says `visit`; a node's Schema Level ticks show `visit`.
+5. Delete `visit` and **Change keys**: the scistack.toml entries stay, and "Still to check by hand"
+   names each one.
+
+`grep "\[key_rename\]\|\[schema_keys\]" scistack.log` shows the map and every place changed.
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Built-in bug reporter (issue #20) — added 2026-11-16
 
 **What changed:** The pipeline header has a **🐞 Report bug** button (after Clear Data). It opens a

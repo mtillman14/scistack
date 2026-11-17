@@ -95,7 +95,8 @@ def _clear_data(db, req: ClearDataRequest) -> dict:
 
 
 class SchemaKeyProposalRequest(BaseModel):
-    node_id: str
+    #: The failed node (remedy popup), or None (the header's "Schema keys…").
+    node_id: str | None = None
     #: The loaded data's columns (the failed save's `remedy.data_columns`).
     data_columns: list[str] = []
 

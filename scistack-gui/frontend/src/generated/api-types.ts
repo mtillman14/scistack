@@ -1784,7 +1784,7 @@ export interface InventoryRequest {
  */
 export interface SchemaKeyProposalRequest {
   data_columns?: string[]
-  node_id: string
+  node_id?: string | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

@@ -132,6 +132,8 @@
     "src/components/bugReport.test.ts",
     "src/components/schemaText.ts",
     "src/components/schemaText.test.ts",
+    "src/components/schemaKeysResult.ts",
+    "src/components/schemaKeysResult.test.ts",
     "src/components/Sidebar/schemaLevelBoxes.ts",
     "src/components/Sidebar/schemaLevelBoxes.test.ts",
     "src/components/Sidebar/libraryReport.ts",

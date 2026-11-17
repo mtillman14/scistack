@@ -9,6 +9,12 @@ GitHub issue #10; plan `.claude/plan-change-schema-keys.md`; built 2026-11-15.
 > dataset takes, and the popup's wording for a non-empty dataset is now "Add a
 > schema key".
 
+> **Update 2026-11-17 (entry point; references follow).** The GUI header has
+> a **Schema keys…** button that opens the dialog with no failed node (the
+> proposal is then the current keys). And a change now renames every
+> REFERENCE to a renamed key, not just the key tables: see "References
+> outside the key tables" below. Plan `.claude/plan-schema-keys-entry-point.md`.
+
 ## The rule
 
 Schema keys are the columns of `_schema`, fixed when a database is created.
@@ -61,9 +67,49 @@ under a key that would be deleted (it would be dropped silently).
 | `_schema_key_type`, `_schema_key_expectation` | append-only and keyed by name: a renamed key's newest row is appended under the new name, and the old name gets a NULL row. A deleted key gets a NULL row. |
 | variable views | dropped first (they reference `_schema`'s columns), re-created after. |
 
-`[schema_keys]` in the project config is the user's file: it is never edited.
-A declaration naming a renamed or deleted key is reported in
-`SchemaKeysChange.leftovers`.
+## References outside the key tables
+
+Many places name a key. All of them go through ONE map,
+`scidb.project.schema_map.KeyMap`, whose methods each own one SHAPE a key can
+appear in. A bundle import into another schema and an in-place change use the
+same shapes, so there is no second list of places.
+
+| Place | Shape (`KeyMap.…`) | Renamed by |
+|---|---|---|
+| scistack.toml `[schema_keys]` (value ORDER per key), `[aliases]`, `[colors]` | `config_tables` (the list is `SCHEMA_KEYED_CONFIG_TABLES`) | `scidb.project.key_rename` |
+| entities file `[path_inputs]`: template, `aliases`, `key_regex` | `path_input_arm` | `key_rename` (comments kept, via `bundle._map_path_inputs`) |
+| entities file `[library] schema_keys` | `key_list` | `key_rename` |
+| node settings (`schema_location`: `schemaLevel`, `schemaSelection`, `whereFilters`) | `level`, `locations`, `where_filters` via `canvas_snapshot.remap_location_value` | GUI `GuiSection.rename_keys` → `canvas_snapshot.rename_schema_keys_in_place` |
+| submodule bindings (`key_map` both sides, `iterate`) | `canvas_snapshot.remap_binding` | same |
+| saved plots / plot presets / saved stats / stats presets, every version | `exact_strings` | `PlotsSection` / `StatsSection.rename_keys` → `VersionedStore.remap_in_place` |
+| PathInputs declared in Python code | — | nobody: code is never edited; the GUI reports them (`registry.code_declared_path_inputs`) |
+
+Rules:
+
+- **A renamed key's references follow it.** `change_schema_keys(db, keys,
+  renames=, root=, providers=)` calls `key_rename.rename_key_references` after
+  the key tables commit. `root` defaults to `scifor.project.root.project_root()`;
+  the GUI passes `resolve_project_root` and `headless.bundle_providers()`.
+- **A deleted key is RETIRED, not dropped.** `KeyMap.renaming(renames, retired)`
+  keeps every reference to a retired key as written and flags it. The flags
+  become `SchemaKeysChange.leftovers` ("Still to check by hand" in the dialog).
+  An import (`KeyMap.auto`) still drops unmapped references.
+- **Adding keys touches nothing** (an identity map, every file byte for byte).
+- **Library pipelines speak their own keys.** Their node statements are
+  skipped. A placement's binding renames its project side always and its
+  child side only for a non-library child.
+- **Saved versions are rewritten in place**, not appended: a rename does not
+  change what a version meant, and an old version must still open.
+- **A failure renaming references does not undo the key change.** It is
+  reported as a leftover.
+- Fixed on the way: an import now also renames PathInput `key_regex` and node
+  `whereFilters` (both used to be skipped). The config writer now forgets
+  `aliases`/`colors` caches too.
+
+The GUI re-reads the entities file (`registry.reload_entities_file`) when its
+PathInputs changed, so a run uses the new placeholders without Refresh Code.
+The dialog fires `scistack:schema-keys-changed` and the header re-fetches its
+`schema: [...]` label.
 
 The database is **closed afterwards**. The caller reopens through its normal
 open path (the GUI: `runtime.db.close_db` + `init_db`).
@@ -92,5 +138,14 @@ and run again" calls `change_schema_keys`, then fires `RERUN_NODE_EVENT`.
 
 INFO `[emptiness] is_empty: ...`; INFO `[schema_keys_change] old -> new`, per
 table rows carried / rebuilt with ms; WARN on every refusal; GUI INFO
-`[schema_keys] proposal ...` / `change requested ...`; frontend
-`console.debug('[schema-keys] ...')`.
+`[schema_keys] proposal ...` / `change requested ... (project root ...)`;
+INFO `[schema_map] in-place key map visit->session, trial (retired)`;
+`[key_rename] section gui: {...} (N ms)` per section and one summary line;
+WARN `[key_rename] <where>: <why>` per flagged reference;
+`[canvas_snapshot] renamed keys in place`, `[saved_plot] remap_in_place`;
+WARN `[schema_keys] leftover: ...`; frontend `console.debug('[schema-keys] ...')`.
+
+Tests: `scidb/tests/test_key_rename.py` (every shape; both files; through
+`change_schema_keys`), `scistack-gui/tests/test_schema_keys_entry_point.py`
+(one project naming the key everywhere: rename / delete / add),
+`frontend/src/components/schemaKeysResult.test.ts`.

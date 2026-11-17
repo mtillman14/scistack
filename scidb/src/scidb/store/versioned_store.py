@@ -420,3 +420,27 @@ class VersionedStore:
         where = f"{self.noun} {row.get('name')!r}"
         mapped = key_map.exact_strings(envelope, where, map_report)
         return {**row, "envelope_json": json.dumps(mapped)}
+
+    def remap_in_place(self, db, key_map, map_report) -> int:
+        """Every row (every version, hidden ones too) renamed through
+        :meth:`remap_row` when the project's OWN keys change
+        (``scidb.project.key_rename``). A rename does not change what a
+        version meant, so each version is rewritten where it is rather than
+        appended: an old version must still open after the old name is gone.
+        Returns the rows rewritten."""
+        if key_map.is_identity or not self.table_exists(db):
+            return 0
+        rewritten = 0
+        for row in self.dump_rows(db):
+            mapped = self.remap_row(row, key_map, map_report)
+            if json.loads(mapped["envelope_json"]) == json.loads(row["envelope_json"]):
+                continue
+            db._duck.execute(
+                f"UPDATE {self.table} SET envelope_json = ? "
+                f"WHERE {self.id_column} = ? AND version = ?",
+                [mapped["envelope_json"], row[self.id_column], row["version"]],
+            )
+            rewritten += 1
+        Log.info("[%s] remap_in_place (%s): %d row(s) rewritten", self.tag,
+                 key_map.describe(), rewritten, layer=self.owner)
+        return rewritten

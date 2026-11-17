@@ -4962,12 +4962,17 @@
           "type": "array"
         },
         "node_id": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
-      "required": [
-        "node_id"
-      ],
       "title": "SchemaKeyProposalRequest",
       "type": "object"
     },

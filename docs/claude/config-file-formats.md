@@ -120,7 +120,13 @@ config *reading* and folder-scan discovery too, not just where files land.
 
 ## `[schema_keys]` — declared level order
 
-The one table in this file that scidb reads and the GUI never writes.
+**Not the list of keys.** The keys themselves live only in the database
+(`_schema`'s columns); this table orders each key's VALUES. scidb reads it and
+the GUI never edits it, with one exception: when a schema key is RENAMED
+(**Schema keys…**, `change_schema_keys`), its entry here, like its
+`[aliases]`/`[colors]` entries, is renamed with it
+(`scidb.project.key_rename`; docs/claude/changing-schema-keys.md). A DELETED
+key's entry is kept and reported.
 
 ```toml
 # scistack.toml

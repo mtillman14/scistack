@@ -25,6 +25,8 @@ from scidb.store import schema_tree_store
 from scidb.store.emptiness import is_empty
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from scidb.store.database import DatabaseManager
 
 RESERVED_KEYS = ("schema_id", "schema_level")
@@ -47,8 +49,12 @@ class SchemaKeysChange:
     added_keys: list[str] = field(default_factory=list)
     #: History rows removed with a deleted key, ``{table: rows}``.
     leftovers_removed: dict[str, int] = field(default_factory=dict)
-    #: Things the user may still have to update by hand.
+    #: Things the user may still have to update by hand (references to a
+    #: deleted key, kept as written; ``scidb.project.key_rename``).
     leftovers: list[str] = field(default_factory=list)
+    #: What renaming the references did, ``{place: changed, ..., "flagged": []}``
+    #: (``scidb.project.key_rename.rename_key_references``).
+    references: dict = field(default_factory=dict)
 
 
 def validate_schema_keys(keys: Sequence[str]) -> list[str]:
@@ -121,6 +127,8 @@ def change_schema_keys(
     *,
     renames: "dict[str, str] | None" = None,
     reason: str = "",
+    root: "Path | str | None" = None,
+    providers: Sequence = (),
 ) -> SchemaKeysChange:
     """Give the (empty) dataset *new_keys*, in one transaction.
 
@@ -137,6 +145,13 @@ def change_schema_keys(
     intent tables (exclusions, expectation marks) are copied into the new
     shape (a new key reads NULL = every value); key types and expectations
     follow a rename by appended rows. Every variable view is re-created.
+
+    Then every reference OUTSIDE the key tables follows a rename
+    (``scidb.project.key_rename``): the project config and entities file at
+    *root* (default ``scifor.project.root.project_root()``), and whatever each
+    of *providers* (bundle sections: the GUI canvas, saved plots, saved
+    stats) owns. References to a deleted key are kept and reported in
+    ``leftovers``.
 
     **The database is closed afterwards**: the caller's in-memory keys are
     stale. Reopen through the normal open path with ``new_keys``.
@@ -175,7 +190,7 @@ def change_schema_keys(
         # (An empty dataset takes the rebuild below, where every key is unused.)
         with duck.transaction("change_schema_keys"):
             _change_in_place(db, new_tree, renames, deleted, result, reason)
-        return _finish(db, result, started)
+        return _finish(db, result, started, root, providers)
 
     with duck.transaction("change_schema_keys"):
         # Re-checked inside the transaction: the popup's answer can be stale.
@@ -258,15 +273,35 @@ def change_schema_keys(
 
         _carry_declarations(duck, renames, deleted, reason or "change_schema_keys")
 
-    return _finish(db, result, started)
+    return _finish(db, result, started, root, providers)
 
 
-def _finish(db, result: SchemaKeysChange, started: float) -> SchemaKeysChange:
-    """After the transaction: report config leftovers and CLOSE the database
-    (the caller's in-memory keys are stale)."""
-    leftovers = _config_leftovers(result.old_keys, result.deleted_keys, result.renames)
-    result.leftovers = leftovers
-    for line in leftovers:
+def _finish(db, result: SchemaKeysChange, started: float, root, providers) -> SchemaKeysChange:
+    """After the transaction: rename the references outside the key tables
+    (``scidb.project.key_rename``), report what still names a deleted key,
+    and CLOSE the database (the caller's in-memory keys are stale).
+
+    The references are renamed AFTER the key tables committed: a failure
+    there leaves the keys changed and is reported, never undoes the change."""
+    from scidb.project.key_rename import rename_key_references
+
+    if root is None:
+        from scifor.project.root import project_root
+
+        root = project_root()
+    try:
+        result.references = rename_key_references(
+            db, root, result.renames, result.deleted_keys, providers=providers
+        )
+    except Exception as exc:  # the keys are committed; say what was not renamed
+        Log.warn(f"[schema_keys_change] renaming references failed: {exc!r}")
+        result.references = {"error": str(exc), "dropped": [], "flagged": []}
+        result.leftovers.append(
+            f"The keys changed, but references to them could not all be renamed: {exc}"
+        )
+    for where, why in result.references.get("flagged", []):
+        result.leftovers.append(f"{where}: {why}")
+    for line in result.leftovers:
         Log.warn(f"[schema_keys_change] {line}")
     db.close()
     Log.info(
@@ -345,29 +380,6 @@ def _carry_declarations(duck, renames: dict, deleted: list, source: str) -> None
             )
 
 
-def _config_leftovers(old_keys, deleted, renames) -> list[str]:
-    """Project-config ``[schema_keys]`` declarations naming a key that is gone.
-    Reported, never edited: the config is the user's file."""
-    try:
-        from scifor.project import schema_order
-
-        declared = schema_order.project_level_order()
-    except Exception as exc:  # reading the config must not undo a committed change
-        Log.warn(f"[schema_keys_change] could not read [schema_keys]: {exc}")
-        return []
-    lines = []
-    for key in declared:
-        if key in renames:
-            lines.append(
-                f"[schema_keys] in the project config still declares {key!r}; "
-                f"rename it to {renames[key]!r}."
-            )
-        elif key in deleted:
-            lines.append(
-                f"[schema_keys] in the project config still declares {key!r}, "
-                f"which is no longer a schema key; remove it."
-            )
-    return lines
 
 
 # ---------------------------------------------------------------------------

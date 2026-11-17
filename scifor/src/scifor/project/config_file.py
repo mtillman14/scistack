@@ -214,9 +214,13 @@ def _forget_cached_reads() -> None:
     a write followed at once by a read -- listing a library and seeding it in
     the same request -- saw the OLD answer. This module is the only writer,
     so it is the one place to invalidate."""
-    from . import names, outputs, schema_order
+    from . import aliases, colors, names, outputs, schema_order
 
     schema_order.clear_cache()
     names.clear_cache()
     outputs.clear_cache()
-    Log.debug("[config_file] cleared cached config reads (schema_order, names, outputs)")
+    aliases.clear_cache()
+    colors.clear_cache()
+    Log.debug(
+        "[config_file] cleared cached config reads (schema_order, names, outputs, aliases, colors)"
+    )

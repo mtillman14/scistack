@@ -1179,6 +1179,19 @@ def get_path_input(name: str) -> "PathInput | EachOf | None":
     return _path_inputs.get(name)
 
 
+def code_declared_path_inputs() -> "dict[str, tuple[PathInput | EachOf, str]]":
+    """``{name: (path_input, source)}`` for the PathInputs declared in the
+    project's own CODE: not the entities file (a ``.toml`` source, which the
+    GUI can rewrite) and not an installed library."""
+    out = {}
+    for name, pi in _path_inputs.items():
+        source = _path_input_sources.get(name) or ""
+        if source.endswith(".toml") or _is_library_source(source):
+            continue
+        out[name] = (pi, source)
+    return out
+
+
 def get_project_root() -> "Path | None":
     """The loaded project's root directory, or ``None`` before any config is
     loaded. One accessor so callers that only need the root (the generated

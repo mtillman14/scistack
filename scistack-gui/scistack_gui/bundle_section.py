@@ -155,6 +155,14 @@ class GuiSection:
         logger.info("[bundle_section] gui import: %s", report)
         return report
 
+    def rename_keys(self, ctx) -> dict:
+        """The project's own keys changed (``scidb.project.key_rename``):
+        every canvas statement and submodule binding renamed in place, by the
+        same per-value remaps an import applies to a snapshot."""
+        from scistack_gui.services import canvas_snapshot
+
+        return canvas_snapshot.rename_schema_keys_in_place(ctx.db, ctx.key_map, ctx.map_report)
+
 
 # ---------------------------------------------------------------------------
 # The project's code, as files (a bundle import is a COPY)

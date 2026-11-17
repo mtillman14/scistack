@@ -1,6 +1,13 @@
 /**
  * SchemaKeysDialog — change the schema keys (GitHub issue #10). Opened by
- * RemedyDialog's "Change the schema keys…" button.
+ * RemedyDialog's "Change the schema keys…" button (with the failed node,
+ * which is run again afterwards) and by the header's "Schema keys…" button
+ * (no node: the proposal is the current keys, and nothing runs).
+ *
+ * After a change it shows what happened: the keys before and after, where a
+ * renamed key's references were renamed (config, entities file, canvas,
+ * saved plots and stats; scidb.project.key_rename), and what still names an
+ * old key and must be fixed by hand.
  *
  * Two modes, decided by the backend's `dataset_empty`: an EMPTY dataset takes
  * the editor below (any key list, renames included); a dataset that HOLDS DATA
@@ -21,6 +28,7 @@ import { RERUN_NODE_EVENT } from './DAG/runFailures'
 import type { RerunNodeDetail } from './DAG/runFailures'
 import { dialog, dialogTitle, overlay } from './modalStyles'
 import { declarationOf, describeBranches, parseSchemaText } from './schemaText'
+import { referenceLines, type ChangeResult } from './schemaKeysResult'
 
 interface Proposal {
   existing: string[]
@@ -47,12 +55,18 @@ const SOURCE_LABEL: Record<Row['source'], string> = {
   added: 'added',
 }
 
-export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose, onApplied }: {
-  nodeId: string
-  fnName: string
-  dataColumns: string[]
+/** Fired on window after the keys change, so whatever shows them (the
+ * header's `schema: [...]`, the Inventory and Coverage popups' keys) asks
+ * the backend again instead of keeping the keys it fetched at startup. */
+export const SCHEMA_KEYS_CHANGED_EVENT = 'scistack:schema-keys-changed'
+
+export default function SchemaKeysDialog({ nodeId = null, fnName = '', dataColumns = [], onClose, onApplied }: {
+  /** The failed node (remedy popup), or null (header button: nothing reruns). */
+  nodeId?: string | null
+  fnName?: string
+  dataColumns?: string[]
   onClose: () => void
-  /** The keys were changed and the node was asked to run again. */
+  /** The keys were changed (and, with a node, it was asked to run again). */
   onApplied: () => void
 }) {
   const [existing, setExisting] = useState<string[]>([])
@@ -64,6 +78,7 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
   const [branches, setBranches] = useState<string[][]>([])
   const [usage, setUsage] = useState<NonNullable<Proposal['usage']>>([])
   const [newBranchText, setNewBranchText] = useState('')
+  const [done, setDone] = useState<ChangeResult | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -120,16 +135,20 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
     // eslint-disable-next-line no-console
     console.debug(`[schema-keys] apply node=${nodeId} keys=${JSON.stringify(sent)} renames=${JSON.stringify(hasData ? {} : renames)}`)
     try {
-      const r = await callBackend('change_schema_keys', { keys: sent, renames: hasData ? {} : renames }) as {
-        ok: boolean; error?: string; leftovers?: string[]
-      }
+      const r = await callBackend('change_schema_keys', { keys: sent, renames: hasData ? {} : renames }) as
+        ChangeResult | { ok: false; error?: string }
       if (!r.ok) {
         setError(r.error ?? 'The schema keys could not be changed.')
         return
       }
-      const detail: RerunNodeDetail = { nodeId }
-      window.dispatchEvent(new CustomEvent(RERUN_NODE_EVENT, { detail }))
-      onApplied()
+      // eslint-disable-next-line no-console
+      console.debug(`[schema-keys] changed ${r.old_keys} -> ${r.new_keys} references=${JSON.stringify(r.references)} leftovers=${r.leftovers?.length ?? 0}`)
+      window.dispatchEvent(new CustomEvent(SCHEMA_KEYS_CHANGED_EVENT, { detail: { keys: r.new_keys } }))
+      if (nodeId) {
+        const detail: RerunNodeDetail = { nodeId }
+        window.dispatchEvent(new CustomEvent(RERUN_NODE_EVENT, { detail }))
+      }
+      setDone(r)
     } catch (err) {
       setError(`Could not change the schema keys: ${String(err)}`)
     } finally {
@@ -137,17 +156,55 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
     }
   }
 
+  if (done) {
+    return (
+      <div style={overlay} onClick={onApplied}>
+        <div style={{ ...dialog, ...styles.panel }} onClick={e => e.stopPropagation()}>
+          <div style={dialogTitle}>Schema keys changed</div>
+          <div style={styles.mono}>{done.old_keys.join(', ')} → {done.new_keys.join(', ')}</div>
+          {referenceLines(done).length > 0 && (
+            <>
+              <div style={{ ...styles.heading, marginTop: 10 }}>Renamed everywhere it was named</div>
+              {referenceLines(done).map(line => <div key={line} style={styles.note}>{line}</div>)}
+            </>
+          )}
+          {(done.leftovers?.length ?? 0) > 0 && (
+            <>
+              <div style={{ ...styles.heading, marginTop: 10 }}>Still to check by hand</div>
+              {done.leftovers!.map(line => <div key={line} style={styles.leftover}>{line}</div>)}
+            </>
+          )}
+          {nodeId && <div style={styles.note}>{fnName} is running again with the new keys.</div>}
+          <div style={styles.footer}>
+            <button type="button" style={styles.button} onClick={onApplied}>Done</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={overlay} onClick={onClose}>
       <div style={{ ...dialog, ...styles.panel }} onClick={e => e.stopPropagation()}>
         <div style={dialogTitle}>Change the schema keys</div>
-        <div style={styles.text}>
-          {fnName} loaded a table with more than one row per location. Choose the keys that tell
-          its rows apart. Order matters: coarse to fine (for example subject, then visit).
-        </div>
-        <div style={styles.note}>
-          Measure columns are listed too. Delete every column that is not a key.
-        </div>
+        {nodeId ? (
+          <>
+            <div style={styles.text}>
+              {fnName} loaded a table with more than one row per location. Choose the keys that tell
+              its rows apart. Order matters: coarse to fine (for example subject, then visit).
+            </div>
+            <div style={styles.note}>
+              Measure columns are listed too. Delete every column that is not a key.
+            </div>
+          </>
+        ) : (
+          <div style={styles.text}>
+            Add, remove, rename or reorder the keys that locate every record. Order matters:
+            coarse to fine (for example subject, session, trial). A renamed key is renamed
+            everywhere the project names it: the config, PathInputs, node settings, saved plots
+            and stats.
+          </div>
+        )}
         {loading && <div style={styles.text}>Loading…</div>}
         {!loading && hasData && (
           <div>
@@ -211,7 +268,7 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
             onClick={apply}
             disabled={busy || loading || (hasData ? newBranches.length === 0 : keys.length === 0 || keys.some(k => !k))}
           >
-            {hasData ? 'Add keys and run again' : 'Change keys and run again'}
+            {(hasData ? 'Add keys' : 'Change keys') + (nodeId ? ' and run again' : '')}
           </button>
         </div>
       </div>
@@ -224,6 +281,7 @@ const styles: Record<string, React.CSSProperties> = {
   text: { fontSize: 13, lineHeight: 1.45, margin: '4px 0 8px' },
   note: { fontSize: 11, color: '#aaa', margin: '4px 0' },
   error: { fontSize: 12, color: '#f87171', margin: '8px 0', userSelect: 'text' },
+  leftover: { fontSize: 12, color: '#fbbf24', margin: '2px 0', userSelect: 'text' },
   columns: { display: 'flex', gap: 16, margin: '8px 0' },
   left: { flex: '0 0 160px' },
   right: { flex: 1 },

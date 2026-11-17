@@ -492,43 +492,118 @@ def remap_schema_keys(snap: CanvasSnapshot, key_map, report) -> CanvasSnapshot:
         statements = []
         for s in n.statements:
             if s.get("aspect") == ASPECT_SCHEMA_LOCATION and isinstance(s.get("value"), dict):
-                value = dict(s["value"])
                 where = f"node {n.label} ({n.pipeline_id})"
-                if "schemaLevel" in value:
-                    value["schemaLevel"] = key_map.level(value["schemaLevel"], where, report)
-                if value.get("schemaSelection"):
-                    value["schemaSelection"] = key_map.locations(
-                        value["schemaSelection"], where, report
-                    )
-                s = {**s, "value": value}
+                s = {**s, "value": remap_location_value(s["value"], key_map, where, report)}
             statements.append(s)
         nodes.append(replace(n, statements=statements))
 
     uses = []
     for u in snap.uses:
-        binding = dict(u.binding or {})
         where = f"submodule use {u.use_id} ({u.parent_pipeline_id})"
-        if binding.get("key_map"):
-            mapped = {}
-            for child_key, parent_key in binding["key_map"].items():
-                c, p = key_map.key(child_key), key_map.key(parent_key)
-                if c is None or p is None:
-                    report.dropped.append((where, f"{child_key}->{parent_key}"))
-                    continue
-                mapped[c] = p
-            binding["key_map"] = mapped
-        if binding.get("iterate"):
-            # {key: values}: keys renamed; the values are the exporter's data.
-            before = set(binding["iterate"])
-            binding["iterate"] = key_map.table(binding["iterate"], where, report) or {}
-            if any(key_map.key(k) != k for k in before):
-                report.flagged.append(
-                    (where, "iteration-value overrides name the exporter's levels; review them")
-                )
+        # Child and parent are both the exporter's pipelines: both sides map.
+        binding = remap_binding(u.binding, key_map, where, report, child_side=True)
         uses.append(replace(u, binding=binding))
 
     out = replace(snap, nodes=nodes, uses=uses)
     logger.info(
         "[canvas_snapshot] remapped into another schema (%s)", key_map.describe()
+    )
+    return out
+
+
+def remap_location_value(value: dict, key_map, where: str, report) -> dict:
+    """A node's ``schema_location`` statement value with every key it names
+    renamed through *key_map*: the stated level, the location selection and
+    the ``where=`` filters (``intent_store.SCHEMA_LOCATION_KEYS``). The ONE
+    remap of that value: an import's snapshot and an in-place key change
+    both call it."""
+    out = dict(value)
+    if "schemaLevel" in out:
+        out["schemaLevel"] = key_map.level(out["schemaLevel"], where, report)
+    if out.get("schemaSelection"):
+        out["schemaSelection"] = key_map.locations(out["schemaSelection"], where, report)
+    if out.get("whereFilters"):
+        out["whereFilters"] = key_map.where_filters(out["whereFilters"], where, report)
+    return out
+
+
+def remap_binding(binding: "dict | None", key_map, where: str, report, *, child_side: bool) -> dict:
+    """A placed submodule's binding with its keys renamed: ``key_map``'s
+    parent side (the project's keys) always, its child side only when
+    *child_side* (the child pipeline speaks the same keys -- not a library
+    pipeline, whose native keys are its own), and the ``iterate`` overrides,
+    which are keyed by parent-side names."""
+    binding = dict(binding or {})
+    if binding.get("key_map"):
+        mapped = {}
+        for child_key, parent_key in binding["key_map"].items():
+            c = key_map.key(child_key) if child_side else child_key
+            p = key_map.key(parent_key)
+            key_map.flag_retired([parent_key, *([child_key] if child_side else [])], where, report)
+            if c is None or p is None:
+                report.dropped.append((where, f"{child_key}->{parent_key}"))
+                continue
+            mapped[c] = p
+        binding["key_map"] = mapped
+    if binding.get("iterate"):
+        # {key: values}: keys renamed; the values are the dataset's levels.
+        before = set(binding["iterate"])
+        binding["iterate"] = key_map.table(binding["iterate"], where, report) or {}
+        if not key_map.in_place and any(key_map.key(k) != k for k in before):
+            report.flagged.append(
+                (where, "iteration-value overrides name the exporter's levels; review them")
+            )
+    return binding
+
+
+def rename_schema_keys_in_place(db, key_map, report) -> dict:
+    """The project's OWN keys changed (``scidb.project.key_rename``): every
+    canvas statement and submodule binding that names a key, renamed where it
+    is stored. What a library pipeline says is in the library's own keys and
+    is left alone (its placement's binding maps them). Returns
+    ``{"statements": n, "bindings": n}`` rewritten."""
+    from dataclasses import replace
+
+    from scidb.provenance.intent import ASPECT_SCHEMA_LOCATION
+    from scistack_gui.stores import intent_store, pipeline_store
+
+    if key_map.is_identity:
+        return {"statements": 0, "bindings": 0}
+    library = {r["pipeline_id"] for r in pipeline_store.list_library_pipelines(db)}
+
+    changed = []
+    for s in intent_store.load_statements(db, aspect=ASPECT_SCHEMA_LOCATION):
+        if s.scope in library or not isinstance(s.value, dict):
+            continue
+        where = f"node {s.subject_ref} ({s.scope})"
+        try:
+            value = remap_location_value(s.value, key_map, where, report)
+        except (TypeError, ValueError) as exc:
+            # A stored value this cannot read is left as it is and named,
+            # rather than stopping every other node's rename.
+            logger.warning("[canvas_snapshot] %s: settings not renamed: %s", where, exc)
+            report.flagged.append((where, f"settings could not be read ({exc}); not renamed"))
+            continue
+        if value != s.value:
+            changed.append(replace(s, value=value))
+    intent_store.put_statements(db, changed)
+
+    bindings = 0
+    for u in pipeline_store.get_pipeline_uses(db):
+        if u["parent_pipeline_id"] in library:
+            continue
+        where = f"submodule use {u['use_id']} ({u['parent_pipeline_id']})"
+        binding = remap_binding(
+            u["binding"], key_map, where, report,
+            child_side=u["child_pipeline_id"] not in library,
+        )
+        if binding != (u["binding"] or {}):
+            pipeline_store.update_use_binding(db, u["use_id"], binding)
+            bindings += 1
+
+    out = {"statements": len(changed), "bindings": bindings}
+    logger.info(
+        "[canvas_snapshot] renamed keys in place (%s): %s; library pipelines skipped: %s",
+        key_map.describe(), out, sorted(library),
     )
     return out

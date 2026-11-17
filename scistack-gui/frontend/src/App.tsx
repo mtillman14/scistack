@@ -39,6 +39,8 @@ import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
 import CoveragePopup from "./components/Expectation/CoveragePopup";
 import ClearDataButton from "./components/DAG/ClearDataButton";
+import SchemaKeysButton from "./components/DAG/SchemaKeysButton";
+import { SCHEMA_KEYS_CHANGED_EVENT } from "./components/SchemaKeysDialog";
 import BugReportButton from "./components/BugReportButton";
 import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
@@ -328,9 +330,19 @@ export default function App() {
   // noisy, and there's nothing to render yet regardless).
   useEffect(() => {
     if (!dbLoaded) return;
-    callBackend("get_schema")
-      .then((d) => setSchema(d as { keys: string[] }))
-      .catch(console.error);
+    const fetchSchema = () =>
+      callBackend("get_schema")
+        .then((d) => setSchema(d as { keys: string[] }))
+        .catch(console.error);
+    fetchSchema();
+    // The keys can change while the project is open (SchemaKeysDialog):
+    // ask again rather than keep the startup answer.
+    const onChanged = () => {
+      console.debug("[schema-keys] keys changed; re-fetching the header's schema");
+      fetchSchema();
+    };
+    window.addEventListener(SCHEMA_KEYS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(SCHEMA_KEYS_CHANGED_EVENT, onChanged);
   }, [dbLoaded]);
 
   // Phase 8: any blocking startup error pauses the whole UI.
@@ -409,6 +421,7 @@ export default function App() {
                       >
                         ✅ Coverage
                       </button>
+                      <SchemaKeysButton />
                       <ClearDataButton />
                       <BugReportButton />
                       {schema.keys.length > 0 && (

@@ -921,10 +921,7 @@ def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
     from scifor.project import config_file
 
     section = _toml_loads(data.decode("utf-8"))
-    new = _config_paths_relative(section, exporter_root)
-    for table in ("schema_keys", "aliases", "colors"):
-        if table in new:
-            new[table] = kmap.table(new[table], f"scistack.toml [{table}]", report)
+    new = kmap.config_tables(_config_paths_relative(section, exporter_root), report)
 
     if new == json.loads(json.dumps(section, default=str)):
         path.write_bytes(data)
@@ -1033,10 +1030,8 @@ def _rewrite_path_inputs(
                 )
         return [
             {
-                "template": kmap.template(a["template"], where, report),
+                **kmap.path_input_arm(a, where, report),
                 "root_folder": path_roots.get(name, a["root_folder"]),
-                "aliases": _rename_alias_keys(a["aliases"], kmap),
-                "key_regex": a["key_regex"],
             }
             for a in arms
         ]
@@ -1051,18 +1046,6 @@ def _rewrite_path_inputs(
         f"{len(out['roots_hidden'])} hidden by the exporter, "
         f"{len(out['unknown_roots'])} root(s) given for unknown names"
     )
-    return out
-
-
-def _rename_alias_keys(aliases: dict, kmap) -> dict:
-    """PathInput ``aliases`` follow their placeholder through *kmap*: renamed
-    with it, and kept under the old name when the key has no counterpart
-    (``KeyMap.template`` leaves such a placeholder in place too). Without
-    this the rewrite would drop every alias, or orphan one on a renamed key."""
-    out = {}
-    for key, canon_map in (aliases or {}).items():
-        new = kmap.key(key)
-        out[new if new is not None else key] = canon_map
     return out
 
 

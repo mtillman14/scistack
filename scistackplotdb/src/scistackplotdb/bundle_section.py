@@ -48,3 +48,13 @@ class PlotsSection:
                 report[store.table] = store.load_rows(ctx.db, rows)
         Log.info("[bundle_section] plots import: %s", report, layer=LAYER)
         return report
+
+    def rename_keys(self, ctx) -> dict:
+        """The project's own keys changed (``scidb.project.key_rename``):
+        every saved plot and preset renamed in place."""
+        report = {
+            store.table: store.remap_in_place(ctx.db, ctx.key_map, ctx.map_report)
+            for store in _STORES.values()
+        }
+        Log.info("[bundle_section] plots rename_keys: %s", report, layer=LAYER)
+        return report
