@@ -167,13 +167,14 @@ export function formatImportReport(r: ImportReport): string {
     out.push('', 'Install with:', '', '```', env.install, '```', '');
   }
 
-  const history = r.sections.history as { live?: boolean; archived?: string | null } | undefined;
+  // kept_at: scidb.project.bundle._import_history_and_data (folder owner: scidb.project.imported).
+  const history = r.sections.history as { live?: boolean; kept_at?: string | null } | undefined;
   if (history) {
     out.push('## History', '');
     if (history.live) out.push('- Loaded live, with its data.');
-    else if (history.archived) {
+    else if (history.kept_at) {
       out.push(
-        `- Archived to \`${history.archived}\` (not in the live database: its data was not in`
+        `- Run history kept as files in \`${history.kept_at}\` (not in the live database: its data was not in`
         + ' the bundle, or the schema changed). Kept for reproduction checks.',
       );
     } else out.push('- Not imported.');

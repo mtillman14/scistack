@@ -14,22 +14,22 @@
  */
 
 import { useState } from 'react'
-import { callBackend, isVSCodeMode } from '../api'
+import { callBackend, pickSavePath } from '../api'
 
-interface ExportChoice {
+export interface ExportChoice {
   name: string
   flag: string
   label: string
   default: boolean
 }
 
-interface ExportOptionsResponse {
+export interface ExportOptionsResponse {
   choices: ExportChoice[]
   extension: string
   default_name: string
 }
 
-interface ExportResult {
+export interface ExportResult {
   path: string
   bytes: number
   options: Record<string, boolean>
@@ -59,17 +59,12 @@ export default function ProjectExportButton() {
 
   const doExport = async () => {
     if (!spec) return
-    let path: string | null
-    if (isVSCodeMode) {
-      const picked = await callBackend('pick_save_path', {
-        defaultName: spec.default_name,
-        formats: [spec.extension.replace(/^\./, '')],
-        filterName: 'SciStack project bundle',
-      })
-      path = (picked as { path: string | null }).path
-    } else {
-      path = window.prompt('Save the project bundle as (absolute path):', spec.default_name)
-    }
+    const path = await pickSavePath({
+      defaultName: spec.default_name,
+      formats: [spec.extension.replace(/^\./, '')],
+      filterName: 'SciStack project bundle',
+      prompt: 'Save the project bundle as (absolute path):',
+    })
     if (!path) return  // cancelled
     setBusy(true)
     setError('')

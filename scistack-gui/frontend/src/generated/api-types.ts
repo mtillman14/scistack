@@ -582,6 +582,7 @@ export interface CoverageQuery {
  * via the `definition` "ExportBundle".
  */
 export interface ExportBundle {
+  attachable?: boolean
   options?: {
     [k: string]: boolean
   } | null

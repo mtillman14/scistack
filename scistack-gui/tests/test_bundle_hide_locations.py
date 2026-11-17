@@ -129,3 +129,26 @@ def test_a_note_quoting_the_project_folder_refuses_the_export(client, raw_on_can
     # Without hiding, the same note exports fine.
     out2, r2 = _export(client, raw_on_canvas, hide=False, name="plain")
     assert r2.status_code == 200, r2.text
+
+
+def test_hide_rewrites_folders_quoted_in_the_logs(client, raw_on_canvas):
+    """Issue #20: the logs section quotes folders freely (every file a run
+    read). Logs are SciStack's own text, so a hiding export rewrites them
+    instead of refusing — and nothing of the folder is left."""
+    from scistacklog import Log
+
+    before = (Log.get_path(), Log.get_journal_path())
+    Log.set_path(str(raw_on_canvas / "scistack-debug.log"), journal_path=str(raw_on_canvas / "scistack.log"))
+    try:
+        Log.info(f"loading {RAW_ROOT}/S01/BL.csv from {raw_on_canvas}")
+        out, r = _export(client, raw_on_canvas, hide=True, name="logs")
+    finally:
+        Log.set_path(*before)
+    assert r.status_code == 200, r.text
+    with zipfile.ZipFile(out) as zf:
+        debug = zf.read("logs/scistack-debug.log").decode("utf-8")
+    line = next(l for l in debug.splitlines() if "/S01/BL.csv" in l)
+    assert RAW_ROOT not in line and str(raw_on_canvas) not in line
+    # Tokens are PathRedaction._token(label); a PathInput's label is "PathInput <name>".
+    assert "<PathInput RAW>" in line and "<project>" in line
+    assert any(k.startswith("logs/") for k in r.json()["redaction"]["replaced"])

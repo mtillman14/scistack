@@ -43,6 +43,54 @@ const _notificationHandlers = new Set<MessageHandler>();
 /** True when running inside the VS Code extension's webview. */
 export const isVSCodeMode = isVSCode;
 
+/**
+ * Open a web page in the user's browser. A VS Code webview cannot open tabs,
+ * so the extension host does it (`open_external`, dagPanel.ts); the standalone
+ * browser build just opens a new tab.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  if (vscode) {
+    await callVSCode('open_external', { url });
+    return;
+  }
+  // 'noopener' makes window.open return null even on success, so there is no
+  // "did it open" to report — only that it was asked.
+  window.open(url, '_blank', 'noopener');
+  console.info('[SciStack] open_external (browser)', { length: url.length });
+}
+
+/**
+ * Ask where to save a file. VS Code shows the host's save dialog
+ * (`pick_save_path`); the browser build cannot, so the user types an
+ * absolute path. null = cancelled.
+ */
+export async function pickSavePath(opts: {
+  defaultName: string;
+  formats: string[];
+  filterName: string;
+  prompt: string;
+}): Promise<string | null> {
+  if (vscode) {
+    const picked = await callVSCode('pick_save_path', {
+      defaultName: opts.defaultName,
+      formats: opts.formats,
+      filterName: opts.filterName,
+    });
+    return (picked as { path: string | null }).path;
+  }
+  return window.prompt(opts.prompt, opts.defaultName);
+}
+
+/**
+ * Show a saved file in the OS file manager (VS Code only: `reveal_in_os`,
+ * dagPanel.ts). The browser build cannot reach the file system; callers
+ * show the path instead.
+ */
+export async function revealInOs(path: string): Promise<void> {
+  if (!vscode) throw new Error('Show in folder needs the VS Code extension');
+  await callVSCode('reveal_in_os', { path });
+}
+
 export function addNotificationHandler(handler: MessageHandler): () => void {
   _notificationHandlers.add(handler);
   return () => _notificationHandlers.delete(handler);

@@ -39,6 +39,7 @@ import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
 import CoveragePopup from "./components/Expectation/CoveragePopup";
 import ClearDataButton from "./components/DAG/ClearDataButton";
+import BugReportButton from "./components/BugReportButton";
 import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
 import PipelineRunController from "./components/PipelineRunController";
@@ -409,6 +410,7 @@ export default function App() {
                         ✅ Coverage
                       </button>
                       <ClearDataButton />
+                      <BugReportButton />
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
                           schema: [{schema.keys.join(", ")}]

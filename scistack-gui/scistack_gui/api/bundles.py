@@ -37,6 +37,11 @@ class ExportBundle(BaseModel):
     out_path: str
     #: ``{option name: bool}``; an option left out takes its default.
     options: dict[str, bool] | None = None
+    #: Write ``<name>.scistack.zip`` (the bundle wrapped in a plain zip,
+    #: ``scidb.project.bundle.zip_for_attachment``) instead of the bare
+    #: ``.scistack``: the bug reporter's file, which GitHub must accept as an
+    #: attachment (issue #20).
+    attachable: bool = False
 
 
 def _get_export_options() -> dict:
@@ -70,7 +75,10 @@ def _export_project_bundle(db, req: ExportBundle) -> dict:
     from scidb.project.bundle import ExportReport
 
     report = ExportReport()
-    path = export_open_project(out, options=options, db=db, report=report)
+    if req.attachable:
+        path = _export_attachable(out, options, db, report)
+    else:
+        path = export_open_project(out, options=options, db=db, report=report)
     return {
         "path": str(path),
         "bytes": path.stat().st_size,
@@ -80,8 +88,29 @@ def _export_project_bundle(db, req: ExportBundle) -> dict:
     }
 
 
+def _export_attachable(out: Path, options, db, report) -> Path:
+    """The bundle goes to a temporary folder and only the ``.zip`` lands at
+    *out*, so the user's folder holds the one file to attach. The inner
+    bundle is named after *out* without its ``.zip``/``.scistack``."""
+    import tempfile
+
+    from scidb.project.bundle import EXTENSION, zip_for_attachment
+
+    from scistack_gui.headless import export_open_project
+
+    stem = out.name
+    for suffix in (".zip", EXTENSION):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    with tempfile.TemporaryDirectory(prefix="scistack-attach-") as tmp:
+        inner = export_open_project(Path(tmp) / f"{stem}{EXTENSION}", options=options, db=db, report=report)
+        path = zip_for_attachment(inner, out.with_name(f"{stem}{EXTENSION}.zip"))
+    logger.info("[bundles] attachable export -> %s (%d bytes)", path, path.stat().st_size)
+    return path
+
+
 class VerifyRequest(BaseModel):
-    #: An archived history folder or a .scistack file; None = the newest archive.
+    #: A run-history folder or a .scistack file; None = the imported run history (scidb.project.imported).
     against: str | None = None
     rtol: float | None = None
     atol: float | None = None

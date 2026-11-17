@@ -1133,8 +1133,8 @@ def _add_commands(
         help="Compare your re-run with the exporter's history (never runs code).",
     )
     p.add_argument("--against", default=None,
-                   help="An archived history folder or a .scistack bundle (default: the newest "
-                   "archive under .scistack/archive/).")
+                   help="A run-history folder or a .scistack bundle (default: the imported run "
+                   "history in .scistack/imported/run-history/).")
     p.add_argument("--project", default=None, help="Project folder (default: the database's folder).")
     p.add_argument("--rtol", type=float, default=DEFAULT_RTOL,
                    help=f"Relative tolerance when the exporter's data is available (default {DEFAULT_RTOL:g}).")

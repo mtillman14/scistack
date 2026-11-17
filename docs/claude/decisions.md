@@ -1129,3 +1129,17 @@ The shared root is **one** `[outputs] folder` in scistack.toml (owner
 identity. Rejected: named output roots, and a `{root}` placeholder inside the
 template (it clashes with schema-key substitution). Stats get no file output in
 v1, because the DB record plus `scidb report` already cover it.
+
+## D-2026-11-16: an import's footprint is `.scistack/imported/`, no "archive"
+
+Everything an import keeps from the sender's bundle lives in one folder,
+`.scistack/imported/`, with one subfolder per concern: `import.json`,
+`environment.json`, `wheelhouse/`, `run-history/` (the sender's run history
+when it is not loaded live, which `scistack verify` reads) and `logs/` (issue
+#20). Owner: `scidb.project.imported`. This supersedes the
+`.scistack/archive/<export time>/` folder in the 2026-10 decision above.
+"Archive" named a storage state and not the content or its origin, and an
+import always makes a new project, so the `<export time>` level was never more
+than one folder. The import report's `history.archived` became
+`history.kept_at`. Beta: no migration; a project imported earlier needs
+`verify --against <its old folder>`.

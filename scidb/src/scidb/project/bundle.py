@@ -70,6 +70,17 @@ DATA_SECTION = "data"
 WHEELHOUSE_SECTION = "wheelhouse"
 WHEELHOUSE_INDEX = "wheelhouse.json"
 
+#: ``ExportOptions.include_logs``: the end of ``scistack.log`` (the run
+#: journal) and ``scistack-debug.log``, each under its own file name. Never
+#: imported into the recipient's logs; kept in ``.scistack/imported/logs/``
+#: (``scidb.project.imported``).
+LOGS_SECTION = "logs"
+#: How much of each log travels. 5,000 lines is the last several runs of the
+#: debug file at DEBUG (~750 KB raw, ~100 KB in the zip) and months of the
+#: journal -- enough to see what led up to a bug, far under GitHub's 25 MB
+#: attachment limit.
+LOG_TAIL_LINES = 5000
+
 #: What ran, when, with what: the provenance graph and its schema rows, plus
 #: the dataset intent that refers to them (exclusions, variant pins,
 #: deletion tombstones). Never who (D-2026-10-08-1). Read from the table
@@ -77,7 +88,7 @@ WHEELHOUSE_INDEX = "wheelhouse.json"
 HISTORY_TABLES: tuple[str, ...] = table_registry.history_tables()
 
 #: Rows that are dataset INTENT rather than facts: they govern a re-run, so
-#: they go live even when the rest of the history is only archived.
+#: they go live even when the rest of the history is only kept as files.
 INTENT_TABLES: tuple[str, ...] = table_registry.intent_tables()
 
 #: What a warning calls each dataset-intent table (a user reads it), and how
@@ -150,7 +161,7 @@ def _value_rules_left_out(loaded: dict) -> dict[str, int]:
     return out
 
 
-def _value_rules_warning(left_out: dict[str, int], archive: "Path | None") -> "str | None":
+def _value_rules_warning(left_out: dict[str, int], kept_at: "Path | None") -> "str | None":
     """The import warning for rules naming the exporter's values that were
     left out on purpose (never silent: feedback, never drop data silently)."""
     if not left_out:
@@ -160,7 +171,7 @@ def _value_rules_warning(left_out: dict[str, int], archive: "Path | None") -> "s
         + (" (their declared values; shared / per parent kept)" if t == "_schema_key_expectation" else "")
         for t, n in sorted(left_out.items())
     )
-    where = f" They are kept, unapplied, in the archive at {archive}." if archive else ""
+    where = f" They are kept, unapplied, in the imported run history at {kept_at}." if kept_at else ""
     return (
         f"rules naming the exporter's values NOT applied, because this project runs on "
         f"other data: {what}.{where} To apply one here, {'; '.join(_INTENT_LABELS.get(t, (t, f'restore {t} by hand'))[1] for t in sorted(left_out))}"
@@ -211,10 +222,6 @@ def _refresh_intent(db) -> None:
         refresh()
         Log.info(f"[bundle] schema key types now {getattr(db, 'dataset_schema_key_types', {})}")
 
-#: Where an archived (not loaded) history lands in the new project.
-ARCHIVE_DIR = ".scistack/archive"
-
-
 class BundleError(ValueError):
     """A bundle that cannot be written or read, with the reason."""
 
@@ -223,11 +230,16 @@ class BundleError(ValueError):
 class ExportOptions:
     """What an export includes. THE defaults (decided 2026-10-08): history
     is small and is what a reproduction check compares against; derived data
-    can be large, so the user opts in; dependency wheels are for archives."""
+    can be large, so the user opts in; dependency wheels are for long-term
+    copies (a library that may not be installable later)."""
 
     include_history: bool = True
     include_data: bool = False
     include_wheelhouse: bool = False
+    #: The last ``LOG_TAIL_LINES`` lines of the journal and the debug file
+    #: (issue #20): what whoever receives the bundle needs to debug it. On by
+    #: default: small, and the bug reporter's export is the default export.
+    include_logs: bool = True
     #: Keep each PathInput's name and template shape but not WHERE its files
     #: are (``scidb.project.path_redaction``): for a public release. Off, the
     #: exporter's folders travel as they are (internal project transfers).
@@ -406,7 +418,33 @@ def _hide_locations(sections: "dict[str, dict[str, bytes]]", redaction) -> list:
                 del files[prefix + r]
             files.update({prefix + r: d for r, d in new.items()})
             left += found
+
+    # Logs quote folders freely (every file a run read); they are text WE
+    # wrote, so unlike code they are rewritten rather than refused. Last, so
+    # every needle the tables added is known.
+    for rel, data in list(sections.get(LOGS_SECTION, {}).items()):
+        where = f"{LOGS_SECTION}/{rel}"
+        sections[LOGS_SECTION][rel] = redaction.text(data.decode("utf-8", errors="replace"), where).encode("utf-8")
     return left
+
+
+def _logs_section() -> "dict[str, bytes]":
+    """The last ``LOG_TAIL_LINES`` of each log this process writes (the files
+    ``configure_database`` put beside the project's database), keyed by file
+    name. A log that is not attached or is empty is left out."""
+    from scistacklog import tail_lines
+
+    files: dict[str, bytes] = {}
+    for path in (Log.get_journal_path(), Log.get_path()):
+        if not path:
+            continue
+        text = tail_lines(path, LOG_TAIL_LINES)
+        if text:
+            files[Path(path).name] = text.encode("utf-8")
+    Log.info(
+        f"[bundle] logs section: {', '.join(f'{k} ({len(v)} bytes)' for k, v in files.items()) or 'no log attached'}"
+    )
+    return files
 
 
 def _env_section() -> "dict[str, bytes]":
@@ -669,6 +707,10 @@ def export_project(
         )
     if options.include_wheelhouse:
         sections[WHEELHOUSE_SECTION] = _wheelhouse_section()
+    if options.include_logs:
+        logs = _logs_section()
+        if logs:
+            sections[LOGS_SECTION] = logs
     for provider in providers or []:
         if provider.name in sections:
             raise BundleError(f"two sections named {provider.name!r}")
@@ -744,6 +786,35 @@ def export_project(
     )
     if report is not None:
         report.path = out_path
+    return out_path
+
+
+#: What :func:`zip_for_attachment` writes. GitHub (and most issue trackers and
+#: mail filters) refuse an unknown extension such as ``.scistack`` but take a
+#: ``.zip``.
+ATTACHMENT_EXTENSION = EXTENSION + ".zip"
+
+
+def zip_for_attachment(bundle_path: "Path | str", out_path: "Path | str") -> Path:
+    """Wrap the bundle at *bundle_path* in a plain ``.zip`` at *out_path*
+    (``.zip`` appended when missing), holding the bundle as its one member.
+    Unzipping it gives back the ``.scistack`` byte for byte, so the receiver
+    imports it as usual -- nothing on the import side knows about this.
+
+    The member is STORED: a bundle is already deflated."""
+    bundle_path = Path(bundle_path)
+    out_path = Path(out_path)
+    if out_path.suffix != ".zip":
+        out_path = out_path.with_name(out_path.name + ".zip")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as zf:
+        zf.write(bundle_path, arcname=bundle_path.name)
+    tmp.replace(out_path)
+    Log.info(
+        f"[bundle] zip_for_attachment: {bundle_path.name} "
+        f"({bundle_path.stat().st_size} bytes) -> {out_path} ({out_path.stat().st_size} bytes)"
+    )
     return out_path
 
 
@@ -1013,16 +1084,18 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
 
     * data + history, schema kept, history wanted -> both loaded live;
     * history without data (the default bundle), or into another schema ->
-      the history is ARCHIVED under ``.scistack/archive/<export time>/`` as
-      the bundle's own Parquet files, for audit and ``scistack verify``;
-      its dataset intent (``INTENT_TABLES``: exclusions, schema key types)
-      still goes live when the schema was kept, because it governs a re-run;
+      the history is KEPT AS FILES in ``.scistack/imported/run-history/``
+      (``scidb.project.imported``), the bundle's own Parquet files, for audit
+      and ``scistack verify``; its dataset intent (``INTENT_TABLES``:
+      exclusions, schema key types) still goes live when the schema was kept,
+      because it governs a re-run;
     * data into another schema -> not imported (it describes a dataset with
       a different shape), reported;
     * ``value_rules=False`` (this project runs on OTHER data) -> like the
-      archived case: data not imported (it is the exporter's dataset), and of
-      the dataset intent only what names keys goes live; the rules naming the
-      exporter's values (:func:`_value_free`) stay in the archive, warned.
+      kept-as-files case: data not imported (it is the exporter's dataset), and
+      of the dataset intent only what names keys goes live; the rules naming
+      the exporter's values (:func:`_value_free`) stay in the run-history
+      files, warned.
 
     Dataset intent that does not go live (no history in the bundle, history
     declined, another schema) is a WARNING naming what was left behind
@@ -1032,7 +1105,8 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
 
     history = bundle.sections.get(HISTORY_SECTION)
     data = bundle.sections.get(DATA_SECTION)
-    out: dict = {"live": False, "archived": None, "intent_loaded": [], "data": None}
+    #: kept_at: the run-history folder when the history was kept as files.
+    out: dict = {"live": False, "kept_at": None, "intent_loaded": [], "data": None}
     if history is None and data is None:
         _warn_intent(report, manifest, "the project was exported without its run history")
         return False
@@ -1062,21 +1136,22 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
         )
         report.warnings.append(f"derived data {out['data']}")
     if history is not None:
-        stamp = re.sub(r"[^0-9A-Za-z]+", "-", str(manifest.get("exported_at") or "export")).strip("-")
-        archive = root / ARCHIVE_DIR / stamp
-        archive.mkdir(parents=True, exist_ok=True)
+        from scidb.project.imported import run_history_dir
+
+        kept_at = run_history_dir(root)
+        kept_at.mkdir(parents=True, exist_ok=True)
         for rel, blob in history.items():
-            (archive / rel).write_bytes(blob)
-        (archive / "README.txt").write_text(
-            "Run history exported with this project, kept read-only for audit and\n"
-            "`scistack verify`. It is NOT in the live database: its derived data\n"
-            "was not in the bundle (or the schema changed, or the project runs on\n"
-            "other data), and the live database only holds history together with\n"
-            "its data. tables.json lists the tables; each <table>.parquet holds\n"
-            "its rows.\n",
+            (kept_at / rel).write_bytes(blob)
+        (kept_at / "README.txt").write_text(
+            "The sender's run history, imported with this project and kept read-only\n"
+            "for audit and `scistack verify`. It is NOT in the live database: its\n"
+            "derived data was not in the bundle (or the schema changed, or the\n"
+            "project runs on other data), and the live database only holds history\n"
+            "together with its data. tables.json lists the tables; each\n"
+            "<table>.parquet holds its rows.\n",
             encoding="utf-8",
         )
-        out["archived"] = str(archive)
+        out["kept_at"] = str(kept_at)
         if kmap.is_identity:
             spec = json.loads(history[table_copy.TABLES_FILE])
             intent = [t for t in INTENT_TABLES if t in spec.get("tables", {})]
@@ -1099,7 +1174,7 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
                     )
                     left_out = _value_rules_left_out(loaded)
                     out["value_rules_left_out"] = left_out
-                    warning = _value_rules_warning(left_out, archive)
+                    warning = _value_rules_warning(left_out, kept_at)
                     if warning is not None:
                         report.warnings.append(warning)
                         Log.warn(f"[bundle] {warning}")
@@ -1111,20 +1186,18 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
                 f"the project was imported into another schema ({kmap.describe()}) "
                 f"and the rules name the exporter's keys",
             )
-        Log.info(f"[bundle] history archived at {archive}; intent loaded {out['intent_loaded']}")
+        Log.info(f"[bundle] run history kept as files in {kept_at}; intent loaded {out['intent_loaded']}")
     report.sections[HISTORY_SECTION] = out
     return False
 
 
-#: What an import records about where the project came from (scidb.project.verify
-#: reads the key map from it, with or without an archived history).
-IMPORT_RECORD = "import.json"
-
-
 def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str], kmap) -> None:
-    from scidb.project.environment import STATE_DIR
+    """What an import records about where the project came from
+    (scidb.project.verify reads the key map from it, whether or not the run
+    history was kept as files)."""
+    from scidb.project.imported import IMPORT_RECORD, imported_dir
 
-    state = root / STATE_DIR
+    state = imported_dir(root)
     state.mkdir(parents=True, exist_ok=True)
     record = {
         "bundle": Path(bundle_path).name,
@@ -1187,7 +1260,7 @@ def import_project(
     *value_rules* False says the project will run on OTHER data than the
     exporter's: the dataset rules naming the exporter's values (marks and
     exclusions at a subject, declared key values; :func:`_value_free`) are
-    left out, warned and kept in the archive, and derived data is not
+    left out, warned and kept in the imported run history, and derived data is not
     imported. Rules naming only keys (key types, shared / per parent) still
     go live.
     *open_db(db_path, schema_keys)* creates and opens the database; the GUI
@@ -1249,7 +1322,7 @@ def import_project(
         report.created.append(config_path_at(root))
 
     by_name = {p.name: p for p in providers or []}
-    builtin = {CONFIG_SECTION, ENV_SECTION, HISTORY_SECTION, DATA_SECTION, WHEELHOUSE_SECTION}
+    builtin = {CONFIG_SECTION, ENV_SECTION, HISTORY_SECTION, DATA_SECTION, WHEELHOUSE_SECTION, LOGS_SECTION}
     for name, files in bundle.sections.items():
         if name not in builtin and name not in by_name:
             msg = f"section {name!r} ({len(files)} file(s)) has no importer here; not imported"
@@ -1274,12 +1347,12 @@ def import_project(
     )
 
     env_files = bundle.sections.get(ENV_SECTION, {})
-    from scidb.project.environment import ENVIRONMENT_FILE, STATE_DIR, WHEELHOUSE_DIR
+    from scidb.project.imported import ENVIRONMENT_FILE, LOGS_DIR, WHEELHOUSE_DIR, imported_dir
 
+    state = imported_dir(root)
     if ENV_FILE in env_files:
         # Kept with the project: the install (after trust, a separate step:
         # scidb.project.environment.install_project_requirements) reads it from here.
-        state = root / STATE_DIR
         state.mkdir(parents=True, exist_ok=True)
         (state / ENVIRONMENT_FILE).write_bytes(env_files[ENV_FILE])
         env_report = check_environment(root, json.loads(env_files[ENV_FILE]))
@@ -1290,9 +1363,21 @@ def import_project(
                 f"{env_report['install']}"
             )
 
+    logs = bundle.sections.get(LOGS_SECTION, {})
+    if logs:
+        # The exporter's logs, for whoever debugs what the exporter saw: kept
+        # whether or not the history was imported, never mixed into this
+        # project's own logs.
+        folder = state / LOGS_DIR
+        folder.mkdir(parents=True, exist_ok=True)
+        for rel, blob in logs.items():
+            (folder / rel).write_bytes(blob)
+        report.sections[LOGS_SECTION] = {"kept_at": str(folder), "files": sorted(logs)}
+        Log.info(f"[bundle] sender's logs kept in {folder}: {sorted(logs)}")
+
     wheels = bundle.sections.get(WHEELHOUSE_SECTION, {})
     if wheels:
-        house = root / STATE_DIR / WHEELHOUSE_DIR
+        house = state / WHEELHOUSE_DIR
         house.mkdir(parents=True, exist_ok=True)
         for rel, blob in wheels.items():
             (house / rel).write_bytes(blob)

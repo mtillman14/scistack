@@ -123,9 +123,11 @@ def test_an_imported_project_installs_only_whats_missing(monkeypatch, venv, tmp_
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "p"\nversion = "0.1"\ndependencies = ["pytest", "notinstalled_t10d"]\n'
     )
-    state = tmp_path / ".scistack"
-    state.mkdir()
-    (state / "environment.json").write_text(json.dumps({
+    from scidb.project.imported import ENVIRONMENT_FILE, imported_dir
+
+    state = imported_dir(tmp_path)
+    state.mkdir(parents=True)
+    (state / ENVIRONMENT_FILE).write_text(json.dumps({
         "python": "3.11", "distributions": {"notinstalled-t10d": "2.0", "pytest": "0.0.1"},
         "libraries": {},
     }))

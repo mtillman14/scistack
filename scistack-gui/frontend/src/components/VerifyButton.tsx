@@ -2,8 +2,8 @@
  * "✓ verify" — did your re-run reproduce the exporter's results?
  * (.claude/plan-portability.md Stage 9; scidb/project/verify.py.)
  *
- * Compares this project's history with the exporter's (the newest archived
- * history, or a .scistack bundle) and never runs anything. The backend
+ * Compares this project's history with the exporter's (the imported run
+ * history in .scistack/imported/run-history/, or a .scistack bundle) and never runs anything. The backend
  * decides every class; this only shows counts and the first divergences.
  */
 
@@ -69,7 +69,7 @@ export default function VerifyButton() {
       {open && (
         <div style={{ ...styles.popover, top: open.top, left: open.left }}>
           <div style={styles.title}>Verify reproduction</div>
-          <label style={styles.label}>Against (blank: the newest archived history; or a .scistack path)</label>
+          <label style={styles.label}>Against (blank: the imported run history; or a .scistack path)</label>
           <input style={styles.input} value={against} onChange={e => setAgainst(e.target.value)} disabled={busy} />
           {report && (
             <div style={styles.report}>

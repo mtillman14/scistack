@@ -73,6 +73,31 @@ def test_debug_path_is_derived_from_the_journal():
     assert debug_path_for("/d/scistack.log") == "/d/scistack-debug.log"
 
 
+def test_tail_lines_returns_the_last_n_lines(tmp_path):
+    """Issue #20: a bundle carries the end of each log, not all of it."""
+    from scistacklog import tail_lines
+
+    log = tmp_path / "x.log"
+    log.write_text("".join(f"line {i}\n" for i in range(100_000)), encoding="utf-8")
+    assert tail_lines(log, 3) == "line 99997\nline 99998\nline 99999\n"
+    assert tail_lines(log, 0) == ""
+    assert tail_lines(tmp_path / "missing.log", 5) == ""
+    short = tmp_path / "short.log"
+    short.write_text("a\nb", encoding="utf-8")  # no trailing newline
+    assert tail_lines(short, 10) == "a\nb"
+
+
+def test_tail_lines_tops_up_from_the_rolled_over_backup(tmp_path):
+    from scistacklog import tail_lines
+
+    log = tmp_path / "d.log"
+    (tmp_path / "d.log.1").write_text("old 1\nold 2\nold 3\n", encoding="utf-8")
+    log.write_text("new 1\n", encoding="utf-8")
+    assert tail_lines(log, 3) == "old 2\nold 3\nnew 1\n"
+    (tmp_path / "bad.log").write_bytes(b"ok\n\xff\xfe\n")
+    assert tail_lines(tmp_path / "bad.log", 5).startswith("ok\n")
+
+
 def test_debug_file_defaults_to_debug_and_journal_gets_only_blocks(files):
     journal, debug = files
     Log.debug("framework internals")

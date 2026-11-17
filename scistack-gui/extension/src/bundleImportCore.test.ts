@@ -105,14 +105,14 @@ test('the report names the folder, the history outcome and what to review', () =
         dropped: [['node f', 'session']],
         flagged: [['PathInput RawGait', "root_folder is still the exporter's"]],
       },
-      history: { live: false, archived: '/p/study/.scistack/archive/x' },
+      history: { live: false, kept_at: '/p/study/.scistack/imported/run-history' },
       gui: { pipelines: 2 },
     },
     warnings: ['imported into another schema'],
   });
   assert.ok(md.includes('/p/study'));
   assert.ok(md.includes('`subject` → `participant`'));
-  assert.ok(md.includes('Archived to `/p/study/.scistack/archive/x`'));
+  assert.ok(md.includes('Run history kept as files in `/p/study/.scistack/imported/run-history`'));
   assert.ok(md.includes('**dropped** node f'));
   assert.ok(md.includes("root_folder is still the exporter's"));
   assert.ok(md.includes('imported into another schema'));

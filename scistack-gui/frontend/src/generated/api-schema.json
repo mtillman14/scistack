@@ -1636,6 +1636,10 @@
     },
     "ExportBundle": {
       "properties": {
+        "attachable": {
+          "default": false,
+          "type": "boolean"
+        },
         "options": {
           "anyOf": [
             {

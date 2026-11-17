@@ -81,7 +81,7 @@ The league wants an independent check before the awards are announced. The stati
 2. Run **SciStack: Import Project Bundle…** and pick the file.
 3. **Your schema keys.** Keep `player, game`, so the results can be compared.
 4. **PathInput "game_stats_csv"**: **Choose my folder…** and pick `league-check/`, the folder the template `data/game_stats.csv` is read from.
-5. **History (without data).** Choose **Import history**. Without your data, it can't be loaded into their database (it would say results exist that aren't there), so it's archived, read-only, for checking. If SciStack asks about the same data, choose **Same data**.
+5. **History (without data).** Choose **Import history**. Without your data, it can't be loaded into their database (it would say results exist that aren't there), so it's kept as files, read-only, in `.scistack/imported/run-history/` for checking. If SciStack asks about the same data, choose **Same data**.
 6. Click **Trust and Open**.
 
 The canvas looks like yours, but every step is red: nothing has run in this project yet. They click **▶ Run** on `read_csv`, and `read_csv` and `GameStats` turn green.
@@ -117,7 +117,7 @@ A year later, you want the same pipeline, figure and statistics for the new seas
 [Best Player - scidb](../examples/best-player-scidb.md) records Morgan's exclusion in the database, for every analysis, instead of in one figure. An exclusion like that travels in the history. When you import with history, SciStack asks **Will this project run on the same data as the exporter's?**:
 
 - **Same data** applies it, as in Hand-offs 1 and 2.
-- **Other data** leaves it out, keeps it in the archive, and the report lists it as a warning. Choose this for next season.
+- **Other data** leaves it out, keeps it in the imported run history, and the report lists it as a warning. Choose this for next season.
 
 /// info | 📷 Screenshot
 **Show:** the **Will this project run on the same data as the exporter's?** picker with **Same data** and **Other data**, imported from the Best Player - scidb bundle (it has an exclusion). Save as `docs/images/sharing__export-import-walkthrough/same_data_other_data_picker.png`.

@@ -52,7 +52,7 @@ from contextvars import ContextVar
 
 from . import journal as _journal
 
-__all__ = ["Log", "LAYERS", "debug_path_for"]
+__all__ = ["Log", "LAYERS", "debug_path_for", "tail_lines"]
 
 #: Top-level logger name for each scistack layer. A record's ``[layer]`` tag
 #: in the log line is the first dotted component of its logger name.
@@ -85,6 +85,41 @@ DEBUG_BACKUPS = 5
 # How many records between size checks (a stat per record would cost more
 # than the write).
 _ROLLOVER_CHECK_EVERY = 500
+
+
+def tail_lines(path, n: int) -> str:
+    """The last *n* lines of the log at *path*, as text (``""`` when there is
+    no such file). When the file holds fewer than *n* lines because it was
+    just rolled over, the rest come from the end of ``<path>.1`` (the debug
+    file's newest backup, :class:`_CappedFileHandler`). Reads from the end in
+    blocks, so a 10 MB file costs only what is returned. Undecodable bytes
+    are replaced, never raised: a log tail is evidence, not input."""
+    if n <= 0:
+        return ""
+
+    def _tail(p: str, want: int) -> list[bytes]:
+        try:
+            with open(p, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                buf = b""
+                # want + 1 newlines: the text after the (want+1)-th from the
+                # end is exactly the last `want` lines.
+                while pos > 0 and buf.count(b"\n") <= want:
+                    step = min(65536, pos)
+                    pos -= step
+                    f.seek(pos)
+                    buf = f.read(step) + buf
+        except OSError:
+            return []
+        lines = buf.splitlines(keepends=True)
+        return lines[-want:]
+
+    path = str(path)
+    lines = _tail(path, n)
+    if len(lines) < n and os.path.exists(f"{path}.1"):
+        lines = _tail(f"{path}.1", n - len(lines)) + lines
+    return b"".join(lines).decode("utf-8", errors="replace")
 
 
 def debug_path_for(journal_path) -> str:

@@ -6,9 +6,10 @@ Did your re-run reproduce the exporter's results? (portability Stage 9;
 the pipeline as usual on your own copy of the raw files, then compare your
 live history with the exporter's.
 
-**The exporter's side** is either the newest archived history under
-``.scistack/archive/`` (an import without data, or into another schema), or
-a ``.scistack`` bundle file (``against=``). It is loaded from its Parquet
+**The exporter's side** is either the imported run history kept as files in
+``.scistack/imported/run-history/`` (an import without data, or into another
+schema; ``scidb.project.imported``), a run-history folder, or a ``.scistack``
+bundle file (``against=``). It is loaded from its Parquet
 files into a separate in-memory DuckDB, never into the live database.
 
 **Matching -- the structural key.** Records line up by WHAT produced them,
@@ -19,7 +20,7 @@ the input's own key (a constant or PathInput record by its id, which is
 content- and name-addressed already). So when an upstream value differs,
 the records below it still find their counterparts, and only their content
 differs. The exporter's locations are renamed through the import's key map
-(``.scistack/import.json``); a location naming a key the map dropped is
+(``.scistack/imported/import.json``); a location naming a key the map dropped is
 "not comparable".
 
 **Classes** for every exporter variable record (not excluded):
@@ -123,30 +124,30 @@ def _memory_side(label: str, sections: "list[dict[str, bytes]]", tmp: Path) -> _
     return _Side(label, table, lambda name: name in loaded)
 
 
-def _archive_sections(folder: Path) -> "dict[str, bytes]":
+def _run_history_files(folder: Path) -> "dict[str, bytes]":
     return {p.name: p.read_bytes() for p in folder.iterdir() if p.is_file()}
 
 
 def _exporter_side(root: Path, against: "Path | None", tmp: Path) -> "tuple[_Side, str, bool]":
     """``(side, description, has_data)``."""
-    from scidb.project.bundle import ARCHIVE_DIR, DATA_SECTION, HISTORY_SECTION, read_bundle
+    from scidb.project.bundle import DATA_SECTION, HISTORY_SECTION, read_bundle
+    from scidb.project.imported import run_history_dir
 
     if against is None:
-        archives = sorted((root / ARCHIVE_DIR).glob("*/tables.json")) if (root / ARCHIVE_DIR).is_dir() else []
-        if not archives:
+        folder = run_history_dir(root)
+        if not (folder / "tables.json").is_file():
             raise VerifyError(
-                f"no archived history under {root / ARCHIVE_DIR}. An import with data loads the "
+                f"no imported run history in {folder}. An import with data loads the "
                 "exporter's history LIVE, so there is nothing to compare in place: import the "
                 "bundle into a fresh project with --no-history, run the pipeline, then verify "
                 "--against the bundle file."
             )
-        folder = archives[-1].parent
-        return _memory_side("exporter", [_archive_sections(folder)], tmp), str(folder), False
+        return _memory_side("exporter", [_run_history_files(folder)], tmp), str(folder), False
     against = Path(against)
     if against.is_dir():
         if not (against / "tables.json").is_file():
-            raise VerifyError(f"{against} is not an archived history (no tables.json)")
-        return _memory_side("exporter", [_archive_sections(against)], tmp), str(against), False
+            raise VerifyError(f"{against} is not a run-history folder (no tables.json)")
+        return _memory_side("exporter", [_run_history_files(against)], tmp), str(against), False
     bundle = read_bundle(against)
     history = bundle.sections.get(HISTORY_SECTION)
     if history is None:
@@ -411,10 +412,9 @@ class VerifyReport:
 
 
 def _key_map(root: Path) -> "dict[str, str | None] | None":
-    from scidb.project.bundle import IMPORT_RECORD
-    from scidb.project.environment import STATE_DIR
+    from scidb.project.imported import IMPORT_RECORD, imported_dir
 
-    path = root / STATE_DIR / IMPORT_RECORD
+    path = imported_dir(root) / IMPORT_RECORD
     if not path.is_file():
         return None
     km = json.loads(path.read_text(encoding="utf-8")).get("key_map") or {}

@@ -51,7 +51,7 @@ Statement = str | Callable[[Sequence[str]], str]
 BUNDLE_HISTORY = "history"
 #: ``TableDecl.bundle``: history rows that are dataset INTENT, not facts.
 #: They govern a re-run, so they go live in the new project even when the
-#: rest of the history is only archived.
+#: rest of the history is only kept as files.
 BUNDLE_INTENT = "intent"
 #: ``TableDecl.bundle``: the rows travel in a bundle's (opt-in) data section,
 #: beside every variable's ``<Type>_data`` table.
@@ -158,7 +158,7 @@ def history_tables() -> tuple[str, ...]:
 
 
 def intent_tables() -> tuple[str, ...]:
-    """History tables that go live even when the history is archived."""
+    """History tables that go live even when the history is only kept as files."""
     return tuple(d.name for d in _core_decls() if d.bundle == BUNDLE_INTENT)
 
 
@@ -640,7 +640,7 @@ VARIANT_TOMBSTONE = _core(
 
 # Schema key types are dataset INTENT (user decision 2026-11-01): the type
 # defines stored identity ("1" vs "001"), so an imported project needs them
-# live even when the history is only archived. They ride in the history
+# live even when the history is only kept as files. They ride in the history
 # section for now; plan-dataset-intent-section.md gives them their own.
 SCHEMA_KEY_TYPE = _core(
     "_schema_key_type",

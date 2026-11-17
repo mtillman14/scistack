@@ -44,11 +44,16 @@ def _parser():
 
 
 def _bundle_contents(path: Path) -> dict:
-    """Every member's bytes, the manifest minus its timestamp."""
+    """Every member's bytes, the manifest minus its timestamp. The logs
+    section is left out: each export logs itself, so the second of two
+    exports carries the first one's lines (which files it holds is kept)."""
     with zipfile.ZipFile(path) as zf:
-        out = {n: zf.read(n) for n in zf.namelist() if n != "manifest.json"}
+        out = {n: zf.read(n) for n in zf.namelist() if n != "manifest.json" and not n.startswith("logs/")}
         manifest = json.loads(zf.read("manifest.json"))
     manifest.pop("exported_at", None)
+    logs = manifest.get("sections", {}).get("logs")
+    if logs is not None:
+        manifest["sections"]["logs"] = sorted(logs["files"])
     out["manifest.json"] = manifest
     return out
 
@@ -194,6 +199,38 @@ def test_the_gui_handler_honours_options_and_refuses_unknown_ones(client, pinned
     assert bad.status_code == 400 and "unknown export option" in bad.text
     rel = client.post("/api/bundles/export", json={"out_path": "relative.scistack"})
     assert rel.status_code == 400 and "absolute" in rel.text
+
+
+def test_attachable_export_writes_only_a_zip_holding_the_same_bundle(client, pinned_root):
+    """Issue #20, the bug reporter: GitHub refuses .scistack, so the handler
+    writes <name>.scistack.zip — and nothing else — whose one member is the
+    bundle a plain export writes."""
+    from scistack_gui.headless import export_open_project
+
+    _build_source(client)
+    folder = pinned_root / "bug"
+    r = client.post("/api/bundles/export", json={
+        "out_path": str(folder / "study.scistack.zip"), "options": None, "attachable": True,
+    })
+    assert r.status_code == 200, r.text
+    out = Path(r.json()["path"])
+    assert out == folder / "study.scistack.zip"
+    assert r.json()["bytes"] == out.stat().st_size
+    assert sorted(p.name for p in folder.iterdir()) == ["study.scistack.zip"]
+
+    with zipfile.ZipFile(out) as zf:
+        assert zf.namelist() == ["study.scistack"]
+        (folder / "unpacked").mkdir()
+        zf.extract("study.scistack", folder / "unpacked")
+    plain = export_open_project(pinned_root / "plain" / "study.scistack")
+    assert _bundle_contents(folder / "unpacked" / "study.scistack") == _bundle_contents(plain)
+
+    # A name typed without the double suffix still gets it.
+    r2 = client.post("/api/bundles/export", json={
+        "out_path": str(folder / "other"), "attachable": True,
+    })
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["path"] == str(folder / "other.scistack.zip")
 
 
 # ---------------------------------------------------------------------------

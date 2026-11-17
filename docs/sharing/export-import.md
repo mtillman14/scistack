@@ -2,7 +2,7 @@
 
 <!-- Ground truth: scistack-gui/scistack_gui/bundle_cli.py (export / import /
      bundle-info / install; EXPORT_FLAGS), scidb/project/bundle.py (ExportOptions:
-     history on, data off, wheelhouse off; check_environment reads pyproject
+     history on, data off, wheelhouse off, logs on; check_environment reads pyproject
      [project] dependencies), scidb/project/environment.py (install_project_requirements:
      only declared deps that are missing, at the exporter's versions),
      scidb/project/init.py (_PYPROJECT template), design docs/claude/portability.md. -->
@@ -22,6 +22,7 @@ To share less than a whole project, see [Share Part of a Project](pipelines.md).
 | Run history: what was run, on which inputs, with which code | on by default |
 | Saved results (the data itself) | off by default; can be large |
 | Wheelhouse: an installable copy of each [library](libraries.md) the project uses | off by default; add it when a library isn't published anywhere the recipient can install it from |
+| The last 5,000 lines of `scistack.log` and `scistack-debug.log` (the run journal and the debug log) | on by default; kept in the importer's `.scistack/imported/logs/`, never mixed into their own logs. With hidden folders, folders in the logs are replaced too |
 | Raw data files read through `PathInput` | **never** |
 | `.venv` | never; the recipient makes their own |
 
@@ -73,6 +74,7 @@ scistack export                          # writes <database name>.scistack here
 scistack export my_study.scistack --data # also include every saved result
 scistack export --no-history             # code, settings and pipelines only
 scistack export --wheelhouse             # also a wheel of each library the project uses
+scistack export --no-logs                # leave out the end of the logs
 ```
 
 `--db path/to/study.duckdb` picks the database when it isn't the one in `scistack.toml` or the only `.duckdb` in the folder.
@@ -104,11 +106,11 @@ scistack import my_study.scistack --into ~/projects/my_study \
 ```
 
 - `--path-root NAME=FOLDER` gives your copy of one `PathInput`'s raw files. Repeat it for each one.
-- `--schema subject session` uses your own schema keys instead of the exporter's. `--map OLD=NEW` renames one key. If your schema differs, the history is archived, not loaded.
+- `--schema subject session` uses your own schema keys instead of the exporter's. `--map OLD=NEW` renames one key. If your schema differs, the history is kept as files in `.scistack/imported/run-history/`, not loaded.
 - `--trust` installs what the project lists in `pyproject.toml` and your environment lacks, at the exporter's versions. Add `--no-install` to skip that and run `scistack install` later.
 - `--check-code` loads the project's code after importing and lists any pipeline step whose code wasn't found.
 - `--no-history` leaves the exporter's run history out.
-- `--no-value-rules` says the project will run on **other data** than the exporter's. The history still comes in (archived, for `scistack verify`), and so do the rules about keys, such as schema key types. The rules that name the exporter's own values (exclusions, Expected / Not expected marks at a particular subject, declared key values) are left out: they're kept in the archive, unapplied, and the import prints a warning listing them. The default, `--value-rules`, applies them all, which is right when you'll run on the exporter's data.
+- `--no-value-rules` says the project will run on **other data** than the exporter's. The history still comes in (kept as files in `.scistack/imported/run-history/`, for `scistack verify`), and so do the rules about keys, such as schema key types. The rules that name the exporter's own values (exclusions, Expected / Not expected marks at a particular subject, declared key values) are left out: they are kept in the imported run history, unapplied, and the import prints a warning listing them. The default, `--value-rules`, applies them all, which is right when you'll run on the exporter's data.
 
 ///
 

@@ -128,6 +128,8 @@
     "src/components/Sidebar/pathInputKeyRegex.test.ts",
     "src/components/Sidebar/schemaKeyTypes.ts",
     "src/components/Sidebar/schemaKeyTypes.test.ts",
+    "src/components/bugReport.ts",
+    "src/components/bugReport.test.ts",
     "src/components/schemaText.ts",
     "src/components/schemaText.test.ts",
     "src/components/Sidebar/schemaLevelBoxes.ts",

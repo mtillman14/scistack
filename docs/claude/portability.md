@@ -93,6 +93,8 @@ config/         scistack.toml
 gui/gui.json    every visible pipeline's canvas + global GUI state (GuiSection)
 plots/          saved_plots.json, presets.json (PlotsSection), when any exist
 history/        provenance tables (Parquet)    (default on)
+logs/           last LOG_TAIL_LINES of scistack.log + scistack-debug.log (default on;
+                issue #20). Import keeps them in .scistack/imported/logs/, never loads them
 data/           variable tables (Parquet)      (opt-in)
 ```
 
@@ -205,11 +207,11 @@ exist that cannot be loaded, and some views would show nodes as done. So:
 | Bundle carries | Schema | Result |
 |---|---|---|
 | history + data | kept | both loaded LIVE, verbatim; the GUI tables and layout file are copied verbatim too, so the canvas is identical down to node ids |
-| history only (the default) | kept | history ARCHIVED read-only under `.scistack/archive/<export time>/` (the bundle's Parquet files + README) for audit and `scistack verify`; exclusions and schema key types go live (they govern a re-run); the canvas starts "not run" |
-| history (+ data) | changed | history archived; data not imported; nothing schema-keyed goes live |
+| history only (the default) | kept | history KEPT AS FILES, read-only, in `.scistack/imported/run-history/` (the bundle's Parquet files + README; layout owner `scidb.project.imported`) for audit and `scistack verify`; exclusions and schema key types go live (they govern a re-run); the canvas starts "not run" |
+| history (+ data) | changed | history kept as files; data not imported; nothing schema-keyed goes live |
 
 Data without history is refused at export. A re-run never skips because of
-archived history: the skip gate requires a save event, which is data.
+run history kept as files: the skip gate requires a save event, which is data.
 
 ## Reusing code: copies, libraries, and names
 
@@ -310,10 +312,10 @@ Status as of 2026-10-08.
 | I11 | Mint edge IDs | ✅ | `ids.new_manual_edge_id` (a drawn edge's stored id is allocated; `connection_id` derives the connection's id for matching, a different concept). |
 | I12 | Restore the rest of the GUI state, with schema keys remapped | ✅ | `canvas_snapshot.apply` + `remap_schema_keys` (Stages 2, 6). |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
-| I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions and schema key types still go live when the schema was kept. `import_history=False` declines it (Stage 7). Dataset intent that does not go live (no history exported, history declined, another schema) is an import WARNING naming what was left behind and how to re-declare it (manifest `intent_rows`, 2026-11-01); `.claude/plan-dataset-intent-section.md` makes it always travel. |
+| I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: kept as files in `.scistack/imported/run-history/`; exclusions and schema key types still go live when the schema was kept. `import_history=False` declines it (Stage 7). Dataset intent that does not go live (no history exported, history declined, another schema) is an import WARNING naming what was left behind and how to re-declare it (manifest `intent_rows`, 2026-11-01); `.claude/plan-dataset-intent-section.md` makes it always travel. |
 | I15 | Check that every canvas node's code is found | ✅ | The import itself runs no code (`discovered=False`): it reports the check as not done (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`). After trust, `headless.check_code` (`scistack import --check-code`) lists every canvas node whose code is missing; the GUI checks on open (Stage 8). |
 | I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
-| I17 | Reproduction check | ✅ | Stage 9a: `scidb verify` / `scistack verify` COMPARES (never runs code) the recipient's live history after their own run with the exporter's archived history, matched by a content-free structural key; reports reproduced / differs at source / differs downstream / code changed / not run / new. |
+| I17 | Reproduction check | ✅ | Stage 9a: `scidb verify` / `scistack verify` COMPARES (never runs code) the recipient's live history after their own run with the exporter's imported run history, matched by a content-free structural key; reports reproduced / differs at source / differs downstream / code changed / not run / new. |
 | I18 | Import report | ✅ | `ImportReport.to_dict`; printed by the CLI, shown as a Markdown document by the extension, including everything the schema remap flagged and the history outcome (Stage 8). |
 
 ## Open questions

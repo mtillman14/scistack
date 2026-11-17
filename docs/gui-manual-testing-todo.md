@@ -11,6 +11,50 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Built-in bug reporter (issue #20) — added 2026-11-16
+
+**What changed:** The pipeline header has a **🐞 Report bug** button (after Clear Data). It opens a
+**Report a bug** popup: **Title**, **Description**, and **Save my project to attach to the issue**
+(ticked), with the same checkboxes as Export project (history on, data off, **Logs** on). **Save
+project & continue** asks where to save `<db>-bug-report.scistack.zip` (a plain zip holding the
+`.scistack`, because GitHub refuses `.scistack` attachments), then shows a second step: where the
+file is, why attaching it helps, how to drag it in, with **Back**, **Show in folder** (VS Code),
+**Close** and **Open on GitHub**. The issue body names the file ("drag `…` into this box") above an
+**Environment** footer (GUI version, commit, build time, target) and gets the `bug` label.
+Unticking the project box makes the button **Open on GitHub** directly.
+Every project export now also carries the last 5,000 lines of `scistack.log` and
+`scistack-debug.log` (`logs/` in the bundle; the **⇩ export project** popover shows a **Logs:**
+checkbox; CLI `--no-logs`). Owners: link `frontend/src/components/bugReport.ts`; logs
+`scidb.project.bundle` (`LOG_TAIL_LINES`, `_logs_section`) + `scistacklog.tail_lines`; zip
+`zip_for_attachment`; VS Code opens links via `open_external` (GitHub https only,
+`extension/src/openExternal.ts`).
+
+**Backend steps:** Restart the Python process (backend changed), rebuild the webview bundle, reload
+the extension. Run a pipeline once first so the logs have content.
+
+**Frontend steps:**
+1. Click **🐞 Report bug**. The main button is disabled until the title has text.
+2. Type a title and description; leave **Save my project…** ticked; click **Save project & continue**.
+3. Accept the suggested `…-bug-report.scistack.zip` name in the save dialog.
+4. On the second step, click **Show in folder**: the OS file manager opens on the file.
+5. Click **Open on GitHub** (allow VS Code to open the site). Drag the file into the description box.
+6. Unzip the file locally: it holds one `.scistack`; unzip that and look in `logs/`.
+7. Repeat with **Hide PathInput folders** ticked: the logs show `<PathInput RAW>` / `<project>` instead of folders.
+8. Untick **Save my project…**: the button reads **Open on GitHub** and skips the file.
+9. Paste a very long description (thousands of lines) and open again.
+10. Open **⇩ export project** (hypothesis tab strip): it has a **Logs:** checkbox, ticked.
+
+**Expected:** Only the `.zip` appears in the chosen folder. GitHub accepts it as an attachment. The
+body has the title/description, the "Project file: drag `…` into this box" line, and the Environment
+footer. `scistack-debug.log` shows `[bundles] attachable export -> … (N bytes)` and `[bundle] logs
+section: scistack.log (…), scistack-debug.log (…)`; the SciStack output channel shows
+`reveal_in_os: …` and `open_external: https://github.com/mtillman14/scistack/issues/new (N chars)
+opened=true`. A file over 25 MB shows a yellow warning on the second step. For the long description:
+the page still loads (no 414) and the body ends with "_(Report shortened to fit in a link — please
+paste the rest here.)_" above the footer.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Saved plots become pipeline nodes (issue #19) — added 2026-11-16
 
 **What changed:** Plot Studio's Save row has an **Add to pipeline** checkbox (ticked by default).

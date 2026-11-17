@@ -38,6 +38,10 @@ EXPORT_FLAGS = {
         "wheelhouse",
         "Wheelhouse: a wheel of each library the project uses, so it installs without being published",
     ),
+    "include_logs": (
+        "logs",
+        "Logs: the last lines of scistack.log and scistack-debug.log (helps debugging)",
+    ),
     "hide_path_locations": (
         "hide-path-locations",
         "Hide PathInput folders (for a public release)",
@@ -159,7 +163,7 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
         help="Apply the exporter's rules that name specific values (exclusions and "
         "Expected / Not expected marks at a subject, declared key values). Turn off "
         "(--no-value-rules) when this project will run on other data; they are then "
-        f"kept in the archive, unapplied (default: {_on_off(value_rules_default)}).",
+        f"kept in the imported run history, unapplied (default: {_on_off(value_rules_default)}).",
     )
     imp.add_argument(
         "--check-code",

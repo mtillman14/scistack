@@ -160,7 +160,7 @@ export async function importProjectBundle(
   if (info.has_history) {
     const choice = await vscode.window.showQuickPick(
       [
-        { label: 'Import history', detail: 'Loaded live when the bundle carries its data and the schema is kept; archived otherwise', yes: true },
+        { label: 'Import history', detail: 'Loaded live when the bundle carries its data and the schema is kept; otherwise kept as files in .scistack/imported/run-history/', yes: true },
         { label: 'Skip history', detail: 'The new database holds only your own results', yes: false },
       ],
       { title: `History (${info.has_data ? 'with' : 'without'} data)` },
@@ -176,7 +176,7 @@ export async function importProjectBundle(
     const choice = await vscode.window.showQuickPick(
       [
         { label: 'Same data', detail: 'Apply all its rules, including marks, exclusions and declared values at specific subjects or sessions', yes: true },
-        { label: 'Other data', detail: 'Apply only the rules about keys (key types, shared / per parent); the rest stay in the archive, unapplied', yes: false },
+        { label: 'Other data', detail: 'Apply only the rules about keys (key types, shared / per parent); the rest stay in the imported run history, unapplied', yes: false },
       ],
       { title: 'Will this project run on the same data as the exporter\'s?' },
     );

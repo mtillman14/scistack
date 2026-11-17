@@ -72,7 +72,7 @@ def test_an_identical_rerun_reproduces_everything(bundles, tmp_path):
     r = verify(db, root=root)
     assert r.ok
     assert r.counts["reproduced"] == 4 and r.new == 0
-    assert r.data is False  # an archive: exact comparison
+    assert r.data is False  # imported run history (no data): exact comparison
 
 
 def test_a_different_raw_value_is_found_at_its_source(bundles, tmp_path):

@@ -5,8 +5,8 @@
      ExportOptions: history on, data off; import --into/--schema/--map/
      --path-root/--history/--value-rules/--trust/--no-install/--check-code;
      bundle-info; install), scidb/project/bundle.py (_place_history: history +
-     data + kept schema + value rules -> live; otherwise archived under
-     .scistack/archive/<export time>/, dataset intent live only with the schema
+     data + kept schema + value rules -> live; otherwise kept as files in
+     .scistack/imported/run-history/ (scidb/project/imported.py), dataset intent live only with the schema
      kept; value_rules=False leaves out exclusions, warned; _intent_not_applied
      warning when history is declined), scidb/inspect/cli.py _cmd_verify
      (--against, exit code 2 on differences), design docs/claude/portability.md.
@@ -125,7 +125,7 @@ cp ~/Downloads/game_stats.csv ~/best-player-check/
 cd ~/best-player-check
 ```
 
-This time the bundle has history but no data, so the history is **archived**, read-only, under `.scistack/archive/<export time>/`, not loaded into the new database. The database starts empty, because history that says "this result exists" without the result would be wrong. Two things from the history do go live, because they govern a re-run: the schema key types, and Morgan's exclusion.
+This time the bundle has history but no data, so the history is **kept as files**, read-only, in `.scistack/imported/run-history/`, not loaded into the new database. The database starts empty, because history that says "this result exists" without the result would be wrong. Two things from the history do go live, because they govern a re-run: the schema key types, and Morgan's exclusion.
 
 Then they run your script unchanged:
 
@@ -152,7 +152,7 @@ scistack verify
 `verify` runs no code. It matches each of their results to yours by what produced it (the function, its inputs, the settings, the location) and compares the two:
 
 ```text
-verified against /home/them/best-player-check/.scistack/archive/…
+verified against /home/them/best-player-check/.scistack/imported/run-history
   exact comparison (the exporter's data is not available: export WITH data and verify --against the bundle for a tolerance)
   reproduced           …
 OK: everything reproduced
@@ -179,7 +179,7 @@ warning: dataset rules NOT applied: 1 schema exclusion(s), because the run histo
 
 That's what you want here: Morgan's exclusion was a decision about last season's roster.
 
-To keep the history for reference but still leave out the rules that name last season's players, import with `--no-value-rules` instead. The history is archived as in Hand-off 2, the schema key types still apply, and the exclusion stays in the archive, unapplied, with a warning that says so.
+To keep the history for reference but still leave out the rules that name last season's players, import with `--no-value-rules` instead. The history is kept as files as in Hand-off 2, the schema key types still apply, and the exclusion stays in the imported run history, unapplied, with a warning that says so.
 
 **Check the code, too.** The import left the exclusion out of the database, but `best_player.py` still contains:
 

@@ -215,10 +215,10 @@ recipient recomputes them from its own records.
 | Bundle / import choice | Key settings + marks | Run outcomes |
 |---|---|---|
 | history + data, same schema | live (verbatim) | live |
-| history only (the default), same schema | live | archived only |
+| history only (the default), same schema | live | kept as files only |
 | no history, or history declined | not applied; warning names them and `scidb mark` / `scidb set-key` | none |
-| another schema (any key map, even a rename) | not applied; warned; kept in the archive | archived only |
-| same schema, `value_rules=False` ("other data") | sharing kept; declared values, marks and exclusions left out, warned, kept in the archive; derived data not imported | archived only |
+| another schema (any key map, even a rename) | not applied; warned; kept in the imported run history | kept as files only |
+| same schema, `value_rules=False` ("other data") | sharing kept; declared values, marks and exclusions left out, warned, kept in the imported run history; derived data not imported | kept as files only |
 
 `value_rules` is `import_project(value_rules=)`, `scistack import
 --no-value-rules`, and the extension's "Same data / Other data" question

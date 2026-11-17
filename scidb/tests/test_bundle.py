@@ -17,7 +17,8 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, for_each
-from scidb.project import bundle, table_copy
+from scidb.project import bundle, imported, table_copy
+from scidb.project.imported import imported_dir, run_history_dir
 from scidb.project.bundle import BundleError, ExportOptions, export_project, import_project, read_bundle
 from scidb.project.init import init_project
 
@@ -96,7 +97,90 @@ class TestExport:
             "root": project[0].resolve().as_posix(),
         }
         assert manifest["options"] == ExportOptions().to_dict()
-        assert set(manifest["sections"]) == {"config", "env", "history", "fake"}
+        # configure_database attached the logs beside the database (issue #20).
+        assert set(manifest["sections"]) == {"config", "env", "history", "logs", "fake"}
+
+    def test_logs_carry_the_last_lines_of_each_log(self, project, tmp_path):
+        """Issue #20: the end of scistack.log and scistack-debug.log travel
+        (LOG_TAIL_LINES each); include_logs=False leaves them out."""
+        from scistacklog import Log
+
+        assert ExportOptions().include_logs is True
+        debug = Path(Log.get_path())
+        journal = Path(Log.get_journal_path())
+        assert debug.parent == project[0] and journal.parent == project[0]
+        for i in range(bundle.LOG_TAIL_LINES + 50):
+            Log.info(f"marker line {i}")
+        # The journal only gets run blocks; give it something of its own.
+        journal.write_text("journal head\njournal tail\n", encoding="utf-8")
+
+        out = _export(project, tmp_path)
+        with zipfile.ZipFile(out) as zf:
+            assert {n for n in zf.namelist() if n.startswith("logs/")} == {
+                f"logs/{debug.name}", f"logs/{journal.name}",
+            }
+            debug_tail = zf.read(f"logs/{debug.name}").decode("utf-8").splitlines()
+            assert zf.read(f"logs/{journal.name}") == b"journal head\njournal tail\n"
+        assert len(debug_tail) == bundle.LOG_TAIL_LINES
+        assert not any(l.endswith("marker line 49") for l in debug_tail)  # cut from the front
+        assert any(l.endswith(f"marker line {bundle.LOG_TAIL_LINES + 49}") for l in debug_tail)
+
+        out2 = export_project(project[0], project[1], tmp_path / "nologs" / "gait",
+                              options=ExportOptions(include_logs=False))
+        with zipfile.ZipFile(out2) as zf:
+            assert not any(n.startswith("logs/") for n in zf.namelist())
+
+    def test_import_keeps_the_senders_logs(self, project, tmp_path):
+        from scistacklog import Log
+
+        Log.info("something the exporter saw")
+        debug_name = Path(Log.get_path()).name
+        out = _export(project, tmp_path)
+        target = tmp_path / "copy"
+        report = import_project(out, target)
+        kept_at = Path(report.sections["logs"]["kept_at"])
+        assert kept_at == imported_dir(target) / imported.LOGS_DIR
+        assert "something the exporter saw" in (kept_at / debug_name).read_text(encoding="utf-8")
+        assert not any("logs" in w for w in report.warnings)
+        report_db(report).close()
+
+    def test_logs_are_kept_when_history_is_declined(self, project, tmp_path):
+        """Logs are not history: declining history leaves no run-history
+        folder (test_history_can_be_declined_at_import) but keeps the logs."""
+        out = _export(project, tmp_path)
+        target = tmp_path / "copy"
+        report = import_project(out, target, import_history=False)
+        assert not run_history_dir(target).exists()
+        assert Path(report.sections["logs"]["kept_at"]) == imported_dir(target) / imported.LOGS_DIR
+        report_db(report).close()
+
+    def test_everything_from_the_sender_is_under_one_imported_folder(self, project, tmp_path):
+        """The import's whole footprint in .scistack/ is .scistack/imported/
+        (scidb.project.imported is the one owner of the layout)."""
+        out = _export(project, tmp_path)
+        target = tmp_path / "copy"
+        report = import_project(out, target)
+        assert sorted(p.name for p in (target / ".scistack").iterdir()) == ["imported"]
+        assert (imported_dir(target) / imported.IMPORT_RECORD).is_file()
+        assert (imported_dir(target) / imported.ENVIRONMENT_FILE).is_file()
+        assert (run_history_dir(target) / "tables.json").is_file()
+        assert report.sections["history"]["kept_at"] == str(run_history_dir(target))
+        report_db(report).close()
+
+    def test_zip_for_attachment_unzips_to_the_same_bundle(self, project, tmp_path):
+        """Issue #20: GitHub refuses .scistack; the .zip it takes gives back
+        the bundle byte for byte, and that bundle still reads."""
+        out = _export(project, tmp_path, providers=[FakeSection()])
+        wrapped = bundle.zip_for_attachment(out, tmp_path / "attach" / "gait.scistack")
+        assert wrapped.name == "gait" + bundle.ATTACHMENT_EXTENSION
+        with zipfile.ZipFile(wrapped) as zf:
+            assert zf.namelist() == ["gait.scistack"]
+            inner = zf.read("gait.scistack")
+        assert inner == out.read_bytes()
+        unpacked = tmp_path / "unpacked" / "gait.scistack"
+        unpacked.parent.mkdir()
+        unpacked.write_bytes(inner)
+        assert read_bundle(unpacked).manifest["project"]["package"] == "gait"
 
     def test_the_provider_sees_the_project(self, project, tmp_path):
         section = FakeSection()
@@ -471,7 +555,7 @@ def test_table_copy_keeps_rows_keys_and_views(tmp_path):
         clear_current_database()
 
 
-def test_history_without_data_is_archived_not_loaded(project, tmp_path):
+def test_history_without_data_is_kept_as_files_not_loaded(project, tmp_path):
     root, db = _with_history(project)
     out = _export(project, tmp_path)
     db.close()
@@ -480,9 +564,9 @@ def test_history_without_data_is_archived_not_loaded(project, tmp_path):
 
     hist = report.sections["history"]
     assert hist["live"] is False
-    archive = Path(hist["archived"])
-    assert (archive / "tables.json").exists() and (archive / "_record.parquet").exists()
-    assert archive.is_relative_to((tmp_path / "copy").resolve() / ".scistack" / "archive")
+    kept_at = Path(hist["kept_at"])
+    assert (kept_at / "tables.json").exists() and (kept_at / "_record.parquet").exists()
+    assert kept_at == run_history_dir((tmp_path / "copy").resolve())
     target = report_db(report)
     assert _count(target, "_record") == 0  # the live database stays consistent
     # Dataset intent governs a re-run, so the exclusion is live.
@@ -522,7 +606,7 @@ def test_data_is_not_imported_into_another_schema(project, tmp_path):
     assert hist["live"] is False
     assert "schema changed" in hist["data"]
     assert hist["intent_loaded"] == []  # its keys are the exporter's
-    assert hist["archived"]
+    assert hist["kept_at"]
     assert any("dataset rules NOT applied" in w and "another schema" in w
                and "1 schema exclusion" in w for w in report.warnings), report.warnings
     report_db(report).close()
@@ -538,8 +622,8 @@ def test_history_can_be_declined_at_import(project, tmp_path):
     out = _export(project, tmp_path)
     project[1].close()
     report = import_project(out, tmp_path / "copy", import_history=False)
-    assert report.sections["history"]["archived"] is None
-    assert not (tmp_path / "copy" / ".scistack" / "archive").exists()
+    assert report.sections["history"]["kept_at"] is None
+    assert not run_history_dir(tmp_path / "copy").exists()
     assert any("opted out" in w for w in report.warnings)
     report_db(report).close()
 
@@ -553,9 +637,9 @@ def _numeric_session(project):
     return _with_history(project)
 
 
-def test_schema_key_types_go_live_with_an_archived_history(project, tmp_path):
+def test_schema_key_types_go_live_with_history_kept_as_files(project, tmp_path):
     """Key types define stored identity ("1" vs "001"), so they are dataset
-    intent: live even when the history is only archived."""
+    intent: live even when the history is only kept as files."""
     root, db = _numeric_session(project)
     out = _export(project, tmp_path)
     db.close()
@@ -677,9 +761,9 @@ def test_expectation_rules_and_outcomes_go_live_with_data(project, tmp_path):
     target.close()
 
 
-def test_expectation_rules_go_live_with_an_archived_history_but_outcomes_do_not(project, tmp_path):
+def test_expectation_rules_go_live_with_history_kept_as_files_but_outcomes_do_not(project, tmp_path):
     """Rules govern a re-run, so they are live; why a location failed is
-    history, which without its data is only archived."""
+    history, which without its data is only kept as files."""
     _with_expectation_rules(project)
     out = _export(project, tmp_path)
     project[1].close()
@@ -692,7 +776,7 @@ def test_expectation_rules_go_live_with_an_archived_history_but_outcomes_do_not(
     assert _count(target, "_expectation_mark") == 2
     assert _key_setting(target, "session")["values"] == ["1", "2"]
     assert _count(target, "_run_outcome") == 0
-    assert (Path(hist["archived"]) / "_run_outcome.parquet").exists()
+    assert (Path(hist["kept_at"]) / "_run_outcome.parquet").exists()
     assert "value_rules_left_out" not in hist
     target.close()
 
@@ -741,7 +825,7 @@ def test_expectation_rules_are_not_applied_into_another_schema(project, tmp_path
     target = report_db(report)
     assert _count(target, "_expectation_mark") == 0
     assert _count(target, "_run_outcome") == 0
-    assert (Path(hist["archived"]) / "_expectation_mark.parquet").exists()
+    assert (Path(hist["kept_at"]) / "_expectation_mark.parquet").exists()
     target.close()
 
 
@@ -776,12 +860,12 @@ def test_other_data_keeps_the_key_rules_and_leaves_out_the_value_rules(project, 
     assert _count(target, "__scidb_schema_overrides") == 0
     setting = _key_setting(target, "session")
     assert setting["sharing"] == "shared" and setting["values"] is None
-    # Left out, never lost: the archive holds them verbatim.
-    assert (Path(hist["archived"]) / "_expectation_mark.parquet").exists()
+    # Left out, never lost: the run-history files hold them verbatim.
+    assert (Path(hist["kept_at"]) / "_expectation_mark.parquet").exists()
     msgs = [w for w in report.warnings if "runs on other data" in w]
     assert len(msgs) == 1, report.warnings
     assert f"2 {MARK_LABEL}" in msgs[0] and "1 schema exclusion(s)" in msgs[0]
-    assert "shared / per parent kept" in msgs[0] and hist["archived"] in msgs[0]
+    assert "shared / per parent kept" in msgs[0] and hist["kept_at"] in msgs[0]
     target.close()
 
 
@@ -925,7 +1009,7 @@ def test_a_wheelhouse_travels_and_the_environment_is_kept(project, tmp_path, mon
     assert index["missing"][0]["library"] == "brokenlib"
 
     report = import_project(out, tmp_path / "copy")
-    target = tmp_path / "copy" / ".scistack"
+    target = imported_dir(tmp_path / "copy")
     assert (target / "wheelhouse" / "gaitlib-1.0-py3-none-any.whl").read_bytes() == b"wheel bytes"
     assert (target / "environment.json").is_file()
     assert report.sections["wheelhouse"]["wheels"] == ["gaitlib-1.0-py3-none-any.whl"]

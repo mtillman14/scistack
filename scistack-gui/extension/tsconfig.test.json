@@ -24,6 +24,7 @@
     "src/startupStatus.ts",
     "src/debuggerStatus.ts",
     "src/runFailures.ts",
+    "src/openExternal.ts",
     "src/*.test.ts"
   ]
 }

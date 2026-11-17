@@ -195,27 +195,23 @@ def install_missing(requirements: list[str], *, find_links: "Path | None" = None
 # An imported project's requirements
 # ---------------------------------------------------------------------------
 
-#: Where an import keeps the exporter's environment record and wheelhouse.
-STATE_DIR = ".scistack"
-ENVIRONMENT_FILE = "environment.json"
-WHEELHOUSE_DIR = "wheelhouse"
-
-
 def install_project_requirements(root: "Path | str") -> InstallReport:
     """Install what the project at *root* needs and this environment lacks:
     the missing declared dependencies and libraries (at the exporter's
     versions), from the project's wheelhouse first. Call only after the
-    user trusted the project. Never raises for an install problem."""
+    user trusted the project. Never raises for an install problem.
+    Both files are where the import put them (``scidb.project.imported``)."""
     from scidb.project.bundle import check_environment
+    from scidb.project.imported import ENVIRONMENT_FILE, WHEELHOUSE_DIR, imported_dir
 
     root = Path(root)
-    env_path = root / STATE_DIR / ENVIRONMENT_FILE
+    env_path = imported_dir(root) / ENVIRONMENT_FILE
     if not env_path.is_file():
         Log.info(f"[environment] {root}: no recorded environment; nothing to install")
         return InstallReport(status="nothing", reason="the project records no environment")
     env = json.loads(env_path.read_text(encoding="utf-8"))
     check = check_environment(root, env)
-    wheelhouse = root / STATE_DIR / WHEELHOUSE_DIR
+    wheelhouse = imported_dir(root) / WHEELHOUSE_DIR
     find_links = wheelhouse if wheelhouse.is_dir() and any(wheelhouse.glob("*.whl")) else None
     report = install_missing(list(check.get("missing_requirements") or []), find_links=find_links)
     unknown = [

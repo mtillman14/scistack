@@ -13,6 +13,7 @@ import * as path from 'path';
 import type { Session } from './session';
 import { answerSetPlotTheme, plotThemeHost } from './plotTheme';
 import { webviewCsp } from './webviewCsp';
+import { isAllowedExternalUrl } from './openExternal';
 import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
@@ -209,6 +210,55 @@ export class DagPanel {
             }
             this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
           } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) },
+            });
+          }
+          return;
+        }
+        if (method === 'open_external') {
+          // The 🐞 Report bug button (issue #20): a webview cannot open a
+          // browser tab, so the host does — for GitHub https links only.
+          const url = ((msg.params ?? {}) as { url?: unknown }).url;
+          if (!isAllowedExternalUrl(url)) {
+            this.outputChannel.appendLine(
+              `open_external: refused non-GitHub URL ${String(url).slice(0, 120)}`,
+            );
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: 'Only https://github.com links can be opened.' },
+            });
+            return;
+          }
+          try {
+            const opened = await vscode.env.openExternal(vscode.Uri.parse(url, true));
+            this.outputChannel.appendLine(
+              `open_external: ${url.split('?')[0]} (${url.length} chars) opened=${opened}`,
+            );
+            this.panel.webview.postMessage({ id: msg.id, result: { ok: true, opened } });
+          } catch (err) {
+            this.outputChannel.appendLine(`open_external: failed: ${String(err)}`);
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) },
+            });
+          }
+          return;
+        }
+        if (method === 'reveal_in_os') {
+          // The bug reporter's "Show in folder": the user drags the saved
+          // project file from there onto the GitHub issue (issue #20).
+          try {
+            const filePath = ((msg.params ?? {}) as { path?: unknown }).path;
+            if (typeof filePath !== 'string' || filePath === '') {
+              throw new Error('reveal_in_os needs a file path');
+            }
+            await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(filePath));
+            this.outputChannel.appendLine(`reveal_in_os: ${filePath}`);
+            this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          } catch (err) {
+            this.outputChannel.appendLine(`reveal_in_os: failed: ${String(err)}`);
             this.panel.webview.postMessage({
               id: msg.id,
               error: { message: String(err) },
