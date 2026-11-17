@@ -98,6 +98,20 @@ def test_tail_lines_tops_up_from_the_rolled_over_backup(tmp_path):
     assert tail_lines(tmp_path / "bad.log", 5).startswith("ok\n")
 
 
+def test_log_tails_names_each_attached_log_and_skips_the_rest(tmp_path, monkeypatch):
+    """Issue #20: the bundle asks Log.tails for the logs; only scistacklog
+    knows which files they are (test_only_scistacklog_reads_the_journal_path)."""
+    journal = tmp_path / "scistack.log"
+    journal.write_text("j1\nj2\nj3\n", encoding="utf-8")
+    debug = tmp_path / "scistack-debug.log"
+    debug.write_text("", encoding="utf-8")  # empty: left out
+    monkeypatch.setattr(Log, "_journal_path", str(journal))
+    monkeypatch.setattr(Log, "_path", str(debug))
+    assert Log.tails(2) == {"scistack.log": "j2\nj3\n"}
+    monkeypatch.setattr(Log, "_journal_path", None)
+    assert Log.tails(2) == {}
+
+
 def test_debug_file_defaults_to_debug_and_journal_gets_only_blocks(files):
     journal, debug = files
     Log.debug("framework internals")

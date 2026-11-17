@@ -490,6 +490,22 @@ class Log:
         """Current journal path (``None`` if no journal is written)."""
         return cls._journal_path
 
+    @classmethod
+    def tails(cls, n: int) -> "dict[str, str]":
+        """The last *n* lines (:func:`tail_lines`) of each log this process
+        writes -- the journal, then the debug file -- keyed by file name. A log
+        that is not attached or is empty is left out. The one place outside
+        the writers that knows which log files exist (a bundle's logs section
+        reads them through here)."""
+        out: dict[str, str] = {}
+        for path in (cls._journal_path, cls._path):
+            if not path:
+                continue
+            text = tail_lines(path, n)
+            if text:
+                out[os.path.basename(path)] = text
+        return out
+
     # -- levels -----------------------------------------------------------
 
     @classmethod

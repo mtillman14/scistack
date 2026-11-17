@@ -431,16 +431,9 @@ def _hide_locations(sections: "dict[str, dict[str, bytes]]", redaction) -> list:
 def _logs_section() -> "dict[str, bytes]":
     """The last ``LOG_TAIL_LINES`` of each log this process writes (the files
     ``configure_database`` put beside the project's database), keyed by file
-    name. A log that is not attached or is empty is left out."""
-    from scistacklog import tail_lines
-
-    files: dict[str, bytes] = {}
-    for path in (Log.get_journal_path(), Log.get_path()):
-        if not path:
-            continue
-        text = tail_lines(path, LOG_TAIL_LINES)
-        if text:
-            files[Path(path).name] = text.encode("utf-8")
+    name. A log that is not attached or is empty is left out. Which files
+    those are is scistacklog's to know (``Log.tails``)."""
+    files = {name: text.encode("utf-8") for name, text in Log.tails(LOG_TAIL_LINES).items()}
     Log.info(
         f"[bundle] logs section: {', '.join(f'{k} ({len(v)} bytes)' for k, v in files.items()) or 'no log attached'}"
     )
