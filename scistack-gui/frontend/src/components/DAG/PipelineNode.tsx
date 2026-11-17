@@ -16,6 +16,7 @@
  * placement's binding, so two placements keep their own).
  */
 
+import { showMessage } from '../dialogs'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { callBackend, isVSCodeMode } from '../../api'
@@ -117,9 +118,9 @@ export default function PipelineNode({ id, data }: Props) {
           a.click()
           URL.revokeObjectURL(url)
         }
-        window.alert(`Exported '${data.label}' to:\n${r.path}`)
+        void showMessage(`Exported '${data.label}' to:\n${r.path}`)
       })
-      .catch(err => window.alert(`Export failed: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Export failed: ${(err as Error).message}`))
   }, [data.child_pipeline_id, data.label])
 
   const handleExportCode = useCallback((e: React.MouseEvent) => {
@@ -140,9 +141,9 @@ export default function PipelineNode({ id, data }: Props) {
         const warningText = r.warnings.length > 0
           ? `\n\n${r.warnings.length} step(s) skipped (see comments in the script):\n${r.warnings.join('\n')}`
           : ''
-        window.alert(`Exported '${data.label}' (${r.language}) to:\n${r.path}${warningText}`)
+        void showMessage(`Exported '${data.label}' (${r.language}) to:\n${r.path}${warningText}`)
       })
-      .catch(err => window.alert(`Export failed: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Export failed: ${(err as Error).message}`))
   }, [data.child_pipeline_id, data.label])
 
   return (

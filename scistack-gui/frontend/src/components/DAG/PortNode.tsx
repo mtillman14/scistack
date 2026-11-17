@@ -9,6 +9,7 @@
  * nodes do, so drag one up or down to reorder them.
  */
 
+import { showMessage } from '../dialogs'
 import { useState } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { callBackend } from '../../api'
@@ -29,7 +30,7 @@ export default function PortNode({ id, type, data }: Props) {
     setDraft(null)
     if (!name || name === data.label) return
     callBackend('rename_port', { node_id: id, name })
-      .catch(err => window.alert(`Could not rename port: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Could not rename port: ${(err as Error).message}`))
   }
 
   return (

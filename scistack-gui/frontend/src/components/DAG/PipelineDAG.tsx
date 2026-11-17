@@ -13,6 +13,7 @@
  *   - Background / Controls / Panel: built-in UI chrome from React Flow
  */
 
+import { showMessage, askConfirm } from '../dialogs'
 import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
@@ -489,7 +490,7 @@ export default function PipelineDAG() {
         setClipboard(null)  // one paste consumes the clipboard — the Paste button disappears
         bumpGraph()
       })
-      .catch(err => window.alert(`Could not paste: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Could not paste: ${(err as Error).message}`))
   }, [clipboard, currentScope, screenToFlowPosition, bumpGraph, setClipboard])
 
   // Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z for the whole pipeline page (canvas and
@@ -612,9 +613,9 @@ export default function PipelineDAG() {
     callBackend('refresh_parameter_source', { name })
       .then(res => {
         const r = res as { ok: boolean; error?: string }
-        if (!r.ok) window.alert(`Could not refresh '${name}' from file: ${r.error ?? 'unknown error'}`)
+        if (!r.ok) void showMessage(`Could not refresh '${name}' from file: ${r.error ?? 'unknown error'}`)
       })
-      .catch(err => window.alert(`Could not refresh '${name}' from file: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Could not refresh '${name}' from file: ${(err as Error).message}`))
   }, [contextMenu])
 
   // Location is already on the node's data (unlike functions, no RPC
@@ -625,7 +626,7 @@ export default function PipelineDAG() {
     if (!paramLabel || !paramSourceFile) return
     if (isVSCodeMode) {
       callBackend('reveal_in_editor', { file: paramSourceFile, line: paramSourceLine })
-        .catch(err => window.alert(`Failed to open source: ${(err as Error).message}`))
+        .catch(err => void showMessage(`Failed to open source: ${(err as Error).message}`))
     } else {
       setSourceLoc({ name: paramLabel, file: paramSourceFile, line: paramSourceLine ?? 0 })
     }
@@ -689,18 +690,18 @@ export default function PipelineDAG() {
           key_map: Record<string, string>; unmapped: string[]; library_keys: string[] | null
           missing_parameters: { name: string }[]; missing_path_inputs: { name: string }[]
         }
-        if (s.unmapped.length > 0 && !window.confirm(
+        if (s.unmapped.length > 0 && !(await askConfirm(
           `'${name}' (library ${library}) iterates over ${s.unmapped.join(', ')}, which `
           + `your schema does not have. Place it anyway?`
-        )) throw new Error('cancelled')
+        ))) throw new Error('cancelled')
         // Parameters / PathInputs resolve by name in THIS project: offer to
         // declare the missing ones from the library's defaults.
         const missing = [...s.missing_parameters, ...s.missing_path_inputs].map(m => m.name)
-        if (missing.length > 0 && window.confirm(
+        if (missing.length > 0 && (await askConfirm(
           `'${name}' uses ${missing.join(', ')}, which this project does not declare. `
           + `Declare them now from the library's defaults? (You can edit them afterwards; `
           + `a PathInput's folder is yours to set.)`
-        )) {
+        ))) {
           await callBackend('declare_library_requirements', { pipeline_id, names: null })
         }
         return Object.keys(s.key_map).length > 0 ? { key_map: s.key_map } : null
@@ -720,7 +721,7 @@ export default function PipelineDAG() {
         })
         .catch(err => {
           if ((err as Error).message === 'cancelled') return
-          window.alert(`Could not place pipeline '${name}': ${(err as Error).message}`)
+          void showMessage(`Could not place pipeline '${name}': ${(err as Error).message}`)
         })
       return
     }
@@ -736,7 +737,7 @@ export default function PipelineDAG() {
       nodeType === 'pathInputNode' &&
       getNodes().some(n => n.type === 'pathInputNode' && (n.data as { label?: string })?.label === label)
     ) {
-      window.alert(`PathInput '${label}' is already on this canvas. Wire the existing node, or declare a new PathInput with its own name.`)
+      void showMessage(`PathInput '${label}' is already on this canvas. Wire the existing node, or declare a new PathInput with its own name.`)
       return
     }
 
@@ -815,7 +816,7 @@ export default function PipelineDAG() {
         if (r && r.ok === false) {
           refreshLog.current.forget(nodeId)
           setNodes(prev => prev.filter(n => n.id !== nodeId))
-          window.alert(r.error ?? `Could not place '${label}'.`)
+          void showMessage(r.error ?? `Could not place '${label}'.`)
         } else {
           refreshLog.current.confirm(nodeId, performance.now())
         }
@@ -835,7 +836,7 @@ export default function PipelineDAG() {
         // (and its layout positions) but never the child pipeline itself.
         callBackend('remove_pipeline_use', { use_id: node.id })
           .catch(err => {
-            window.alert(`Could not remove pipeline node: ${(err as Error).message}`)
+            void showMessage(`Could not remove pipeline node: ${(err as Error).message}`)
             bumpGraph()  // restore the node — the delete did not happen
           })
       } else {
@@ -905,7 +906,7 @@ export default function PipelineDAG() {
       refreshLog.current.confirm(edgeId, performance.now())
     }).catch(err => {
       refreshLog.current.forget(edgeId)
-      window.alert(`Could not create connection: ${(err as Error).message}`)
+      void showMessage(`Could not create connection: ${(err as Error).message}`)
       setEdges(prev => prev.filter(e => e.id !== edgeId))
     })
   }, [setEdges])
@@ -957,7 +958,7 @@ export default function PipelineDAG() {
       target: argDrop.target,
       source_handle: argDrop.sourceHandle,
       target_handle: targetHandle,
-    }).catch(err => window.alert(`Could not create connection: ${(err as Error).message}`))
+    }).catch(err => void showMessage(`Could not create connection: ${(err as Error).message}`))
   }, [argDrop])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
@@ -976,7 +977,7 @@ export default function PipelineDAG() {
         source_handle: removed?.sourceHandle ?? null,
         target_handle: removed?.targetHandle ?? null,
       }).catch(err => {
-        window.alert(`Could not delete edge: ${(err as Error).message}`)
+        void showMessage(`Could not delete edge: ${(err as Error).message}`)
         bumpGraph()  // restore the edge — the delete did not happen
       })
     }

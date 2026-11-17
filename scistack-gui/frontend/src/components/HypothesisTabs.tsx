@@ -30,6 +30,7 @@
  * UI anywhere in the GUI today.
  */
 
+import { showMessage } from './dialogs'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { callBackend, isVSCodeMode } from '../api'
 import { useBackendMessage } from '../hooks/useBackendMessage'
@@ -187,7 +188,7 @@ export default function HypothesisTabs() {
           a.click()
           URL.revokeObjectURL(url)
         }
-        window.alert(`Exported '${name}' to:\n${r.path}`)
+        void showMessage(`Exported '${name}' to:\n${r.path}`)
       })
       .catch(err => setError((err as Error).message))
   }
@@ -213,7 +214,7 @@ export default function HypothesisTabs() {
         const warningText = r.warnings.length > 0
           ? `\n\n${r.warnings.length} step(s) skipped (see comments in the script):\n${r.warnings.join('\n')}`
           : ''
-        window.alert(`Exported '${name}' (${r.language}) to:\n${r.path}${warningText}`)
+        void showMessage(`Exported '${name}' (${r.language}) to:\n${r.path}${warningText}`)
       })
       .catch(err => setError((err as Error).message))
   }
@@ -264,7 +265,7 @@ export default function HypothesisTabs() {
             if (r.unresolved_labels.length > 0) {
               parts.push(`${r.unresolved_labels.length} function/variable name(s) not found locally yet: ${r.unresolved_labels.join(', ')}`)
             }
-            window.alert(parts.join('\n\n'))
+            void showMessage(parts.join('\n\n'))
           }
         })
         .catch(err => setError((err as Error).message))

@@ -17,6 +17,7 @@
  * that is not importable comes back with the backend's hint.
  */
 
+import { askConfirm, askText } from '../dialogs'
 import { useCallback, useEffect, useState } from 'react'
 import { callBackend } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
@@ -87,15 +88,15 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
       .catch(err => setError((err as Error).message))
   }
 
-  const remove = (name: string) => {
-    if (!window.confirm(`Stop using the library '${name}'? Its pipelines stay on your canvases.`)) return
+  const remove = async (name: string) => {
+    if (!(await askConfirm(`Stop using the library '${name}'? Its pipelines stay on your canvases.`))) return
     callBackend('remove_library', { name })
       .then(d => { apply((d as { libraries: LibraryRow[] }).libraries); setError(''); setHint('') })
       .catch(err => setError((err as Error).message))
   }
 
-  const makeCopy = (name: string) => {
-    const newName = window.prompt(
+  const makeCopy = async (name: string) => {
+    const newName = await askText(
       `Make your own copy of '${name}', under a new name. It becomes a library this project `
       + `authors (libs/<new name>/): every placement of ${name} switches to it, its functions `
       + `are named <new name>.fn (results whose code is unchanged carry over), and its `

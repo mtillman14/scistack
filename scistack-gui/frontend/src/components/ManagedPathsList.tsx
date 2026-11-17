@@ -9,6 +9,7 @@
  * add_project_path/remove_project_path, which write/rewrite scistack.toml.
  */
 
+import { askConfirm } from './dialogs'
 import { useState } from 'react'
 import { callBackend } from '../api'
 
@@ -83,7 +84,7 @@ export default function ManagedPathsList({
     // Sent as written: the backend matches the exact entry, which is the
     // only identity an unmapped `{root}` entry has.
     const shown = detailFor(selected).resolved ?? selected
-    if (!window.confirm(`Stop discovering code under:\n${shown}\n\nThis only edits scistack.toml — no files are deleted.`)) {
+    if (!(await askConfirm(`Stop discovering code under:\n${shown}\n\nThis only edits scistack.toml — no files are deleted.`))) {
       return
     }
     setBusy(true)

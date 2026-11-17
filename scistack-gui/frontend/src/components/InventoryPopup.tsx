@@ -20,6 +20,7 @@
  * re-includes only that row.
  */
 
+import { askText } from './dialogs'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { callBackend, isVSCodeMode } from '../api'
 import * as modalStyles from './modalStyles'
@@ -196,7 +197,7 @@ export default function InventoryPopup({
       })
       path = (picked as { path: string | null }).path
     } else {
-      path = window.prompt('Save the inventory CSV as (absolute path):', defaultName)
+      path = await askText('Save the inventory CSV as (absolute path):', defaultName)
     }
     if (!path) return // cancelled
     setError('')

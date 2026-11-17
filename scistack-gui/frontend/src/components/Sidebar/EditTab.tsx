@@ -19,6 +19,7 @@
  * onPaneClick) can clear it too.
  */
 
+import { showMessage } from '../dialogs'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
@@ -643,9 +644,9 @@ export default function EditTab() {
     callBackend('refresh_parameter_source', { name })
       .then(res => {
         const r = res as { ok: boolean; error?: string }
-        if (!r.ok) window.alert(`Could not refresh '${name}' from file: ${r.error ?? 'unknown error'}`)
+        if (!r.ok) void showMessage(`Could not refresh '${name}' from file: ${r.error ?? 'unknown error'}`)
       })
-      .catch(err => window.alert(`Could not refresh '${name}' from file: ${(err as Error).message}`))
+      .catch(err => void showMessage(`Could not refresh '${name}' from file: ${(err as Error).message}`))
   }
 
   const handleOpenParamSourceFromSidebar = () => {
@@ -654,7 +655,7 @@ export default function EditTab() {
     if (!item?.source_file) return
     if (isVSCodeMode) {
       callBackend('reveal_in_editor', { file: item.source_file, line: item.source_line })
-        .catch(err => window.alert(`Failed to open source: ${(err as Error).message}`))
+        .catch(err => void showMessage(`Failed to open source: ${(err as Error).message}`))
     } else {
       setParamSourceLoc({ name: item.name, file: item.source_file, line: item.source_line ?? 0 })
     }

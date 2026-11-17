@@ -19,6 +19,7 @@
  *   scrolls to its section.
  */
 
+import { showMessage } from '../dialogs'
 import { useState } from 'react'
 import { useStoreApi } from '@xyflow/react'
 import { callBackend, isVSCodeMode } from '../../api'
@@ -81,7 +82,7 @@ export default function PanelHeader({ kind, name, nameSlot, source, readOnly, ba
     console.debug('[PanelHeader] open source', source)
     if (isVSCodeMode) {
       callBackend('reveal_in_editor', { file: source.file, line: source.line ?? 1 })
-        .catch(err => window.alert(`Failed to open source: ${(err as Error).message}`))
+        .catch(err => void showMessage(`Failed to open source: ${(err as Error).message}`))
     } else {
       setSourceLoc({ name, file: source.file, line: source.line ?? 0 })
     }

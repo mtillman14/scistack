@@ -142,6 +142,37 @@ def test_expected_locations_lists_every_location(page, server):
     assert page.smoke_errors == [], page.smoke_errors
 
 
+def test_unmark_takes_the_mark_back(page, server):
+    """Mark a location Not expected, then Unmark it. Unmark used
+    window.confirm, which a VS Code webview answers False (and Playwright
+    auto-dismisses), so it silently did nothing (user report 2026-11-17).
+    Leaves the database as it found it."""
+    open_canvas(page, server)
+    node(page, "variable", "BacklogOut").click(button="right")
+    page.get_by_test_id("menu-expected-locations").click()
+    popup = page.get_by_test_id("expected-locations-popup")
+    rows = popup.get_by_test_id("expected-row")
+    rows.first.wait_for()
+    first = rows.first
+    assert first.get_attribute("data-status") == "present"
+
+    first.get_by_role("button", name="Mark…").click()
+    popup.get_by_role("button", name="Not expected", exact=True).click()
+    popup.get_by_placeholder("Reason (required), e.g. file never recorded").fill("e2e")
+    popup.get_by_role("button", name="Save mark").click()
+    popup.locator('[data-testid="expected-row"][data-status="present_unexpected"]').wait_for()
+
+    marked = popup.locator('[data-testid="expected-row"][data-status="present_unexpected"]')
+    marked.get_by_test_id("row-unmark").click()
+    page.get_by_test_id("app-dialog-ok").click()
+    page.get_by_test_id("app-dialog").wait_for(state="detached")
+    marked.wait_for(state="detached")
+    statuses = [r.get_attribute("data-status") for r in rows.all()]
+    assert statuses.count("present") == 2, statuses
+    assert popup.get_by_test_id("row-unmark").count() == 0
+    assert page.smoke_errors == [], page.smoke_errors
+
+
 def test_coverage_has_a_row_per_subject(page, server):
     """Item 0zzzzzzzzzzzzzzzzzzzzzzz step 6: header ✅ Coverage by subject has
     one row per subject value."""

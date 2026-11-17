@@ -14,6 +14,7 @@
  * for visibility/override rather than a required setup step.
  */
 
+import { askConfirm } from './dialogs'
 import { useState } from 'react'
 import { callBackend } from '../api'
 
@@ -65,7 +66,7 @@ export default function EntitiesFileEditor({
   }
 
   const handleClear = async () => {
-    if (!window.confirm('Stop targeting this file for new declarations?\n\nThis only edits scistack.toml — the file itself is left untouched.')) {
+    if (!(await askConfirm('Stop targeting this file for new declarations?\n\nThis only edits scistack.toml — the file itself is left untouched.'))) {
       return
     }
     setBusy(true)

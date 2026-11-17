@@ -1,4 +1,5 @@
 // PlotStudio state, part 6 of 8: saving and exporting figures and data.
+import { askText } from '../dialogs'
 import { useCallback, useRef, useState } from 'react'
 import { callBackend, isVSCodeMode } from '../../api'
 import { customPreviewBlob, customPreviewSize } from './CustomFigure'
@@ -159,7 +160,7 @@ export function useExport(s: StudioCoreState & StepByStepState & CombinesState &
           path = (picked as { path: string | null }).path
           if (!path) return  // dialog cancelled
         } else {
-          path = window.prompt(
+          path = await askText(
             savingAll
               ? `Folder to save ${figureCount} figures into:`
               : 'Save the figure as:',
@@ -229,7 +230,7 @@ export function useExport(s: StudioCoreState & StepByStepState & CombinesState &
           path = (picked as { path: string | null }).path
           if (!path) return  // dialog cancelled
         } else {
-          path = window.prompt('Save the plot data as:', defaultName)
+          path = await askText('Save the plot data as:', defaultName)
           if (!path) return
         }
         const job = `ps-${Math.random().toString(36).slice(2, 10)}`

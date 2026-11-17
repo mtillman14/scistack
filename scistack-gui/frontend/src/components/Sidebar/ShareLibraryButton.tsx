@@ -12,6 +12,7 @@
  * `pip install -e` command for their own scripts.
  */
 
+import { showMessage } from '../dialogs'
 import { useState } from 'react'
 import { callBackend } from '../../api'
 import { isLibraryName, reportLines, type AuthoringReport } from './libraryReport'
@@ -43,7 +44,7 @@ export default function ShareLibraryButton({ pipelineId }: { pipelineId: string 
         setName(s.name)
         setOpen({ top: r.bottom + 4, left: Math.max(8, r.left - 200) })
       })
-      .catch(err => window.alert((err as Error).message))
+      .catch(err => void showMessage((err as Error).message))
   }
 
   const share = () => {

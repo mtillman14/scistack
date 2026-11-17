@@ -5,6 +5,7 @@ import { type PlotViewConfig } from './PlotRoot'
 import Studio from './components/Studio/Studio'
 import { type StatViewConfig } from './components/StatStudio/StatStudio'
 import ClientErrorBoundary from './components/ClientErrorBoundary'
+import { DialogHost } from './components/dialogs'
 import { callBackend } from './api'
 import { reportBundleBuild } from './bundleBuild'
 import { DEFAULT_PLOT_THEME, plotThemeVars } from './components/PlotStudio/plotTheme'
@@ -49,5 +50,7 @@ createRoot(document.getElementById('root')!).render(
         <App />
       </ClientErrorBoundary>
     )}
+    {/* Draws askConfirm / askText / showMessage: a webview has no native dialogs. */}
+    <DialogHost />
   </StrictMode>
 )

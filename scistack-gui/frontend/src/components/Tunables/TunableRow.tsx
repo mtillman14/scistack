@@ -8,6 +8,7 @@
  * "Make this a Parameter" (E5).
  */
 
+import { askText } from '../dialogs'
 import { useState } from 'react'
 import {
   formatValue,
@@ -86,8 +87,8 @@ export default function TunableRow(props: Props) {
           style={styles.btn}
           type="button"
           title="Make this a Parameter (a project-level value other steps can share)"
-          onClick={() => {
-            const name = window.prompt('New Parameter name', suggestParameterName(sv.key))
+          onClick={async () => {
+            const name = await askText('New Parameter name', suggestParameterName(sv.key))
             if (name && name.trim()) props.onPromote(sv.key, name.trim())
           }}
         >

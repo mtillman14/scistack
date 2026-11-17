@@ -8,6 +8,7 @@
  *   - Run output is sent to the sidebar Runs tab via RunLogContext.
  */
 
+import { showMessage } from '../dialogs'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Handle, Position, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import { callBackend, isVSCodeMode } from '../../api'
@@ -160,7 +161,7 @@ function PipelineFunctionNode({ id, data }: Props) {
     // eslint-disable-next-line no-console
     console.debug(`[FunctionNode ${id}] reveal argument ${argument}`)
     callBackend('set_shown_argument', { node_id: id, argument, shown: true })
-      .catch(err => window.alert(`Could not show '${argument}': ${(err as Error).message}`))
+      .catch(err => void showMessage(`Could not show '${argument}': ${(err as Error).message}`))
   }, [id])
   const [running, setRunning] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -389,7 +390,7 @@ function PipelineFunctionNode({ id, data }: Props) {
         ok: boolean; file?: string; line?: number; error?: string
       }
       if (!src.ok) {
-        window.alert(`Could not locate source for '${data.label}': ${src.error ?? 'unknown error'}`)
+        void showMessage(`Could not locate source for '${data.label}': ${src.error ?? 'unknown error'}`)
         return
       }
       if (isVSCodeMode) {
@@ -400,7 +401,7 @@ function PipelineFunctionNode({ id, data }: Props) {
         setSourceLoc({ name: data.label, file: src.file ?? '', line: src.line ?? 0 })
       }
     } catch (err) {
-      window.alert(`Failed to open source: ${err}`)
+      void showMessage(`Failed to open source: ${err}`)
     }
   }, [data.label])
 

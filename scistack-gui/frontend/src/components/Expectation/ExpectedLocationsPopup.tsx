@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { callBackend } from '../../api'
+import { askConfirm } from '../dialogs'
 import * as modalStyles from '../modalStyles'
 import {
   STATUS_ICON,
@@ -123,8 +124,11 @@ export default function ExpectedLocationsPopup({ variable, initialFilter = null,
     }
   }
 
+  // askConfirm, never window.confirm: a VS Code webview answers that false
+  // without showing it, so Unmark silently did nothing (user report 2026-11-17).
   const unmark = async (keys: Record<string, string>) => {
-    if (!window.confirm(`Take back the mark on ${keyText(keys)}? (Its history is kept.)`)) return
+    if (!(await askConfirm(`Take back the mark on ${keyText(keys)}? (Its history is kept.)`, 'Unmark'))) return
+    setMessage('')
     setError('')
     try {
       await callBackend('unmark_expectation', { variable, keys })
@@ -247,7 +251,7 @@ export default function ExpectedLocationsPopup({ variable, initialFilter = null,
                           </button>
                           {own && (
                             <button type="button" style={styles.rowBtn} onClick={() => unmark(own.keys)}
-                              title={`Take back the mark on ${keyText(own.keys)}`}>
+                              data-testid="row-unmark" title={`Take back the mark on ${keyText(own.keys)}`}>
                               Unmark
                             </button>
                           )}

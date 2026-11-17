@@ -30,6 +30,7 @@
  * "right 1/4" is only its width until it is first dragged.
  */
 
+import { showMessage } from './components/dialogs'
 import { useEffect, useState, useCallback } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import PipelineDAG from "./components/DAG/PipelineDAG";
@@ -243,7 +244,7 @@ export default function App() {
         index_path: string;
       };
       if (isVSCodeMode) {
-        window.alert(`Report written to:\n${res.index_path}`);
+        void showMessage(`Report written to:\n${res.index_path}`);
       } else {
         window.open(
           `/api/artifacts/file?path=${encodeURIComponent(res.index_path)}`,
@@ -251,7 +252,7 @@ export default function App() {
         );
       }
     } catch (err) {
-      window.alert(`Report failed: ${(err as Error).message}`);
+      void showMessage(`Report failed: ${(err as Error).message}`);
     } finally {
       setReporting(false);
     }

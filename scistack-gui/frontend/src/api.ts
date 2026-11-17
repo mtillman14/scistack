@@ -7,6 +7,7 @@
  * Components import `callBackend` and don't need to know which mode is active.
  */
 
+import { askText } from './components/dialogs'
 import { WebviewRpc } from './webviewRpc';
 import { UndoStack, taskChange, type Change } from './undo';
 import type { ApiParams } from './generated/api-types';
@@ -78,7 +79,7 @@ export async function pickSavePath(opts: {
     });
     return (picked as { path: string | null }).path;
   }
-  return window.prompt(opts.prompt, opts.defaultName);
+  return askText(opts.prompt, opts.defaultName);
 }
 
 /**

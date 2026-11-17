@@ -11,6 +11,22 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. In-app dialogs replace confirm/prompt/alert; Clear All Data — added 2026-11-17
+
+What changed: the VS Code webview has no native dialogs, so every `window.confirm` / `prompt` / `alert` silently did nothing. All of them are now drawn in-app (`components/dialogs.tsx`). Also: Clear All Data's backup works on Windows and a clear removes the schema key combinations. Reinstall scistack-gui (bundles are rebuilt) first.
+
+1. Variable → right-click → **✅ Expected locations…** → **Mark…** a row **Not expected** with a reason → **Save mark**; then **Unmark** on that row: a dialog asks "Take back the mark on …?" → **Unmark**: the row returns to its old status and the 🏷 badge drops.
+2. Each of these shows an in-app dialog (Cancel does nothing; OK does the thing):
+   - Entities file → stop targeting it.
+   - Managed code paths → remove one.
+   - Libraries → remove a library; **Make your own copy** asks for a name in a text box.
+   - Drag a library pipeline whose schema lacks a key, or which uses undeclared Parameters/PathInputs: both questions appear.
+   - Tunables → **P** (make a Parameter) asks for a name.
+3. Messages that used to be alerts appear in-app with selectable text: export a pipeline (node menu), "Could not …" errors, the HTML report path. Enter = OK, Escape = Cancel.
+4. **Clear All Data** with the backup box ticked: succeeds on Windows; `afl.duckdb.bak-<time>` exists beside the database; scistack.log has `clear_data: backed up … (N bytes, … ms)`. Afterwards no variable shows a red ✕ badge, and Expected locations… lists no rows (unless you declared key values or Expected marks). The dialog text says the schema key combinations are deleted.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. "Schema keys…" header button; a rename reaches everything — added 2026-11-17
 
 **What changed:** The pipeline header has a **Schema keys…** button (before **Clear data…**). It opens
