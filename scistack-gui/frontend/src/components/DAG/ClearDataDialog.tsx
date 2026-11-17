@@ -67,7 +67,8 @@ export default function ClearDataDialog({ onClose }: { onClose: () => void }) {
           <div style={s.body}>
             <div>
               {plan.total_records} record(s) in {variables.length} variable(s) will be
-              deleted, with their run history. Every canvas, its nodes, edges and
+              deleted, with their run history and every schema key combination
+              (location) they were saved at. Every canvas, its nodes, edges and
               Parameter values, and the run log ({plan.runs_kept} run(s)) are kept.
             </div>
             {variables.length > 0 && (

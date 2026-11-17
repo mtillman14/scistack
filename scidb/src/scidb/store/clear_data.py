@@ -23,14 +23,16 @@ database holds is in neither list.
 Emptied: every variable's data rows (the tables and their views stay, and an
 empty table takes a new column set on the next save:
 ``DatabaseManager._check_column_set``), ``_record``, ``_record_save``,
-``_constant``, ``_invocation*``, ``_function_source`` and
-``_run_invocation``.
+``_constant``, ``_invocation*``, ``_function_source``, ``_run_invocation``
+and ``_schema``: every location the database knew of, so nothing still
+"expects" the old schema key combinations (user decision 2026-11-17).
 
 Kept: the run log ``_run`` (that a run happened, when, from where; user
-decision 2026-10-21), ``_schema`` (location interning: a re-save reuses the
-same ids), pins (released, rows kept), tombstones, schema exclusions, schema
-key types, variable registrations. Saved plots/stats and every GUI table are
-not scidb's and are untouched.
+decision 2026-10-21), pins (released, rows kept), tombstones, schema
+exclusions, schema key types and the key tree, expectation key settings and
+marks (stated intent: declared values and Expected marks still expect their
+locations), variable registrations. Saved plots/stats and every GUI table
+are not scidb's and are untouched.
 
 **A GUI project is refused** unless ``allow_canvas=True``. The GUI's clear
 (``scistack_gui.services.clear_service``) passes it after canvas adoption has
@@ -42,7 +44,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -163,6 +164,44 @@ def backup_path_for(db_path: "Path | str", now: "datetime | None" = None) -> Pat
     return p.with_name(f"{p.name}.bak-{stamp}")
 
 
+_BACKUP_ALIAS = "__scidb_clear_backup"
+
+
+def backup_database(duck, db_path: "Path | str", backup_path: "Path | str") -> None:
+    """Write a complete copy of the open database to ``backup_path`` through
+    the connection that already holds it.
+
+    Not a file copy: on Windows DuckDB locks its file exclusively, so even
+    this process cannot open it for reading while the connection is open
+    (``PermissionError: [Errno 13]``, 2026-11-17). ``COPY FROM DATABASE``
+    goes through DuckDB itself, works the same on every OS, and copies the
+    committed state including the write-ahead log, so no CHECKPOINT first.
+    """
+    t0 = time.perf_counter()
+    target = str(backup_path).replace("'", "''")
+    source = duck.fetchone("SELECT current_database()")[0]
+    Log.info(f"clear_data: backing up {db_path} (catalog {source!r}) -> {backup_path}")
+    attached = False
+    try:
+        duck.execute(f"ATTACH '{target}' AS {_BACKUP_ALIAS}")
+        attached = True
+        duck.execute(f'COPY FROM DATABASE "{source}" TO {_BACKUP_ALIAS}')
+    except Exception as exc:
+        Log.warn(
+            f"clear_data: backup to {backup_path} failed ({type(exc).__name__}: {exc}); "
+            f"nothing was deleted. A partial backup file may be left at that path."
+        )
+        raise
+    finally:
+        if attached:
+            duck.execute(f"DETACH {_BACKUP_ALIAS}")
+    size = Path(backup_path).stat().st_size
+    Log.info(
+        f"clear_data: backed up {db_path} -> {backup_path} ({size} bytes, "
+        f"{(time.perf_counter() - t0) * 1000:.1f} ms)"
+    )
+
+
 def clear_data(
     db: "DatabaseManager",
     reason: str,
@@ -194,10 +233,7 @@ def clear_data(
     backup_path = None
     if backup:
         backup_path = backup_path_for(db.dataset_db_path)
-        # Flush the write-ahead log into the file first, so the copy is complete.
-        duck.execute("CHECKPOINT")
-        shutil.copy2(db.dataset_db_path, backup_path)
-        Log.info(f"clear_data: backed up {db.dataset_db_path} -> {backup_path}")
+        backup_database(duck, db.dataset_db_path, backup_path)
 
     try:
         with duck.transaction("clear_data"):

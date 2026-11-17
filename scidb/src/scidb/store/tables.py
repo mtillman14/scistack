@@ -260,7 +260,13 @@ SCHEMA = _core(
     )
     """,
     "CREATE SEQUENCE IF NOT EXISTS _schema_id_seq START 1",
-    bundle=BUNDLE_HISTORY, kept="location interning; a re-save after the clear reuses the same schema ids",
+    # Cleared (user decision 2026-11-17): a clear removes the data ADDRESSES
+    # too, not only the values. Expected locations, for_each(key=[]) levels
+    # and the location picker all read their key values from here, so a kept
+    # _schema left every node "expected but missing" after a clear. Ids
+    # restart at 1; record ids hash key VALUES, not schema_id, so a re-run
+    # still reproduces them, and no reader caches a schema_id across calls.
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 _core(

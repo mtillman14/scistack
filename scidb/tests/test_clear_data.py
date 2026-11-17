@@ -3,7 +3,7 @@
 ``.claude/plan-clear-data.md``; user decisions 2026-10-21. What is pinned:
 
 1. **The plan writes nothing**, and the clear removes exactly what it counted.
-2. **Every record and its run history go**; the run LOG (``_run``), the
+2. **Every record, its run history and its location (``_schema``) go**; the run LOG (``_run``), the
    variable registrations, exclusions, tombstones and pin rows stay.
 3. **A re-run after a clear reproduces the same record ids** (content
    identity is untouched).
@@ -142,6 +142,22 @@ class TestClear:
         CdTable.save(pd.DataFrame({"b": [1.0]}), subject="02", trial=1)
         assert db.stored_data_columns(CdTable.table_name()) == ["b"]
 
+    def test_the_data_addresses_go_too(self, db):
+        """A clear removes the schema key combinations, not only the values
+        (user, 2026-11-17): a kept ``_schema`` left every variable "expected
+        but missing" at its old locations, and for_each(subject=[]) still
+        iterated the old subjects."""
+        from scidb.provenance.expectation import expectation
+
+        assert len(db.distinct_schema_values("subject")) == len(SUBJECTS)
+        clear_data(db, "debugging")
+        assert _n(db, "SELECT COUNT(*) FROM _schema") == 0
+        assert db.distinct_schema_values("subject") == []
+        assert db.distinct_schema_combinations(SCHEMA) == []
+        result = expectation(db, "CdFiltered")
+        assert result.rows == [], [(r.values, r.status) for r in result.rows]
+        assert result.problems == []
+
     def test_declarations_and_audit_survive_pins_are_released(self, db):
         exclude_schema("bad subject", db=db, subject="02")
         pin_variant(db, CdFiltered, {"cd_bandpass.low_hz": 10}, "the good one")
@@ -200,6 +216,41 @@ class TestCanvasAndBackup:
         assert path is not None and path.is_file() and path.stat().st_size > 0
         assert path.name.startswith(db.dataset_db_path.name + ".bak-")
         assert path.suffix != ".duckdb", "discovery must never mistake it for a project"
+
+    def test_backup_holds_every_record_and_never_reopens_the_live_file(self, db, monkeypatch):
+        """Windows locks an open DuckDB file exclusively, so a file copy of it
+        failed with PermissionError (2026-11-17). Simulate that lock: any
+        attempt to open the live file outside DuckDB raises. The backup must
+        still succeed, and hold the data as it was before the clear."""
+        import builtins
+        from pathlib import Path
+
+        import duckdb
+
+        live = str(Path(db.dataset_db_path).resolve())
+        real_open = builtins.open
+
+        def locked_open(file, *a, **k):
+            if isinstance(file, (str, Path)) and str(Path(file).resolve()) == live:
+                raise PermissionError(13, "Permission denied", str(file))
+            return real_open(file, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", locked_open)
+        records_before = _n(db, "SELECT COUNT(*) FROM _record")
+        filtered_before = _n(db, f'SELECT COUNT(*) FROM "{CdFiltered.table_name()}"')
+        result = clear_data(db, "x", backup=True)
+        monkeypatch.undo()
+
+        assert _n(db, "SELECT COUNT(*) FROM _record") == 0
+        con = duckdb.connect(str(result.backup_path), read_only=True)
+        try:
+            assert con.execute("SELECT COUNT(*) FROM _record").fetchone()[0] == records_before
+            assert (
+                con.execute(f'SELECT COUNT(*) FROM "{CdFiltered.table_name()}"').fetchone()[0]
+                == filtered_before
+            )
+        finally:
+            con.close()
 
 
 class TestClassification:

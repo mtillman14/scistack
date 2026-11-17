@@ -29,6 +29,7 @@ _BADGES: dict[tuple[str, str], tuple[tuple, dict]] = {}
 _FINGERPRINT_TABLES = (
     "_record_save",
     "_record",
+    "_schema",  # the universe of expected locations is built from it
     "_expectation_mark",
     "_schema_key_expectation",
     "__scidb_schema_overrides",

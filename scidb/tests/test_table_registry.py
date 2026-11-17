@@ -141,6 +141,7 @@ _INTENT = {
 }
 _DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
 _CLEARED = {
+    "_schema",  # the data addresses go with the data (2026-11-17)
     "_record", "_constant", "_invocation", "_function_source",
     "_invocation_input", "_invocation_output", "_invocation_pooled", "_run_invocation",
     "_function_rename", "_record_save", "_run_outcome", "_run_summary",
