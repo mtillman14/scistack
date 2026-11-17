@@ -88,19 +88,13 @@ class GlueSchemaKeysAlteredError(GlueError):
 
 
 class GlueLanguageMismatchError(GlueError):
-    """A glue chain mixes languages, or its language is not the run's."""
+    """A glue chain mixes languages, or cannot execute in this run.
 
-    matlab_identifier = "scidb:glue:languageMismatch"
-
-
-class GlueUnsupportedInputError(GlueError):
-    """Glue was attached to a parameter that has no table to reshape.
-
-    A ``PathInput``-fed parameter is always resolved per combo, so no loaded
-    table exists at the fusion point.
+    The only chain that cannot execute is MATLAB glue in a Python run
+    (:func:`check_glue_executable`).
     """
 
-    matlab_identifier = "scidb:glue:unsupportedInput"
+    matlab_identifier = "scidb:glue:languageMismatch"
 
 
 class GlueChainOrderError(GlueError):
@@ -370,27 +364,42 @@ def _validate_chain(param: str, chain: Sequence[GlueSpec]) -> None:
             )
 
 
-def check_run_language(chains: GlueChains, run_language: str) -> None:
-    """Refuse a chain authored in a language other than the run's.
+def chain_language(chain: Sequence[GlueSpec]) -> str:
+    """The language of a (single-language, :func:`_validate_chain`) chain."""
+    return chain[0].language if chain else "python"
 
-    Python glue in a MATLAB run would technically work for free (it happens
-    inside ``for_each_prepare``). It is refused anyway so the exported plain
-    script stays faithful and there is one rule instead of an asymmetric one.
 
-    **Constant-fed chains are exempt and must not be passed here** — see
-    :func:`apply_constant_glue`, which enforces the opposite rule for them
-    (Python always, whatever the run's language) because its application site
-    is Python on both run paths. ``_for_each_prepare`` splits the chains before
-    calling either.
+def check_glue_executable(chains: GlueChains, run_language: str) -> None:
+    """THE language gate: refuse a chain that cannot execute in this run.
+
+    Glue does not care which language feeds it or which language its
+    consumer is written in (docs/claude/free-code-glue-nodes.md §1, "Which
+    language runs where"). Python glue runs in either run: MATLAB embeds
+    Python, so a MATLAB run calls it in prepare or through the bridge. MATLAB
+    glue runs in a MATLAB run, at every head.
+
+    The one refusal is **MATLAB glue in a Python run**: a Python run is a
+    Python process, and scidb has no way to execute a ``.m`` file.
+
+    Replaces ``check_run_language`` and ``check_constant_glue_language``
+    (2026-11-17), which enforced opposite rules for the two heads.
     """
-    for param, chain in chains.items():
-        for spec in chain:
-            if spec.language != run_language:
+    for param in sorted(chains):
+        for spec in chains[param]:
+            if spec.language == "matlab" and run_language != "matlab":
                 raise GlueLanguageMismatchError(
-                    f"glue '{spec.name}' on parameter '{param}' is "
-                    f"{spec.language} but this is a {run_language} run; a glue "
-                    f"node executes in the language of the run"
+                    f"glue '{spec.name}' on parameter '{param}' is MATLAB, but "
+                    f"this is a {run_language} run, and a {run_language} run "
+                    f"cannot execute a .m file. Rewrite '{spec.name}' in "
+                    f"Python, or run this function from MATLAB."
                 )
+    if chains:
+        Log.debug(
+            f"[glue] language gate ({run_language} run): "
+            + ", ".join(
+                f"'{p}'={chain_language(chains[p])}" for p in sorted(chains)
+            )
+        )
 
 
 def resolve_python_glue(name: str, source_file: str | None) -> Callable | None:
@@ -453,8 +462,8 @@ def is_constant_input(spec: Any) -> bool:
 
     ``PathInput`` and an unexpanded ``EachOf`` are excluded explicitly even
     though ``input_spec.is_loadable`` also returns False for both. Neither is a *value*:
-    a PathInput resolves per combo (glue on it is refused outright by
-    ``refuse_pathinput_glue``, which runs first), and an EachOf is a fan-out
+    a PathInput resolves per combo (its glue runs per path —
+    :func:`is_pathinput_input`), and an EachOf is a fan-out
     axis — see :func:`is_constant_axis` for that case. Relying on
     ``input_spec.is_loadable`` happening to say False for them would rest this
     correctness on a docstring about *loading*.
@@ -491,53 +500,77 @@ def is_constant_axis(spec: Any) -> bool:
     )
 
 
-def split_constant_chains(
-    inputs: dict[str, Any], chains: GlueChains
-) -> tuple[GlueChains, GlueChains]:
-    """Split chains into ``(constant_fed, deferred)``.
+def is_pathinput_input(spec: Any) -> bool:
+    """Whether an input spec is fed by a ``PathInput``: bare, pinned
+    (``Fixed(PathInput)``), or an ``EachOf`` whose every alternative is one.
 
-    ``constant_fed`` is applied here in prepare (:func:`apply_constant_glue`);
-    ``deferred`` goes on to the Step-10/11 fusion point, or to MATLAB's loop.
-    The two obey **opposite** language rules, so the split has to happen before
-    either is validated.
+    THE predicate for the PathInput head (docs/claude/free-code-glue-nodes.md
+    §1, "A PathInput-fed parameter"). A PathInput resolves to a path per
+    combo, inside the loop, so its glue runs per path (:class:`PerPathGlue`),
+    never at the bulk fusion point.
+    """
+    from scifor import EachOf, Fixed, PathInput
 
-    A chain naming a param that is not an input at all lands in ``deferred``,
+    if isinstance(spec, PathInput):
+        return True
+    if isinstance(spec, Fixed) and isinstance(spec.data, PathInput):
+        return True
+    return (
+        isinstance(spec, EachOf)
+        and bool(getattr(spec, "alternatives", None))
+        and all(is_pathinput_input(a) for a in spec.alternatives)
+    )
+
+
+@dataclass
+class GlueSplit:
+    """A call's chains by what heads them — the three application sites.
+
+    * ``constant`` — applied in prepare, before the version keys
+      (:func:`apply_constant_glue`);
+    * ``pathinput`` — applied once per distinct resolved path in the loop
+      (:class:`PerPathGlue`);
+    * ``table`` — the Step-10/11 fusion point (:func:`fuse_glue`), or MATLAB's
+      pre-loop site for MATLAB glue.
+    """
+
+    constant: GlueChains = field(default_factory=dict)
+    pathinput: GlueChains = field(default_factory=dict)
+    table: GlueChains = field(default_factory=dict)
+
+
+def split_chains(inputs: dict[str, Any], chains: GlueChains) -> GlueSplit:
+    """Split chains by head: THE one decision of where each chain runs.
+
+    A chain naming a param that is not an input at all lands in ``table``,
     where ``fuse_glue`` reports it as "chain declared but no such input on this
     call" — one place that warning is worded, not two.
     """
-    constant_fed: GlueChains = {}
-    deferred: GlueChains = {}
+    split = GlueSplit()
     for param, chain in chains.items():
         spec = inputs.get(param, _MISSING)
-        if spec is not _MISSING and (
-            is_constant_input(spec) or is_constant_axis(spec)
-        ):
-            constant_fed[param] = chain
-        else:
-            deferred[param] = chain
-    return constant_fed, deferred
-
-
-def check_constant_glue_language(chains: GlueChains, run_language: str) -> None:
-    """Refuse non-Python glue on a constant-fed parameter.
-
-    The inverse of :func:`check_run_language`, for the reason spelled out in
-    :func:`apply_constant_glue`: the application site is ``_for_each_prepare``,
-    which is Python on both run paths.
-    """
-    for param in sorted(chains):
-        for spec in chains[param]:
-            if spec.language != "python":
-                raise GlueLanguageMismatchError(
-                    f"glue '{spec.name}' on parameter '{param}' is "
-                    f"{spec.language}, but '{param}' is fed by a Parameter (or "
-                    f"a plain constant). Constant glue is applied while "
-                    f"building the version keys, which happens in Python on "
-                    f"every run — including a {run_language} one — so it must "
-                    f"be Python glue. Either rewrite '{spec.name}' in Python, "
-                    f"glue a variable input instead, or reshape the value "
-                    f"inside the function."
+        if spec is _MISSING:
+            split.table[param] = chain
+        elif is_pathinput_input(spec):
+            split.pathinput[param] = chain
+            Log.info(
+                f"[glue] '{param}': fed by a PathInput — chain applied once per "
+                f"distinct resolved path, in the loop"
+                + (
+                    " (per_schema_key ignored: there is no table to slice)"
+                    if any(s.per_schema_key for s in chain)
+                    else ""
                 )
+            )
+        elif is_constant_input(spec) or is_constant_axis(spec):
+            split.constant[param] = chain
+        else:
+            split.table[param] = chain
+    Log.debug(
+        f"[glue] heads: constant={sorted(split.constant)}, "
+        f"pathinput={sorted(split.pathinput)}, table={sorted(split.table)}"
+    )
+    return split
 
 
 #: Version key carrying each Parameter-fed glue's identity, ``{param:
@@ -572,15 +605,54 @@ def constant_glue_config_keys(applied: "dict[str, ConstantGlue]") -> dict:
     return {p: applied[p].version_entry() for p in sorted(applied)}
 
 
+#: Version key carrying each PathInput-fed glue's identity, ``{param:
+#: {"chain": chain_hash}}``. NOT a call-site key (glue names are, through
+#: ``__glue``). Read back by ``provenance.save._pathinput_glue``.
+PATHINPUT_GLUE_KEY = "__pathinput_glue"
+
+#: The third slot of a PathInput-glue record id. Fixed: the glued value is
+#: produced in the loop, after identity is built, and a plain PathInput does
+#: not track file content either (docs/claude/free-code-glue-nodes.md §1).
+PATHINPUT_GLUE_SLOT = "pathinput"
+
+
+def pathinput_glue_config_keys(chains: GlueChains) -> dict:
+    """The ``PATHINPUT_GLUE_KEY`` value for a call's PathInput-fed chains."""
+    return {p: {"chain": chain_hash(chains[p])} for p in sorted(chains)}
+
+
+def pathinput_glue_rid(pathinput_record_id: str, entry: dict) -> str:
+    """The virtual record a PathInput-fed glue's consumer binds — the
+    PathInput-head twin of :func:`constant_glue_rid` (beside it, so every
+    derivation of a glue record's identity lives in one place).
+
+    ``entry`` is the call's :data:`PATHINPUT_GLUE_KEY` entry for the param.
+    """
+    from scidb.provenance.graph import compute_glue_record_id
+
+    return compute_glue_record_id(
+        entry["chain"], pathinput_record_id, PATHINPUT_GLUE_SLOT
+    )
+
+
 def apply_constant_glue(
-    inputs: dict[str, Any], chains: GlueChains
+    inputs: dict[str, Any],
+    chains: GlueChains,
+    preglued: "dict[str, Any] | None" = None,
 ) -> "dict[str, ConstantGlue]":
     """Apply glue attached to a **constant-valued** input, in prepare.
 
     Mutates ``inputs`` in place, replacing each glued value with the reshaped
     one — the value the FUNCTION receives. ``chains`` must already be the
-    constant-fed half (:func:`split_constant_chains`), language-checked by
-    :func:`check_constant_glue_language`.
+    constant-fed head (:func:`split_chains`), passed by
+    :func:`check_glue_executable`.
+
+    ``preglued`` is ``{param: glued value}`` for chains whose body ran
+    ELSEWHERE — MATLAB glue in a MATLAB run, which ``+scidb/for_each.m``
+    applies before prepare because a ``.m`` body cannot run here. Such a
+    value is taken as given; everything after (raw value recorded, glued
+    value hashed, same history hop) is this one code path, so identity cannot
+    tell which language ran the body.
 
     Returns ``{param: ConstantGlue}`` for every concrete value it glued: the
     caller records the RAW value in ``__constants`` and the glue's identity
@@ -609,27 +681,52 @@ def apply_constant_glue(
     each call glues its own concrete value and records it — the fan-out and
     the glue compose without either knowing about the other.
 
-    The language rule (§1) is inverted here, deliberately
-    ----------------------------------------------------
-    ``_for_each_prepare`` is Python on *both* run paths, so this site can only
-    execute Python. A constant-fed chain must therefore be **Python glue even
-    in a MATLAB run** — the exact opposite of :func:`check_run_language`'s rule,
-    for the exact same reason (a glue node executes where its input exists).
-    MATLAB glue on a constant-fed param is refused rather than silently moved
-    to a per-combo site, because a per-combo site would record the *pre*-glue
-    constant and reintroduce the silent staleness this placement removes.
+    Languages (§1, "Which language runs where")
+    ------------------------------------------
+    Python glue runs right here, on both run paths. MATLAB glue (MATLAB run
+    only — :func:`check_glue_executable` refuses it elsewhere) arrives
+    pre-glued through ``preglued``; it is never moved to a per-combo site,
+    which would record the *pre*-glue constant and reintroduce the silent
+    staleness this placement removes.
     """
     from scicanonicalhash import canonical_hash
     from scifor import EachOf
 
     from scidb.model.parameter import single_value
 
+    preglued = dict(preglued or {})
     applied: dict[str, ConstantGlue] = {}
     for param in sorted(chains):
         chain = chains[param]
         # A single-valued Parameter that reached prepare unexpanded (the
         # MATLAB bridge has no Step 1) IS its one value.
         before = single_value(inputs[param])
+
+        if chain_language(chain) != "python":
+            if param not in preglued:
+                raise GlueLanguageMismatchError(
+                    f"glue chain on parameter '{param}' is "
+                    f"{chain_language(chain)}, but no glued value arrived for "
+                    f"it: a {chain_language(chain)} body must be applied by "
+                    f"its own runtime before prepare (+scidb/for_each.m does "
+                    f"this for MATLAB glue on a constant)"
+                )
+            glued = preglued[param]
+            inputs[param] = glued
+            cg = ConstantGlue(
+                raw=before,
+                chain_hash=chain_hash(chain),
+                glued_hash=canonical_hash(glued),
+            )
+            applied[param] = cg
+            Log.info(
+                f"[glue] '{param}': {chain_language(chain)} glue was applied to "
+                f"the constant before prepare ({type(before).__name__} -> "
+                f"{type(glued).__name__}); __constants records the RAW value "
+                f"and the glue is a history hop (chain {cg.chain_hash}, glued "
+                f"value {cg.glued_hash})"
+            )
+            continue
 
         if is_constant_axis(before):
             # A multi-valued fan-out that reached prepare unexpanded. Both run
@@ -872,7 +969,6 @@ def fuse_glue(
     chains: GlueChains,
     *,
     schema_keys: Iterable[str] | None = None,
-    apply_bulk: bool = True,
 ) -> GlueFusion:
     """Apply whole-table glue in place, and route each param's provenance
     through a virtual glue record.
@@ -898,8 +994,13 @@ def fuse_glue(
     Step 2 happens for the *whole* chain, including its per-schema-key part:
     identity must not depend on where the body happens to run.
 
-    ``apply_bulk=False`` does step 2 only — the MATLAB path, where the bodies
-    run in ``+scidb/for_each.m`` but the identity is still Python's to compute.
+    Step 1 runs only for a **Python** chain, whichever run this is (Python
+    glue in a MATLAB run is applied right here, in prepare). A MATLAB chain
+    gets step 2 only: its bodies run in ``+scidb/for_each.m``, but the
+    identity is still Python's to compute.
+
+    PathInput-fed chains never reach this function (:func:`split_chains`):
+    there is no table for them here, and their identity is a different hop.
     """
     import pandas as pd
     import scifor as _scifor
@@ -941,6 +1042,12 @@ def fuse_glue(
                     f"the value as-is"
                 )
 
+        apply_bulk = chain_language(chain) == "python"
+        if bulk and not apply_bulk:
+            Log.debug(
+                f"[glue] '{param}': {chain_language(chain)} chain — identity "
+                f"recorded here, bodies run on the {chain_language(chain)} side"
+            )
         if bulk and apply_bulk:
             result = apply_glue_chain(
                 frame if frame is not None else data,
@@ -1019,29 +1126,65 @@ def _route_provenance(
     )
 
 
-def refuse_pathinput_glue(inputs: dict[str, Any], chains: GlueChains) -> None:
-    """Refuse glue on a ``PathInput``-fed parameter.
+class PerPathGlue:
+    """Run one PathInput-fed chain once per distinct resolved path.
 
-    A PathInput is always resolved per combo (scifor's loop owns it), so there
-    is no loaded table at the fusion point and nothing for the whole-table
-    contract to mean. Out of scope by design, not an oversight.
+    THE owner of the "glue at the PathInput's level" rule
+    (docs/claude/free-code-glue-nodes.md §1, "A PathInput-fed parameter"):
+    within one run, the chain runs once per distinct ``str(path)``, and every
+    later combo that resolves to the same file gets the cached result. A
+    ``{subject}`` PathInput under a ``[subject, session, trial]`` function is
+    therefore glued once per subject, not once per trial.
+
+    Each call hands back a ``copy.deepcopy`` of the cached value, so a
+    function that mutates its input cannot leak into the next combo.
+
+    Used by the Python run's ``fn`` wrapper and, for Python glue in a MATLAB
+    run, by ``scimatlab.bridge.apply_path_glue``. MATLAB glue keeps its own
+    ``containers.Map`` with the same key in ``+scidb/for_each.m``.
     """
-    from scifor import EachOf, PathInput
 
-    for param in sorted(chains):
-        spec = inputs.get(param)
-        is_pi = isinstance(spec, PathInput) or (
-            isinstance(spec, EachOf)
-            and bool(getattr(spec, "alternatives", None))
-            and all(isinstance(a, PathInput) for a in spec.alternatives)
-        )
-        if is_pi:
-            raise GlueUnsupportedInputError(
-                f"glue is attached to parameter '{param}', which is fed by a "
-                f"PathInput. A PathInput is resolved per combo, so no loaded "
-                f"table exists for glue to reshape. Load the data into a "
-                f"variable first, then glue that."
+    def __init__(self, param: str, chain: Sequence[GlueSpec]) -> None:
+        self.param = param
+        self.chain = list(chain)
+        self._cache: dict[str, Any] = {}
+        self.calls = 0
+
+    def __call__(self, value: Any) -> Any:
+        import copy
+
+        self.calls += 1
+        key = str(value)
+        if key in self._cache:
+            Log.debug(f"[glue] '{self.param}': path {key} glued (cached)")
+        else:
+            t0 = time.perf_counter()
+            self._cache[key] = apply_glue_chain(value, self.chain, param=self.param)
+            Log.debug(
+                f"[glue] '{self.param}': path {key} glued (miss) -> "
+                f"{type(self._cache[key]).__name__} in "
+                f"{time.perf_counter() - t0:.3f}s"
             )
+        return copy.deepcopy(self._cache[key])
+
+    def log_summary(self) -> None:
+        """INFO: distinct paths vs combos. N == M on a coarse PathInput means
+        the cache is not doing its job."""
+        if self.calls:
+            Log.info(
+                f"[glue] '{self.param}': {len(self._cache)} distinct path(s) "
+                f"glued for {self.calls} combo(s)"
+            )
+
+
+def per_path_glue(chains: GlueChains) -> "dict[str, PerPathGlue]":
+    """``{param: PerPathGlue}`` for a call's Python PathInput-fed chains.
+    MATLAB chains are left to ``+scidb/for_each.m``."""
+    return {
+        p: PerPathGlue(p, chains[p])
+        for p in sorted(chains)
+        if chain_language(chains[p]) == "python"
+    }
 
 
 def _unwrap_frame(data: Any):

@@ -95,6 +95,8 @@ from scidb.run.foreach_save import (
 # Hoisted from function bodies (grug follow-up): no cycle, and already
 # loaded by `import scidb`, so this changes neither import order risk nor cost.
 from scidb.provenance.save import constant_bindings
+from scidb.provenance.save import pathinput_edge_rid
+from scidb.provenance.graph import compute_pathinput_record_id
 from scidb.store.database import get_database
 from scidb.store.exclusions import filter_excluded_combos
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
@@ -295,11 +297,19 @@ def _guard_pathoutput_collisions(
 
 
 def _normalize_glue(
-    glue: "dict[str, Any] | None", inputs: dict, glue_language: str
-) -> "tuple[dict, dict, dict, dict]":
+    glue: "dict[str, Any] | None",
+    inputs: dict,
+    glue_language: str,
+    glued_constants: "dict[str, Any] | None" = None,
+) -> "tuple[dict, _glue.GlueSplit, dict, dict]":
     """Prepare stage: normalize and validate the call's glue chains, and apply
-    the constant-fed ones. Returns ``(glue_chains, deferred_glue_chains,
-    inputs, constant_glue)``.
+    the constant-fed ones. Returns ``(glue_chains, split, inputs,
+    constant_glue)``.
+
+    ``split`` (:class:`glue.GlueSplit`) is where each remaining chain runs:
+    ``split.table`` at the fusion point (or MATLAB's pre-loop site),
+    ``split.pathinput`` once per path in the loop. ``split.constant`` has
+    already run by the time this returns.
 
     Runs first so a malformed chain fails before any data is loaded (and
     before the dry-run shortcut, which must display the same call the real
@@ -307,27 +317,23 @@ def _normalize_glue(
     chain was applied to it, else unchanged — it holds what the FUNCTION
     receives. ``constant_glue`` is ``{param: glue.ConstantGlue}`` for each
     glued constant: its raw value is what identity records.
+
+    ``glued_constants`` is ``{param: glued value}`` for MATLAB constant glue,
+    which ``+scidb/for_each.m`` ran before prepare
+    (:func:`glue.apply_constant_glue`'s ``preglued``).
     """
     glue_chains = _glue.normalize_glue(glue)
-    # Chains still to apply downstream (the fusion point, or MATLAB's loop).
     # ``glue_chains`` itself stays WHOLE: it feeds ForEachConfig, where glue
-    # names contribute to the call_id, and a Parameter-fed chain is just as
-    # much part of the call site as a variable-fed one.
-    deferred_glue_chains = glue_chains
+    # names contribute to the call_id, and every head is equally part of the
+    # call site.
+    split = _glue.GlueSplit()
     constant_glue: dict = {}
     if glue_chains:
         _glue.log_chains(glue_chains)
-        _glue.refuse_pathinput_glue(inputs, glue_chains)
-
-        # Split by what feeds each param, then validate BOTH halves before
-        # running any body — the two halves obey opposite language rules
-        # (docs/claude/free-code-glue-nodes.md §1), and a run that is going to
-        # be refused should be refused before it reshapes anything.
-        constant_chains, deferred_glue_chains = _glue.split_constant_chains(
-            inputs, glue_chains
-        )
-        _glue.check_constant_glue_language(constant_chains, glue_language)
-        _glue.check_run_language(deferred_glue_chains, glue_language)
+        # One gate for every head, before any body runs: a run that is going
+        # to be refused is refused before it reshapes anything.
+        _glue.check_glue_executable(glue_chains, glue_language)
+        split = _glue.split_chains(inputs, glue_chains)
 
         # Constant-fed glue (the Parameter case) is applied HERE, before Step 8
         # builds the version keys, so the glued value's hash can enter
@@ -335,12 +341,14 @@ def _normalize_glue(
         # ``inputs`` is copied first: it is the caller's dict, and mutating it
         # would double-apply the chain if the caller reused it for a second
         # for_each call.
-        if constant_chains:
+        if split.constant:
             inputs = dict(inputs)
-            constant_glue = _glue.apply_constant_glue(inputs, constant_chains)
+            constant_glue = _glue.apply_constant_glue(
+                inputs, split.constant, preglued=glued_constants
+            )
     else:
         Log.debug("[glue] no glue chains on this call")
-    return glue_chains, deferred_glue_chains, inputs, constant_glue
+    return glue_chains, split, inputs, constant_glue
 
 
 def _resolve_iterables(
@@ -768,6 +776,7 @@ def _build_call_identity(
     glue_chains,
     level=None,
     constant_glue: "dict | None" = None,
+    pathinput_chains: "dict | None" = None,
 ) -> "tuple[dict, str]":
     """Prepare stage: the call's ``ForEachConfig`` config keys and call_id.
 
@@ -798,6 +807,12 @@ def _build_call_identity(
         config_keys[_glue.CONSTANT_GLUE_KEY] = _glue.constant_glue_config_keys(
             constant_glue
         )
+    # PathInput-fed glue: the chain hash, from which provenance.save's
+    # pathinput_edge_rid derives the virtual record the consumer binds.
+    if pathinput_chains:
+        config_keys[_glue.PATHINPUT_GLUE_KEY] = _glue.pathinput_glue_config_keys(
+            pathinput_chains
+        )
     call_id = config.to_call_id()
     Log.debug(
         f"ForEachConfig: call_id={call_id}, config_keys={list(config_keys.keys())}"
@@ -811,7 +826,6 @@ def _load_all_inputs(
     db,
     where,
     deferred_glue_chains,
-    glue_language,
     locations=None,
     level=(),
     schema_keys=(),
@@ -850,25 +864,19 @@ def _load_all_inputs(
     #     table already carries schema-key columns (so per-combo slicing is
     #     untouched) and provenance bookkeeping has not started yet. MATLAB
     #     runs delegate all of this to for_each_prepare too, so Python glue
-    #     would apply there identically — which is exactly why glue is
-    #     required to match the run's language. ---
+    #     applies here in a MATLAB run as well. ---
     glue_fusion = _glue.GlueFusion()
     if deferred_glue_chains:
         with Log.step(f"apply_glue({fn_name})"):
             # MATLAB glue bodies run in +scidb/for_each.m, after prepare
             # returns and before the loop — but the *identity* half (the
             # virtual glue records) is computed here either way, so the two
-            # languages share one provenance recipe.
-            if glue_language != "python":
-                Log.info(
-                    f"[glue] {len(deferred_glue_chains)} chain(s) deferred to "
-                    f"the {glue_language} side; identity recorded here"
-                )
+            # languages share one provenance recipe. fuse_glue decides per
+            # chain which bodies it runs (Python ones).
             glue_fusion = _glue.fuse_glue(
                 loaded_inputs,
                 deferred_glue_chains,
                 schema_keys=dataset_schema_keys_of(db),
-                apply_bulk=(glue_language == "python"),
             )
     return loaded_inputs, mapping_inputs, glue_fusion, selection_axes
 
@@ -2048,6 +2056,7 @@ def _for_each_prepare(
     generates_file: bool = False,
     endpoint_kind: "str | None" = None,
     project_root: "str | _Path | None" = None,
+    glued_constants: "dict[str, Any] | None" = None,
 ) -> "_ForEachState | None":
     """Run scidb.for_each's pre-loop work, as a sequence of named stages:
     :func:`_normalize_glue`, :func:`_resolve_iterables`,
@@ -2059,11 +2068,12 @@ def _for_each_prepare(
     signal the caller to stop. Otherwise returns the prepared state object
     the loop and save phases consume.
 
-    ``glue_language`` names the language the *run* executes in. Chains
-    authored in another language are refused (a glue node executes in the
-    language of the run); in a MATLAB run the whole chain is carried through
-    on the returned state for ``+scidb/for_each.m`` to apply, because a ``.m``
-    function cannot execute inside this prepare step.
+    ``glue_language`` names the language the *run* executes in. Glue in
+    either language runs in either run, except MATLAB glue in a Python run
+    (``glue.check_glue_executable``). MATLAB chains are carried through on the
+    returned state for ``+scidb/for_each.m`` to apply, because a ``.m``
+    function cannot execute inside this prepare step; ``glued_constants``
+    brings back the MATLAB constant glue it already applied.
 
     The call arrives bundled (``scidb.run.foreach_call``); ``selection`` has
     ``schema_filter`` / ``schema_keys`` already resolved by ``for_each``.
@@ -2085,14 +2095,32 @@ def _for_each_prepare(
     inputs = bind_path_inputs(inputs, root)
 
     # Glue chains: normalized and validated up front, constant-fed ones applied.
-    glue_chains, deferred_glue_chains, inputs, constant_glue = _normalize_glue(
-        glue, inputs, glue_language
+    glue_chains, glue_split, inputs, constant_glue = _normalize_glue(
+        glue, inputs, glue_language, glued_constants
     )
-    # The skip hook compares a glued constant by the virtual glue rid its edge
-    # binds. Derived HERE, once, by the save path's own rule
-    # (provenance_save.constant_bindings) from the same raw value the version
-    # keys record — after declared_spelling, so a MATLAB 6.0 declared as 6 is
-    # one value on both sides. The hook derives nothing.
+    deferred_glue_chains = glue_split.table
+    path_glue = glue_split.pathinput
+    # A Fixed(PathInput) has no PathInput record to hop from (its __inputs
+    # key is "Fixed(...)"), so its glue runs but cannot be identified —
+    # said, like a Merge (docs/claude/free-code-glue-nodes.md §1).
+    from scifor import PathInput as _PathInputCls
+
+    for _p in sorted(path_glue):
+        if not isinstance(inputs.get(_p), _PathInputCls):
+            Log.warn(
+                f"[glue] '{_p}': fed by a {type(inputs.get(_p)).__name__} "
+                f"around a PathInput, which has no PathInput record, so this "
+                f"glue cannot be recorded in the provenance graph. It WILL "
+                f"reshape the data, but editing its body will NOT invalidate "
+                f"downstream results — re-run the consuming function "
+                f"explicitly after changing it."
+            )
+    # The skip hook compares a glued constant (and a glued PathInput) by the
+    # virtual glue rid its edge binds. Derived HERE, once, by the save path's
+    # own rules (provenance_save.constant_bindings / pathinput_edge_rid) from
+    # the same values the version keys record — after declared_spelling, so a
+    # MATLAB 6.0 declared as 6 is one value on both sides. The hook derives
+    # nothing.
     glue_ref = getattr(pre_combo_hook, "_constant_glue_ref", None)
     if glue_ref is not None:
         glue_ref["rids"] = {
@@ -2102,6 +2130,14 @@ def _for_each_prepare(
                 _glue.constant_glue_config_keys(constant_glue),
             )
         }
+        pi_entries = _glue.pathinput_glue_config_keys(path_glue)
+        glue_ref["pathinput_rids"] = {
+            p: pathinput_edge_rid(
+                compute_pathinput_record_id(inputs[p].to_key()), pi_entries[p]
+            )
+            for p in sorted(path_glue)
+            if isinstance(inputs.get(p), _PathInputCls)
+        }
         glue_ref["set"] = True
         for p, vrid in sorted(glue_ref["rids"].items()):
             Log.info(
@@ -2109,6 +2145,13 @@ def _for_each_prepare(
                 f"skip_computed compares its virtual glue record {vrid} "
                 f"(raw value + glue chain {constant_glue[p].chain_hash} + glued "
                 f"value {constant_glue[p].glued_hash}), not the constant"
+            )
+        for p, vrid in sorted(glue_ref["pathinput_rids"].items()):
+            Log.info(
+                f"[skip] {fn_name}: '{p}' is a PathInput-fed glue; "
+                f"skip_computed compares its virtual glue record {vrid} "
+                f"(PathInput + glue chain {pi_entries[p]['chain']}), not the "
+                f"PathInput record"
             )
 
     # The metadata iterables: [] filled from the database / disk, schema
@@ -2153,7 +2196,16 @@ def _for_each_prepare(
 
     # The call's identity: config keys and call_id (glue names included).
     config_keys, call_id = _build_call_identity(
-        fn, inputs, where, distribute, as_table, glue_chains, level, constant_glue
+        fn,
+        inputs,
+        where,
+        distribute,
+        as_table,
+        glue_chains,
+        level,
+        constant_glue,
+        # Only a bare PathInput has a record to hop from (see the WARN above).
+        {p: c for p, c in path_glue.items() if isinstance(inputs.get(p), _PathInputCls)},
     )
 
     # Only the schema combinations that exist (and are not excluded).
@@ -2168,7 +2220,6 @@ def _for_each_prepare(
         db,
         where,
         deferred_glue_chains,
-        glue_language,
         selection.locations,
         level=level,
         schema_keys=dataset_schema_keys_of(resolved_db or db),
@@ -2224,10 +2275,12 @@ def _for_each_prepare(
         skip_computed_count=_skip_computed_count,
         mapping_inputs=mapping_inputs or None,
         inputs=inputs,
-        # The DEFERRED set: a Parameter-fed chain has already run (before
-        # fan-out), so it must not be handed to MATLAB's loop to run again.
+        # The TABLE-headed set: a Parameter-fed chain has already run (before
+        # fan-out), so it must not be handed to MATLAB's loop to run again;
+        # a PathInput-fed chain runs per path (path_glue).
         glue_chains=deferred_glue_chains or None,
         per_combo_glue=per_combo_glue or None,
+        path_glue=path_glue or None,
         glue_virtual=glue_fusion.virtual or None,
         bindings=run_bindings,
         parameter_names=parameter_names or None,

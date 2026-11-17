@@ -97,7 +97,6 @@ from scidb.run.glue import (
     GlueRowsChangedError,
     GlueSchemaKeysAlteredError,
     GlueSpec,
-    GlueUnsupportedInputError,
 )
 from scidb.model.lineage_save import save
 from scidb.model.log import Log
@@ -289,6 +288,5 @@ __all__ = [
     "GlueRowsChangedError",
     "GlueSchemaKeysAlteredError",
     "GlueLanguageMismatchError",
-    "GlueUnsupportedInputError",
     "GlueChainOrderError",
 ]

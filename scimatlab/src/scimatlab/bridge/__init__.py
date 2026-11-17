@@ -44,6 +44,7 @@ from .crossing import (
 )
 from .entry import (
     _for_each_state_cache,
+    apply_path_glue,
     codec_storage_columns,
     ensure_variable_classdefs,
     for_each_describe_loaded_input,

@@ -793,6 +793,16 @@ function [state, stop_err] = run_combos(fn, fn_name, inputs, plan, opts)
     n_inputs = numel(input_names);
     n_outputs = numel(plan.output_names);
     fc = plan.for_columns;
+    % Per-input transforms (scidb's PathInput-fed glue): name -> handle,
+    % applied to the prepared value right after prepare_value, inside the
+    % per-combo try/catch so a failure fails that combo only. Resolved to
+    % positions once, not per combo.
+    transforms = cell(1, n_inputs);
+    for p = 1:n_inputs
+        if isfield(opts.input_transforms, input_names{p})
+            transforms{p} = opts.input_transforms.(input_names{p});
+        end
+    end
     iterate_pos = false(1, n_inputs);
     iter_as_table = false(1, n_inputs);
     for p = 1:n_inputs
@@ -832,6 +842,10 @@ function [state, stop_err] = run_combos(fn, fn_name, inputs, plan, opts)
                     iterate_tables{p} = prepare_data(inputs.(input_names{p}), d, plan, c, opts);
                 else
                     loaded{p} = prepare_value(inputs.(input_names{p}), d, plan, c, metadata, opts);
+                    if ~isempty(transforms{p})
+                        transform = transforms{p};
+                        loaded{p} = transform(loaded{p});
+                    end
                 end
             catch err
                 % An error the plan calls fatal (it would fail every combo
@@ -2181,6 +2195,10 @@ function [meta_args, opts] = split_options(varargin)
                                  % policy here so scifor stays policy-free
     opts.summary_fn = [];  % optional summary_fn(struct) called once with the
                            % end-of-loop counts; scidb injects its run tally
+    opts.input_transforms = struct();  % input name -> handle(value), applied
+                                       % per combo after the value is
+                                       % prepared; scidb injects its
+                                       % PathInput-fed glue here
     opts.on_error = 'continue';  % 'continue' | 'stop' (Python owns the values)
     opts.defer_stop = false;     % scidb: return, don't rethrow; it saves first
     opts.resolved_path_outputs = struct();
@@ -2269,6 +2287,11 @@ function [meta_args, opts] = split_options(varargin)
                 opts.defer_stop = logical(val);
             case "_summary_fn"
                 opts.summary_fn = val;
+            case "_input_transforms"
+                % struct: input name -> handle(value). scidb's PathInput-fed
+                % glue (docs/claude/free-code-glue-nodes.md §1): applied to
+                % each combo's prepared value; scifor knows nothing of glue.
+                opts.input_transforms = val;
             case "_mapping_inputs"
                 % {param -> string array of data column names} declaring
                 % that the input's rows are struct records spread one

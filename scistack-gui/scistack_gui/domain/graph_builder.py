@@ -2164,6 +2164,11 @@ def build_edges(
         for fkey, param_name in pi["functions"]:
             fn, cid = fkey
             target_id = fn_node_id(fn, cid)
+            # A PathInput-fed glue (issue #21) the canvas already draws: the
+            # direct history edge would be a second, false path past it.
+            if (target_id, param_name) in via_glue:
+                via_glue_hits.append(f"{path_input_node_id(pi_name)}->{fn}.{param_name}")
+                continue
             key = (path_input_node_id(pi_name), target_id, param_name)
             if key not in seen_edges:
                 seen_edges.add(key)

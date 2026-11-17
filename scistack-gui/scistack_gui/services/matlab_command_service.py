@@ -302,7 +302,7 @@ def _collect_glue_chains(
             )
         if chain:
             out[param] = chain
-            _warn_on_glue_language(function_name, param, chain, resolved.bindings)
+            _warn_on_glue_language(function_name, param, chain)
     if out:
         logger.info(
             "generate_matlab_command: %s: glue chains %s",
@@ -312,48 +312,29 @@ def _collect_glue_chains(
     return out
 
 
-def _warn_on_glue_language(
-    function_name: str, param: str, chain: list[dict], bindings: dict
-) -> None:
-    """Warn before the run about a chain scidb will refuse, or accept.
+def _warn_on_glue_language(function_name: str, param: str, chain: list[dict]) -> None:
+    """Warn before the run about a chain scidb will refuse in a MATLAB run.
 
-    Two opposite rules meet here, and which one applies depends on what feeds
-    the parameter (``docs/claude/free-code-glue-nodes.md`` §1):
+    Since 2026-11-17 glue of either language runs in a MATLAB run, whatever
+    feeds it (``docs/claude/free-code-glue-nodes.md`` §1, "Which language
+    runs where"). The one refusal left here is a chain that MIXES languages
+    on one parameter (``scidb.run.glue._validate_chain``).
 
-    * a **variable**-fed chain runs where its table exists — in MATLAB, for a
-      MATLAB run — so Python glue is refused by ``check_run_language``;
-    * a **constant**-fed chain (a Parameter) runs in ``for_each_prepare``,
-      which is Python on both run paths, so it must be Python glue and
-      ``apply_constant_glue`` refuses MATLAB.
-
-    scidb raises either way, with a message that explains itself. This exists
-    only so the contradiction is visible in ``scistack.log`` *before* the user
-    waits on a MATLAB launch — the canvas gives no signal today.
+    scidb raises with a message that explains itself. This exists only so the
+    problem is visible in ``scistack.log`` *before* the user waits on a
+    MATLAB launch — the canvas gives no signal today.
     """
-    from scistack_gui.domain.edge_resolver import BINDING_PARAMETER
-
-    kind = (bindings.get(param) or {}).get("kind")
-    wanted = "python" if kind == BINDING_PARAMETER else "matlab"
-    wrong = [s["name"] for s in chain if s["language"] != wanted]
-    if not wrong:
+    languages = sorted({s["language"] for s in chain})
+    if len(languages) <= 1:
         return
-    why = (
-        "a Parameter-fed chain is applied before the version keys are built, "
-        "which happens in Python on every run"
-        if wanted == "python"
-        else "a variable-fed chain is applied to the loaded table, which in a "
-        "MATLAB run exists on the MATLAB side"
-    )
     logger.warning(
-        "generate_matlab_command: %s: parameter '%s' is fed through glue %s, "
-        "which is not %s glue — %s. scidb will refuse this run; rewrite the "
-        "glue in %s or reshape the value inside the function",
+        "generate_matlab_command: %s: parameter '%s' is fed through a glue "
+        "chain that mixes languages (%s): %s. scidb will refuse this run; a "
+        "chain on one parameter must be all Python or all MATLAB",
         function_name,
         param,
-        wrong,
-        wanted,
-        why,
-        wanted,
+        ", ".join(languages),
+        [f"{s['name']}({s['language']})" for s in chain],
     )
 
 

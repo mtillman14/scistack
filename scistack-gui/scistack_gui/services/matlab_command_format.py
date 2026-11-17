@@ -1649,10 +1649,10 @@ def _format_glue_struct(glue: dict[str, list[dict]] | None) -> str:
 
     Each param maps to a cell array of chain elements in application order.
     An element is either a MATLAB function handle (``@glue_x``) or, for
-    **Python** glue, a struct naming the body and its file. Python glue
-    reaches a MATLAB run only on a constant-fed parameter, where
-    ``scidb.run.glue.apply_constant_glue`` applies it inside ``for_each_prepare``
-    — see ``build_glue_chains`` in ``+scidb/for_each.m``.
+    **Python** glue, a struct naming the body and its file. Python glue may
+    feed any head in a MATLAB run (docs/claude/free-code-glue-nodes.md §1,
+    "Which language runs where") — see ``build_glue_chains`` in
+    ``+scidb/for_each.m``.
 
     A one-element cell must be written ``{{...}}`` inside ``struct()``:
     ``struct('p', {x})`` builds a 1x1 STRUCT ARRAY with field ``p = x``, not a

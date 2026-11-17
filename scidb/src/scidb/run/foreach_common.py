@@ -183,6 +183,15 @@ class _ForEachState:
     # whole-table glue on a per-combo input). See scidb.run.glue.
     glue_chains: Any = None  # dict[str, list[GlueSpec]] | None
     per_combo_glue: Any = None  # dict[str, list[GlueSpec]] | None
+    # PathInput-fed chains, every language: {param: [GlueSpec]}. Applied once
+    # per distinct resolved path in the loop (scidb.run.glue.PerPathGlue for
+    # Python glue; +scidb/for_each.m for MATLAB glue). Never in glue_chains:
+    # they have no table to fuse into. Identity: the __pathinput_glue version key.
+    path_glue: Any = None  # dict[str, list[GlueSpec]] | None
+    # {param: glue.PerPathGlue} — the runners built from path_glue for THIS
+    # run's Python glue (the per-path cache lives in them). Set by the loop
+    # (Python run) or the bridge (Python glue in a MATLAB run).
+    path_glue_runners: Any = None  # dict[str, PerPathGlue] | None
     # Every input's kind, selector, pinned rid, pooled records and branch
     # params after Step 12 — the typed spine (scidb.run.bindings.RunBindings).
     # `rids_for_combo` is the ONE answer to "what did this call consume" and

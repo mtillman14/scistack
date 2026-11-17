@@ -27,6 +27,7 @@ from scidb.provenance.graph import (
     GLUE_TYPE,
     INTERNAL_RECORD_TYPES,
     NON_VARIABLE_INPUT_TYPES,
+    PATHINPUT_GLUE_TYPE,
     PATHINPUT_TYPE,
     SAVE_FUNCTION_NAME,
     SELECTION_TYPE,
@@ -233,18 +234,19 @@ def runs_for_invocations_batch(duck, invocation_ids) -> dict:
 
 def glue_source_batch(duck, virtual_record_ids) -> dict:
     """Batched :func:`glue_source` — ``{virtual_record_id: {record_id,
-    variable_type, chain_names, chain_hash, constant_value, declared_name}}``,
-    with the same lowest-``input_record_id`` tie-break as the per-record
-    function.
+    variable_type, chain_names, chain_hash, constant_value, path_input_spec,
+    declared_name}}``, with the same lowest-``input_record_id`` tie-break as
+    the per-record function.
 
     Accepts virtual records of every ``GLUE_RECORD_TYPES`` type. A
     **Parameter-fed** hop (a ``CONSTANT_GLUE_TYPE`` record, whose source is a
-    constant — see ``provenance_save._write_constant_glue_hop``) also reports
-    the RAW ``constant_value`` and the ``declared_name`` stamped on the hop's
-    input edge: the Parameter's value and name as declared. Whether a param
-    is a constant or a variable input is decided by the VIRTUAL record's own
-    type (``provenance.NON_VARIABLE_INPUT_TYPES``), never re-derived from
-    the source here. Both are ``None`` for a variable head.
+    constant — see ``provenance_save._write_head_glue_hop``) also reports
+    the RAW ``constant_value``; a **PathInput-fed** hop (``PATHINPUT_GLUE_TYPE``)
+    reports the PathInput's stored ``path_input_spec``. Both report the
+    ``declared_name`` stamped on the hop's input edge. Whether a param is a
+    constant, a PathInput or a variable input is decided by the VIRTUAL
+    record's own type (``provenance.NON_VARIABLE_INPUT_TYPES``), never
+    re-derived from the source here. All three are ``None`` for a variable head.
     """
     ids = list(dict.fromkeys(virtual_record_ids))
     if not ids:
@@ -271,13 +273,15 @@ def glue_source_batch(duck, virtual_record_ids) -> dict:
         best.items()
     ):
         is_const = src_type == CONSTANT_TYPE
+        is_pi = src_type == PATHINPUT_TYPE
         out[out_rid] = {
             "record_id": src_rid,
             "variable_type": src_type,
             "chain_names": (fn_name or "").split(GLUE_NAME_SEPARATOR),
             "chain_hash": fn_hash or "",
             "constant_value": _safe_literal(value_repr) if is_const else None,
-            "declared_name": declared if is_const else None,
+            "path_input_spec": value_repr if is_pi else None,
+            "declared_name": declared if (is_const or is_pi) else None,
         }
     return out
 
@@ -344,6 +348,10 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
                 # A Parameter-fed glue: the call's constant is the RAW value,
                 # exactly what the forward ForEachConfig recorded.
                 cfg["constants"][param] = src.get("constant_value")
+            elif rtype == PATHINPUT_GLUE_TYPE:
+                # A PathInput-fed glue: the call's input is the PathInput,
+                # exactly what the forward ForEachConfig recorded in __inputs.
+                cfg["path_inputs"][param] = src.get("path_input_spec")
             else:
                 cfg["input_types"][param] = src.get("variable_type") or GLUE_TYPE
             cfg["glue_chains"][param] = (
@@ -502,8 +510,10 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             duck, [row[2] for row in in_rows if row[3] == CONSTANT_GLUE_TYPE]
         )
         for inv_id, param_name, in_rid, rtype, value_repr in in_rows:
-            if rtype == PATHINPUT_TYPE:
-                continue  # PathInput spec — neither variable nor sweep constant
+            if rtype in (PATHINPUT_TYPE, PATHINPUT_GLUE_TYPE):
+                # PathInput spec (glued or not) — neither variable nor sweep
+                # constant, and nothing upstream to walk into.
+                continue
             if rtype == SELECTION_TYPE:
                 # A coordinate like a constant, so it accumulates downstream and
                 # every reader of branch params splits on it.
@@ -1778,6 +1788,11 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
       ``declared_names`` under the Parameter's name), never in
       ``var_inputs``; ``glue_record_id`` is the virtual record its edge
       actually binds, for traversals.
+    * ``pathinput_glue`` — ``{param: {glue_chain, glue_chain_hash,
+      glue_record_id, pathinput_record_id}}`` for each PathInput-fed glue.
+      Such a param is in ``path_inputs`` with the PathInput's spec (and in
+      ``declared_names`` under its declared name), exactly as an unglued
+      PathInput is; the glue rides beside it.
 
     An invocation with no input edges is absent from the result.
 
@@ -1815,6 +1830,7 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 "selectors": {},
                 "declared_names": {},
                 "constant_glue": {},
+                "pathinput_glue": {},
                 # The axis JSON of a call that narrowed below its level, or None.
                 "selection": None,
             }
@@ -1845,6 +1861,21 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 "glue_chain_hash": src.get("chain_hash") or "",
                 "glue_record_id": in_rid,
                 "constant_record_id": src.get("record_id"),
+            }
+        elif rtype == PATHINPUT_GLUE_TYPE:
+            # A PathInput-fed glue (docs/claude/free-code-glue-nodes.md §1):
+            # the param is a PATHINPUT with its spec and declared name (both on
+            # the hop's input edge), the glue beside it.
+            src = glue_src.get(in_rid) or {}
+            if src.get("path_input_spec") is not None:
+                edges["path_inputs"][param_name] = src["path_input_spec"]
+            if src.get("declared_name"):
+                edges["declared_names"][param_name] = src["declared_name"]
+            edges["pathinput_glue"][param_name] = {
+                "glue_chain": src.get("chain_names") or [],
+                "glue_chain_hash": src.get("chain_hash") or "",
+                "glue_record_id": in_rid,
+                "pathinput_record_id": src.get("record_id"),
             }
         elif rtype == GLUE_TYPE:
             src = glue_src.get(in_rid) or {}
@@ -1949,7 +1980,8 @@ def stored_invocation_signature(duck, record_id: str):
     keeping one edge per param here is what made folding the names break
     skip_computed the first time) — and ``const_hashes`` maps
     ``param -> content_hash``, and ``path_inputs`` maps ``param -> PathInput
-    spec record id``, and ``constant_glue`` maps ``param -> virtual
+    spec record id`` (or its virtual ``__pathinput_glue__`` record id, behind
+    glue), and ``constant_glue`` maps ``param -> virtual
     __constant_glue__ record id`` (a Parameter-fed glued constant — in
     neither ``var_inputs`` nor ``const_hashes``). This is the new-table replacement for the old
     ``_lineage`` reads (function hash + input edges + constant records).
@@ -1986,9 +2018,11 @@ def stored_invocation_signature(duck, record_id: str):
             # (the value, glue body and glued value are all in that id).
             constant_glue[param] = in_rid
             continue
-        if rtype == PATHINPUT_TYPE:
+        if rtype in (PATHINPUT_TYPE, PATHINPUT_GLUE_TYPE):
             # PathInput spec record — identity since 2026-09-25, so staleness
-            # compares it too (a different file is a different call).
+            # compares it too (a different file is a different call). Behind
+            # glue the edge binds the virtual glue record, which is what the
+            # skip gate's target is (provenance.save.pathinput_edge_rid).
             path_inputs[param] = in_rid
             continue
         if rtype == CONSTANT_TYPE:
@@ -2566,6 +2600,19 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 if g.get("glue_chain")
             }
         )
+        # PathInput-fed glue: same idea — the recorded edge binds the virtual
+        # glue record (a fixed rid per (PathInput, chain)), replayed as
+        # recorded. Its chain is part of the call site.
+        pathinput_glue = {
+            p: g["glue_record_id"] for p, g in edges.get("pathinput_glue", {}).items()
+        }
+        glue_chains.update(
+            {
+                p: (g["glue_chain_hash"], tuple(g["glue_chain"]))
+                for p, g in edges.get("pathinput_glue", {}).items()
+                if g.get("glue_chain")
+            }
+        )
         path_inputs = dict(edges.get("path_inputs", {}))
         at = sorted(as_table) if as_table else []
         key = (
@@ -2573,6 +2620,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             tuple(sorted(selectors.items())),
             constants_identity_key(constants),
             tuple(sorted(constant_glue.items())),
+            tuple(sorted(pathinput_glue.items())),
             tuple(sorted(path_inputs.items())),
             tuple(sorted(glue_chains.items())),
             tuple(at),
@@ -2591,6 +2639,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 "constants": constants,
                 # {param: virtual glue rid} for Parameter-fed glued constants.
                 "constant_glue": constant_glue,
+                # {param: virtual glue rid} for PathInput-fed glue.
+                "pathinput_glue": pathinput_glue,
                 "path_inputs": path_inputs,
                 "glue_chains": glue_chains,
                 "as_table": at,
@@ -2984,6 +3034,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         "selectors": {},
         "declared_names": {},
         "constant_glue": {},
+        "pathinput_glue": {},
     }
 
     _t_group = _time.perf_counter()
@@ -3021,14 +3072,15 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
             for i in var_inputs
             if i.get("glue_chain")
         }
-        # Parameter-fed glue (a constant head) is part of the call site too.
-        glue_names.update(
-            {
-                p: list(g["glue_chain"])
-                for p, g in edges.get("constant_glue", {}).items()
-                if g.get("glue_chain")
-            }
-        )
+        # Parameter-fed and PathInput-fed glue are part of the call site too.
+        for head_key in ("constant_glue", "pathinput_glue"):
+            glue_names.update(
+                {
+                    p: list(g["glue_chain"])
+                    for p, g in edges.get(head_key, {}).items()
+                    if g.get("glue_chain")
+                }
+            )
         at = sorted(as_table) if as_table else []
 
         # NB: where= is NOT part of config-variant identity. A where= filter's
@@ -3988,9 +4040,12 @@ def _predict_config_invocations(
         for p, v in cfg["constants"].items()
     ]
     # PathInput edges are identity (provenance_save._pathinput_bindings): the
-    # stored spec is the verbatim `to_key()` the save path hashed.
+    # stored spec is the verbatim `to_key()` the save path hashed. A
+    # PathInput-fed glue's edge binds the virtual glue record the config
+    # recorded (cfg["pathinput_glue"]).
+    recorded_pi_glue = cfg.get("pathinput_glue") or {}
     const_bindings += [
-        (p, compute_pathinput_record_id(spec))
+        (p, recorded_pi_glue.get(p) or compute_pathinput_record_id(spec))
         for p, spec in sorted((cfg.get("path_inputs") or {}).items())
     ]
     # A narrowed call's edge, and the rule that decides which rows it read.

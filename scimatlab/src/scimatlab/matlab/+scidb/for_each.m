@@ -43,10 +43,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       fn sees it. The result is never saved; only a
 %                       provenance node is recorded, so editing a glue body
 %                       still invalidates downstream results. A glue node may
-%                       change the column space but NOT the row set. Glue
-%                       runs in the language of the run, so a MATLAB pipeline
-%                       needs MATLAB glue. See
-%                       docs/claude/free-code-glue-nodes.md.
+%                       change the column space but NOT the row set. Either
+%                       language works here: a MATLAB handle, or a Python
+%                       glue struct (name, language='python', source_file).
+%                       A PathInput-fed input is glued once per distinct
+%                       resolved path. See docs/claude/free-code-glue-nodes.md.
 %       step          - string: a name for this pipeline STEP, recorded on
 %                       the run (`_run_step`). Not identity. The GUI uses it to
 %                       attribute this run to the canvas node of the same step
@@ -371,11 +372,21 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
     end
 
+    % --- MATLAB glue on a CONSTANT runs here, before prepare: prepare is
+    %     Python and cannot run a .m body, but the glued value has to be
+    %     hashed into identity before the version keys are built. The RAW
+    %     value stays in py_inputs_spec (what __constants records); the glued
+    %     one travels as glued_constants. Step 0 has already expanded every
+    %     EachOf, so each value here is concrete.
+    %     docs/claude/free-code-glue-nodes.md §1. ---
+    py_glued_constants = glue_constants_before_prepare( ...
+        glue_handles, inputs, py_inputs_spec);
+
     % --- Call #1: Python prepare ---
     % glue_handles / py_glue were built above (before pipeline registration,
     % which needs the same chain identity). Python hashes each body into the
-    % consumer's identity here; the bodies themselves run below, after
-    % prepare returns — a .m function cannot execute inside prepare.
+    % consumer's identity here; MATLAB table glue runs below, after prepare
+    % returns, and PathInput glue runs per path in the loop.
     prep_t0 = tic;
     prep = py.scimatlab.bridge.for_each_prepare( ...
         fn_name, fn_hash, py_inputs_spec, py_output_classes, py_meta, ...
@@ -393,7 +404,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'locations', py_locations, ...
                'schema_key_types', scifor.key_types_to_py(opts.schema_key_types), ...
                'project_root', project_root_to_py(opts.project_root), ...
-               'source_text', fn_source));
+               'source_text', fn_source, ...
+               'glued_constants', py_glued_constants));
     scifor.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
     % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself
@@ -671,6 +683,14 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scifor_opts{end+1} = 'project_root';
         scifor_opts{end+1} = opts.project_root;
     end
+    % PathInput-fed glue: once per distinct resolved path, in the loop,
+    % through scifor's per-input transform hook (either language).
+    [input_transforms, path_glue_stats] = build_path_glue_transforms( ...
+        prep{'path_glue'}, glue_handles, handle);
+    if ~isempty(fieldnames(input_transforms))
+        scifor_opts{end+1} = '_input_transforms';
+        scifor_opts{end+1} = input_transforms;
+    end
 
     % --- Endpoint fn wrapping (MATLAB side of Step 1.55/1.56) ---
     % plot_: a returned graphics handle is exported to the combo's resolved
@@ -723,6 +743,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
         rethrow(err);
     end
+
+    log_path_glue_stats(path_glue_stats);
 
     % --- Convert each result table to a Python DataFrame for the save call.
     %     Outputs are plain values; the bipartite provenance graph is
@@ -1652,13 +1674,15 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
 %   would leave every downstream record green and stale.
 %
 %   A chain element may be EITHER:
-%     * a MATLAB function handle — the body runs here, in apply_matlab_glue;
+%     * a MATLAB function handle — the body runs here: on a constant before
+%       prepare (glue_constants_before_prepare), on a table after it
+%       (apply_matlab_glue), on a PathInput per path in the loop
+%       (build_path_glue_transforms);
 %     * a struct with fields NAME, LANGUAGE ('python') and SOURCE_FILE — the
-%       body runs in Python's for_each_prepare. That is the only site a
-%       CONSTANT-fed glue can run (scidb.run.glue.apply_constant_glue applies it
-%       while the version keys are being built, so the glued value is what
-%       lands in __constants), and prepare is Python on both run paths. Such
-%       an element contributes NO handle: MATLAB must not apply it again.
+%       body runs in Python: in for_each_prepare (a constant or a table) or
+%       through scimatlab.bridge.apply_path_glue (a PathInput). Such an
+%       element contributes NO handle: MATLAB must not apply it again.
+%   A chain must be single-language (scidb.run.glue._validate_chain).
 
     handles = struct();
     py_glue = py.dict();
@@ -1842,10 +1866,14 @@ function value = apply_one_glue(value, h, param, schema_keys)
     name = func2str(h);
 
     % Wrappers (scifor.Fixed / scifor.ColumnSelection) carry the table on
-    % .data — glue sees the table, never the wrapper.
+    % .data — glue sees the table, never the wrapper. Named explicitly, as
+    % Python's _unwrap_frame does: a duck-typed isobject/isprop test is true
+    % for a MATLAB string too, and reading .data off the resolved path a
+    % PathInput-fed glue receives threw MATLAB:class:GetProhibited (issue #21).
     wrapper = [];
     tbl = value;
-    if isobject(value) && isprop(value, 'data') && istable(value.data)
+    if (isa(value, 'scifor.Fixed') || isa(value, 'scifor.ColumnSelection')) ...
+            && istable(value.data)
         wrapper = value;
         tbl = value.data;
     end
@@ -1947,6 +1975,118 @@ function value = apply_one_glue(value, h, param, schema_keys)
         value = wrapper;
     else
         value = out;
+    end
+end
+
+
+function py_glued = glue_constants_before_prepare(handles, inputs, py_inputs_spec)
+%GLUE_CONSTANTS_BEFORE_PREPARE  Run MATLAB glue on CONSTANT inputs, before prepare.
+%
+%   Returns a py.dict {param: glued value} for every constant-valued input
+%   with a MATLAB chain. Python's prepare records the RAW value (still in
+%   py_inputs_spec) and hashes this one into the __constant_glue__ hop
+%   (scidb.run.glue.apply_constant_glue's preglued) — the same identity a
+%   Python body would have produced. Python glue on a constant contributes no
+%   handle and runs in prepare itself.
+    py_glued = py.dict();
+    params = fieldnames(handles);
+    for i = 1:numel(params)
+        param = params{i};
+        if ~isfield(inputs, param)
+            continue;
+        end
+        kind = string(py_inputs_spec{param}{'kind'});
+        if kind ~= "constant"
+            continue;   % a variable / PathInput head: applied later
+        end
+        value = inputs.(param);
+        t0 = tic;
+        for ci = 1:numel(handles.(param))
+            value = apply_one_glue(value, handles.(param){ci}, param, {});
+        end
+        py_glued{param} = scidb.internal.to_python(value);
+        scifor.Log.info(['[glue] ''%s'': MATLAB glue applied to the constant ' ...
+            'before prepare (%s -> %s) in %.3fs; the raw value is what ' ...
+            '__constants records'], param, class(inputs.(param)), class(value), toc(t0));
+    end
+end
+
+
+function [transforms, stats] = build_path_glue_transforms(py_path_glue, handles, prep_handle)
+%BUILD_PATH_GLUE_TRANSFORMS  scifor _input_transforms for PathInput-fed glue.
+%
+%   PY_PATH_GLUE is prepare's {param: 'matlab' | 'python'}. Each transform
+%   runs the chain ONCE PER DISTINCT RESOLVED PATH (the PathInput's level,
+%   not the function's — docs/claude/free-code-glue-nodes.md §1) and returns
+%   the cached result for every later combo with the same path:
+%     * MATLAB glue: a containers.Map keyed by the path text, here — the
+%       same key as Python's scidb.run.glue.PerPathGlue;
+%     * Python glue: scimatlab.bridge.apply_path_glue, whose PerPathGlue owns
+%       the cache; the result comes back through scidb.internal.from_python.
+%   STATS holds the MATLAB caches so the run can log paths vs combos.
+    transforms = struct();
+    stats = struct();
+    try
+        params = cell(py.list(py_path_glue.keys()));
+    catch
+        params = {};
+    end
+    for i = 1:numel(params)
+        param = char(params{i});
+        language = char(py_path_glue{param});
+        if strcmp(language, 'python')
+            transforms.(param) = @(v) scidb.internal.from_python( ...
+                py.scimatlab.bridge.apply_path_glue(prep_handle, param, v));
+            scifor.Log.info(['[glue] ''%s'': fed by a PathInput — Python ' ...
+                'chain applied once per distinct path, through the bridge'], param);
+        else
+            if ~isfield(handles, param)
+                error('scidb:glue:badChain', ['glue on ''%s'' is MATLAB ' ...
+                    'but no MATLAB handle was collected for it.'], param);
+            end
+            cache = containers.Map('KeyType', 'char', 'ValueType', 'any');
+            calls = containers.Map({'n'}, {0});
+            chain = handles.(param);
+            transforms.(param) = @(v) path_glue_cached(v, chain, param, cache, calls);
+            stats.(param) = struct('cache', cache, 'calls', calls);
+            scifor.Log.info(['[glue] ''%s'': fed by a PathInput — MATLAB ' ...
+                'chain applied once per distinct path'], param);
+        end
+    end
+end
+
+
+function out = path_glue_cached(value, chain, param, cache, calls)
+%PATH_GLUE_CACHED  One combo's PathInput value through its glue chain, cached
+%   by path text (containers.Map is a handle: the cache outlives the call).
+    calls('n') = calls('n') + 1;
+    key = char(string(value));
+    if isKey(cache, key)
+        out = cache(key);
+        scifor.Log.debug('[glue] ''%s'': path %s glued (cached)', param, key);
+        return;
+    end
+    t0 = tic;
+    out = value;
+    for ci = 1:numel(chain)
+        out = apply_one_glue(out, chain{ci}, param, {});
+    end
+    cache(key) = out;
+    scifor.Log.debug('[glue] ''%s'': path %s glued (miss) -> %s in %.3fs', ...
+        param, key, class(out), toc(t0));
+end
+
+
+function log_path_glue_stats(stats)
+%LOG_PATH_GLUE_STATS  INFO per MATLAB PathInput glue: distinct paths vs combos.
+%   N == M on a coarse PathInput means the cache is not doing its job.
+    params = fieldnames(stats);
+    for i = 1:numel(params)
+        s = stats.(params{i});
+        if s.calls('n') > 0
+            scifor.Log.info('[glue] ''%s'': %d distinct path(s) glued for %d combo(s)', ...
+                params{i}, s.cache.Count, s.calls('n'));
+        end
     end
 end
 

@@ -48,6 +48,7 @@ __all__ = [
     "GLUE_INPUT_PARAM",
     "GLUE_TYPE",
     "CONSTANT_GLUE_TYPE",
+    "PATHINPUT_GLUE_TYPE",
     "GLUE_RECORD_TYPES",
     "NON_VARIABLE_INPUT_TYPES",
     "INTERNAL_RECORD_TYPES",
@@ -122,6 +123,14 @@ GLUE_TYPE = "__glue__"
 # has none), no save event, no data.
 CONSTANT_GLUE_TYPE = "__constant_glue__"
 
+# Sentinel ``type`` for the virtual record of a **PathInput-fed** glue chain —
+# the PathInput-head twin of :data:`CONSTANT_GLUE_TYPE`
+# (docs/claude/free-code-glue-nodes.md §1, "A PathInput-fed parameter"):
+# ``__pathinput__ -> glue -> __pathinput_glue__ -> consumer``. Readers put the
+# param back among the call's PathInputs. No schema location, no save event,
+# no data.
+PATHINPUT_GLUE_TYPE = "__pathinput_glue__"
+
 # Sentinel ``type`` for what a schema selection narrowed below the iterated level
 # (``scidb.run.selection_axis``). Like a PathInput spec it is an input edge with
 # its value in ``_constant``: part of ``invocation_id`` through the edges, never a
@@ -132,19 +141,26 @@ SELECTION_VALUE_TYPE = "Selection"
 
 # The type sets readers test against — THE owners; never spell the members
 # inline (in SQL or Python), or one reader drifts when a type is added.
-#: Every virtual glue record, either head.
-GLUE_RECORD_TYPES = (GLUE_TYPE, CONSTANT_GLUE_TYPE)
+#: Every virtual glue record, any head.
+GLUE_RECORD_TYPES = (GLUE_TYPE, CONSTANT_GLUE_TYPE, PATHINPUT_GLUE_TYPE)
 #: Input records that are NOT a variable input: a constant, a PathInput spec,
-#: a Parameter-fed glue record (a constant, reshaped), or a selection's axis. A
-#: variable-head glue record IS a variable input (it stands in for the reshaped
-#: variable).
-NON_VARIABLE_INPUT_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, CONSTANT_GLUE_TYPE, SELECTION_TYPE)
+#: a Parameter-fed or PathInput-fed glue record (a constant / a file,
+#: reshaped), or a selection's axis. A variable-head glue record IS a variable
+#: input (it stands in for the reshaped variable).
+NON_VARIABLE_INPUT_TYPES = (
+    CONSTANT_TYPE,
+    PATHINPUT_TYPE,
+    CONSTANT_GLUE_TYPE,
+    PATHINPUT_GLUE_TYPE,
+    SELECTION_TYPE,
+)
 #: Record types that are provenance plumbing, never user data.
 INTERNAL_RECORD_TYPES = (
     CONSTANT_TYPE,
     PATHINPUT_TYPE,
     GLUE_TYPE,
     CONSTANT_GLUE_TYPE,
+    PATHINPUT_GLUE_TYPE,
     SELECTION_TYPE,
 )
 

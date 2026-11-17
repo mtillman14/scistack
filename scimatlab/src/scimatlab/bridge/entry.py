@@ -70,6 +70,7 @@ def for_each_prepare(
     source_text=None,
     schema_key_types=None,
     project_root=None,
+    glued_constants=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -133,16 +134,21 @@ def for_each_prepare(
         functions default ``as_table`` on. MATLAB does its own fn
         wrapping using the returned ``endpoint_kind``/``path_param``.
     glue : dict or None
-        ``{param_name: [{name, source_text, per_schema_key}, ...]}`` — the
-        glue chains wired to this call. **A glue node executes in the language
-        of the run**, so on this path every chain is MATLAB and its bodies run
-        in ``+scidb/for_each.m``, after prepare returns and before the loop (a
-        ``.m`` function cannot execute inside Python's prepare step). What
-        happens here is the *identity* half: each chain's virtual glue records
-        are computed and the consumer's bindings routed through them, exactly
-        as on the Python path, so one provenance recipe serves both languages.
-        The returned ``glue_chains`` entry tells MATLAB which params to apply
-        which nodes to.
+        ``{param_name: [{name, language, source_text, source_file,
+        per_schema_key}, ...]}`` — the glue chains wired to this call, in
+        either language (docs/claude/free-code-glue-nodes.md §1, "Which
+        language runs where"). Python chain bodies run here (prepare) or
+        through :func:`apply_path_glue` (PathInput head); MATLAB chain bodies
+        run in ``+scidb/for_each.m`` (a ``.m`` function cannot execute inside
+        Python's prepare step). The *identity* half is always computed here,
+        so one provenance recipe serves both languages. The returned
+        ``glue_chains`` / ``path_glue`` entries tell MATLAB which bodies are
+        still its to run.
+    glued_constants : dict or None
+        ``{param_name: glued value}`` — MATLAB glue on a CONSTANT, which
+        ``+scidb/for_each.m`` already ran (before this call) on the raw value
+        it sent in ``inputs_spec``. Prepare records the raw value and hashes
+        this one (``scidb.run.glue.apply_constant_glue``'s ``preglued``).
     schema_key_types : dict or None
         ``{key: "numeric" | "string"}`` from MATLAB's ``schema_key_types=``.
         Recorded in the database (``DatabaseManager.declare_schema_key_types``)
@@ -170,7 +176,13 @@ def for_each_prepare(
         glue_chains : dict           — {param: [{name, per_schema_key}]} the
                                        MATLAB side must apply, in order, to
                                        that param's loaded table before the
-                                       loop. Empty when no glue is wired.
+                                       loop. MATLAB-language table-headed
+                                       chains only. Empty when none.
+        path_glue : dict             — {param: "matlab" | "python"} for
+                                       PathInput-fed chains, applied once per
+                                       distinct resolved path in the loop
+                                       (MATLAB glue by +scidb/for_each.m,
+                                       Python glue via apply_path_glue).
 
     Raises
     ------
@@ -276,10 +288,21 @@ def for_each_prepare(
         str(fn_name), inputs, bool(save), as_table_arg
     )
 
-    # Glue chains: MATLAB structs → GlueSpec, language "matlab". Bodies stay
-    # unexecuted here (a .m function cannot run in Python); only their source
-    # hashes matter to prepare, which is all identity needs.
+    # Glue chains: MATLAB structs → GlueSpec. MATLAB bodies stay unexecuted
+    # here (a .m function cannot run in Python); only their source hashes
+    # matter to prepare, which is all identity needs. Python bodies are
+    # loaded from their files and run here or per path.
     glue_arg = _reconstruct_glue_chains(glue)
+    glued_constants_arg = (
+        {}
+        if glued_constants is None or isinstance(glued_constants, type(None))
+        else {str(k): v for k, v in dict(glued_constants).items()}
+    )
+    if glued_constants_arg:
+        Log.info(
+            f"[bridge] {fn_name}: MATLAB glue already applied to constant(s) "
+            f"{sorted(glued_constants_arg)}"
+        )
 
     # Where: accept None or a Filter object. (Empty string sometimes
     # arrives from MATLAB when no filter was supplied; treat it as None.)
@@ -349,6 +372,7 @@ def for_each_prepare(
                 context=external_loop.RunContext(),
                 glue=glue_arg,
                 glue_language="matlab",
+                glued_constants=glued_constants_arg,
                 project_root=project_root,
             )
         except Exception:
@@ -424,6 +448,7 @@ def for_each_prepare(
         ),
         glue=glue_arg,
         glue_language="matlab",
+        glued_constants=glued_constants_arg,
         project_root=project_root,
         # The save happens in a SECOND RPC, which reads this off the cached
         # state rather than being told again — one fact, one place.
@@ -567,6 +592,22 @@ def for_each_prepare(
     # scifor.get_schema sees the dataset schema, and row selection travels
     # as `row_selection` instead.)
 
+    # PathInput-fed glue: Python chains run per path through apply_path_glue
+    # (the per-path cache lives in these runners, on the state, for this run
+    # only); MATLAB chains run in +scidb/for_each.m with its own cache.
+    from scidb.run import glue as _glue_mod
+
+    state.path_glue_runners = _glue_mod.per_path_glue(state.path_glue or {})
+    path_glue_languages = {
+        p: _glue_mod.chain_language(chain)
+        for p, chain in sorted((state.path_glue or {}).items())
+    }
+    if path_glue_languages:
+        Log.info(
+            f"[bridge] {fn_name}: PathInput-fed glue applied per path in the "
+            f"MATLAB loop: {path_glue_languages}"
+        )
+
     # Cache state for the matching for_each_save call
     global _for_each_state_id_counter
     handle = _for_each_state_id_counter
@@ -617,15 +658,55 @@ def for_each_prepare(
         # {param: [{name, per_schema_key}]} — the glue nodes MATLAB must apply
         # to that param's table, in order, between prepare and the loop. The
         # provenance side is already done (state.glue_virtual); this is purely
-        # "which bodies to call".
+        # "which bodies to call". MATLAB chains only: a Python chain on a
+        # table already ran in prepare (fuse_glue).
         "glue_chains": {
             param: [
                 {"name": s.name, "per_schema_key": bool(s.per_schema_key)}
                 for s in chain
             ]
             for param, chain in (state.glue_chains or {}).items()
+            if _glue_mod.chain_language(chain) == "matlab"
         },
+        # {param: "matlab" | "python"} — PathInput-fed chains, run once per
+        # distinct path in the loop through scifor's _input_transforms.
+        "path_glue": path_glue_languages,
     }
+
+
+@matlab_entry
+def apply_path_glue(handle, param, value):
+    """Bridge entry, called by MATLAB once per combo: run a **Python**
+    PathInput-fed glue chain on this combo's resolved path.
+
+    ``+scidb/for_each.m`` installs a ``_input_transforms`` handle for each
+    param ``for_each_prepare`` reported in ``path_glue`` as Python; the
+    handle calls this with the path MATLAB resolved, and converts the return
+    with ``scidb.internal.from_python``. The per-path cache is the run's
+    ``glue.PerPathGlue`` (on the cached prepare state), so the chain runs once
+    per distinct path — the same owner the Python run uses.
+
+    Raises (a ``GlueError`` or the glue's own error) rather than returning a
+    sentinel: MATLAB's loop records it as that combo's failure.
+    """
+    cached = _for_each_state_cache.get(int(handle))
+    if cached is None:
+        raise ValueError(
+            f"apply_path_glue: handle {handle} not found in cache (the run "
+            f"was already saved or freed)"
+        )
+    runners = getattr(cached["state"], "path_glue_runners", None) or {}
+    runner = runners.get(str(param))
+    if runner is None:
+        raise KeyError(
+            f"apply_path_glue: no Python PathInput glue on '{param}' for this "
+            f"run (have {sorted(runners)})"
+        )
+    # A pathlib.Path, as PathInput.load gives the Python run's glue: one
+    # Python glue body sees one type whichever runtime drives the loop.
+    from pathlib import Path
+
+    return runner(Path(str(value)))
 
 
 def _merge_output_tables(dfs: list, output_names: list):
@@ -841,6 +922,9 @@ def for_each_save(
     outputs = cached["outputs"]
     db = cached["db"]
     rid_rename_map = cached.get("rid_rename_map", {})
+    # The loop is over: report each Python PathInput glue's paths vs combos.
+    for _runner in (getattr(state, "path_glue_runners", None) or {}).values():
+        _runner.log_summary()
 
     # Reverse the bridge-boundary sanitization on the way back: MATLAB
     # produced result tables whose columns include the sanitized combo handle

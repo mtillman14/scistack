@@ -13,6 +13,13 @@
 > `gui-export-to-plain-python.md`, which sat at "not yet built" long after the
 > feature shipped, for why this warning is here.)
 >
+>
+> **Amended 2026-11-17 (issue #21):**
+> - A **PathInput** may now feed a glue node (§1, "A PathInput-fed parameter").
+> - **Glue language no longer has to match the run's language** (§1, "Which language runs where").
+> - The one refusal left is MATLAB glue in a Python run.
+> - Plan of record: `.claude/plan-pathinput-glue-26-11-17.md`.
+>
 > Entry points: `scidb/run/glue.py` (the contract and the fusion),
 > `scidb.provenance.graph.compute_glue_record_id` (§2's virtual record),
 > `scidb.model.roles.function_role` (§0), `scistack_gui/services/glue_service.py`
@@ -99,15 +106,26 @@ Everything good about this feature follows from that one placement:
   identically to a MATLAB run.
 
 **MATLAB-authored glue is the one thing that cannot live there**, because a `.m`
-function cannot execute inside Python's prepare step. It is applied instead in
-`+scidb/for_each.m`, after `for_each_prepare` returns and before the loop
-begins, on the table MATLAB already rebuilds via
-`for_each_describe_loaded_input`. `prepare` therefore returns a `glue_chains`
-entry telling MATLAB which params carry MATLAB glue.
+function cannot execute inside Python's prepare step.
+- It is applied in `+scidb/for_each.m` instead, after `for_each_prepare` returns and before the loop begins, on the table MATLAB rebuilds via `for_each_describe_loaded_input`.
+- `prepare` therefore returns a `glue_chains` entry naming the params whose chain MATLAB still has to apply.
 
-This is also why glue language must match the run language: the alternative is
-two application sites whose ordering semantics have to be kept in agreement for
-a mixed chain, for no user benefit.
+### Which language runs where (since 2026-11-17)
+
+Glue does not care which language feeds it, or which language the function it feeds is written in. Glue usually reshapes simple structures, and making users rewrite a reshaper because the consumer changed language had no benefit. A chain runs **where its input exists**, in its own language:
+
+| Glue \ Run | Python run | MATLAB run |
+|---|---|---|
+| Python glue | Every head | Every head: applied in Python prepare (variable, constant), or per path through the bridge (PathInput) |
+| MATLAB glue | **Refused** | Every head: applied by `+scidb/for_each.m` (variable before the loop, constant before prepare, PathInput per path in the loop) |
+
+**MATLAB glue in a Python run is refused**, with the glue and the param named. A Python run is a Python process, and scidb has no way to execute a `.m` file. `matlab.engine` was considered and deferred: it is an optional dependency, its first start is slow, and no table type crosses it.
+
+**One gate owns the rule:** `glue.check_glue_executable(chains, run_language)`. It replaced `check_run_language` (variable heads) and `check_constant_glue_language` (constant heads), which enforced opposite rules for the same concept.
+
+**A chain must still be single-language** (`_validate_chain`). On a variable head, the Python part runs in prepare and the MATLAB part runs after it. A mixed chain would therefore run out of the order it was drawn in, unless every element ran MATLAB-side with the table crossing the bridge once per element.
+
+**Until 2026-11-17 the rule was "glue language must match the run language"**, plus the inverse for constants ("always Python"). It existed to keep the exported plain script faithful and to have one rule. It cost the user a rewrite whenever a consumer changed language.
 
 ### The one exception: a constant-fed parameter
 
@@ -177,18 +195,69 @@ with the glue's *output* (a dict where the user declared a path), and drew
 prepare, hashed the raw value while history held the glued one, so a
 Parameter-fed glue step **never skipped**.
 
-The language rule inverts with it, for the same reason it exists: a glue node
-runs where its input exists, and prepare is Python on **both** run paths. So a
-constant-fed chain must be **Python glue even in a MATLAB run**, and MATLAB glue
-on one is refused. Applying it per-combo on the MATLAB side instead would record
-the *pre*-glue constant and reintroduce exactly the silent staleness this
-placement removes.
+**MATLAB glue on a constant (MATLAB run only, since 2026-11-17).** Prepare is Python, so a MATLAB body cannot run there. MATLAB runs it instead, *before* prepare:
+- `+scidb/for_each.m` applies the chain to the concrete constant after Step 0 has expanded every EachOf.
+- It sends prepare the **raw** value as the input and the glued value as `glued_constants`.
+- `apply_constant_glue` takes the glued value as given instead of calling the body. Everything after that is the same code: the raw value goes in `__constants`, the glued hash goes in `glued`, and the same `__constant_glue__` hop is written.
+- Identity therefore cannot tell which language ran the body.
 
-That is also why Python glue can cross into a MATLAB run at all: the GUI emits
-the chain element as `struct('name', …, 'language', 'python', 'source_file', …)`
-rather than a handle (`+scidb/for_each.m:build_glue_chains`), and
-`scimatlab.bridge` loads the body with `scidb.run.glue.resolve_python_glue` —
-MATLAB's interpreter has no function registry, so the *path* is what travels.
+Applying MATLAB constant glue per combo inside the loop instead would record the *pre*-glue constant and reintroduce exactly the silent staleness this placement removes.
+
+**How Python glue reaches a MATLAB run.** The GUI emits the chain element as `struct('name', …, 'language', 'python', 'source_file', …)` rather than a handle (`+scidb/for_each.m:build_glue_chains`). `scimatlab.bridge` then loads the body with `scidb.run.glue.resolve_python_glue`. MATLAB's interpreter has no function registry, so the *path* is what travels.
+
+### A PathInput-fed parameter (since 2026-11-17)
+
+A `PathInput` resolves to one file path per combo, inside the loop (scifor's `path_input_resolver` in Python, `prepare_value` in `+scifor/for_each.m`). No table exists before that point, so a PathInput-fed chain runs **per path**:
+- The first glue receives the **resolved path**: a `pathlib.Path` in Python, a `string` in MATLAB. This is exactly what the function would otherwise have received.
+- The glue returns what the function should get instead, typically the file's parsed contents.
+
+**It runs at the PathInput's level, not the function's.** Within one run, the chain runs **once per distinct resolved path**, and every later combo that resolves to the same file gets the cached result.
+- A PathInput with no keys is glued once per dataset.
+- A `{subject}` PathInput feeding a `[subject, session, trial]` function is glued once per subject, not once per trial.
+- The cache key is `(param, str(path))` and the cache lives for one run. Its owner is `glue.PerPathGlue`.
+- Python hands each combo a `copy.deepcopy` of the cached value, so a function that mutates its input cannot leak into the next combo.
+- MATLAB glue uses a `containers.Map` with the same key in `+scidb/for_each.m`. MATLAB's value semantics make the copy unnecessary.
+- `per_schema_key` means nothing here, so it is ignored.
+
+**Where each language runs it:**
+
+| | Site |
+|---|---|
+| Python run | The `fn` wrapper in `foreach.py` (Step 16) applies `state.per_path_glue[param]` to the already-resolved path |
+| MATLAB run, MATLAB glue | The `_input_transforms` option of `+scifor/for_each.m`: a per-input handle applied right after `prepare_value`, inside the per-combo try/catch |
+| MATLAB run, Python glue | The same `_input_transforms` hook. The handle calls `scimatlab.bridge.apply_path_glue(handle, param, path)`, which owns the cache and returns the glued value for `scidb.internal.from_python` |
+
+A glue error therefore fails **that combo only**, the same as a missing file.
+
+**Identity: the PathInput-head twin of the constant hop.**
+
+```
+_record __pathinput__  prid (one per PathInput NAME)   ← declared_name = the PathInput, on THIS edge
+   │ (glue_inv, 'input')
+_invocation  <glue names>   function_hash = chain hash
+   │ output
+_record __pathinput_glue__   vrid = compute_glue_record_id(chain_hash, prid, "pathinput")
+   │ (fn_inv, <argument>)
+_invocation  <the function>
+```
+
+- The function's edge binds `vrid`, so an edited glue body moves the binding, `skip_computed` sees it (`binding '<p>' changed`), and the result goes stale.
+- The version key is `__pathinput_glue = {param: {"chain": chain_hash}}`. It is not a call-site key; glue *names* are already in `__glue`.
+- The third slot of the rid is a fixed token, so **a file edited behind an unchanged path does not recompute**. That matches a plain PathInput today ([[feedback_defer_content_staleness]]). Glued content cannot be hashed in prepare, because the glue runs in the loop.
+- `__pathinput_glue__` is in `GLUE_RECORD_TYPES` and `NON_VARIABLE_INPUT_TYPES`. The readers (`invocation_edges_batch`, `invocation_call_ids_batch`, `stored_invocation_signature`, `function_variant_configs`, `pipeline_variants`, `_build_upstream_closure`) put the param back among the call's **path_inputs** with its spec, plus a `pathinput_glue` detail beside it.
+- On the canvas, `graph_builder.build_edges` leaves out the direct history `PathInput → fn` edge when the drawn glue chain matches the recorded one, the same `history_glue_on_canvas` rule as for the other heads.
+- A `Fixed(PathInput)` has no PathInput record (its `__inputs` key is `Fixed(...)`). Its glue runs, but its identity cannot be recorded, and a WARNING says so, as for a Merge (§2).
+
+**Single owners:**
+
+| Concept | Owner |
+|---|---|
+| Is this param PathInput-fed? | `glue.is_pathinput_input` |
+| Which head a chain has (constant / PathInput / table) | `glue.split_chains` |
+| Whether a chain can execute in this run | `glue.check_glue_executable` |
+| A PathInput-glue record's id | `glue.pathinput_glue_rid`, beside `constant_glue_rid` and `virtual_rid_map` |
+| The record a PathInput edge binds | `provenance.save.pathinput_edge_rid`, beside `constant_edge_rid`. Used by `_pathinput_bindings` (save identity and `record_run`), the skip gate (through `_glue_ref`) and `_predict_config_invocations` (which replays the recorded rid) |
+| Running a chain once per path | `glue.PerPathGlue` (Python); `+scidb/for_each.m:path_glue_transform` (MATLAB glue) |
 
 **A multi-valued Parameter needs no special handling.** The fan-out and the glue
 compose without either knowing about the other: Step 1 makes one recursive call
@@ -355,7 +424,7 @@ where scidb applies the chain:
 |---|---|---|
 | Variable | The Step-10/11 fusion point (§1) | Virtual glue record (§2) |
 | Parameter / plain constant | `apply_constant_glue`, before the version keys | Raw value in `__constants` + `__constant_glue__` hop (§1) |
-| PathInput | Refused (`GlueUnsupportedInputError`) | — |
+| PathInput | Once per distinct resolved path, in the loop (§1) | `__pathinput_glue__` hop from the `__pathinput__` record (§1) |
 
 `edge_resolver.resolve_source_binding` is the single place that decides which,
 shared with the direct-edge path so the two cannot disagree. **They did.** Until
@@ -436,19 +505,32 @@ The log trail is designed to make that a two-minute read:
 8. `[edge_resolver] glue node '<g>' has N incoming edges [<id>:<handle>…]` —
    WARNING listing the **handles**, because the usual cause is a renamed glue
    parameter leaving a stale edge that is still the one followed.
+9. `[glue] '<param>': fed by a PathInput — chain applied once per distinct
+   resolved path, in the loop` — INFO in prepare, the PathInput head.
+10. `[glue] '<param>': path <p> glued (miss)` / `(cached)` — DEBUG per combo.
+    Ends with an INFO summary: `[glue] '<param>': N distinct path(s) glued for
+    M combo(s)`. If N equals M on a coarse PathInput, the cache is not working.
+11. `[skip] <fn>: '<p>' is a PathInput-fed glue; skip_computed compares its
+    virtual glue record <vrid>` — INFO, the PathInput twin of line 7's skip
+    counterpart.
+12. `[glue] '<param>': MATLAB glue applied to the constant before prepare` —
+    MATLAB INFO, the constant head in a MATLAB run.
 
 ---
 
 ## 7. Deliberately out of scope
 
 - **Row-changing glue** — use a function node with a saved output.
-- **Cross-language glue chains** (§1).
-- **Glue on a PathInput-fed param** — a `PathInput` is always a
-  `PerComboLoader`, so no table exists at the fusion point. Refused.
-- **MATLAB glue on a constant-fed param** — §1's exception; refused, with the
-  reason and the alternatives in the message. (Glue on a constant-fed param is
-  otherwise *supported*, in Python. It used to be neither supported nor
-  refused, just silently dropped — see §4a.)
+- **Mixed-language chains** on one param (§1, "Which language runs where").
+- **MATLAB glue in a Python run**: refused (§1). Revisit with `matlab.engine` if
+  someone needs it.
+- **File-content staleness behind a glued PathInput**: same as a plain
+  PathInput (§1).
+- *(Removed 2026-11-17.)* Glue on a PathInput-fed param used to be refused,
+  because no table exists at the fusion point. It does not need one: it runs
+  per path (§1).
+- *(Removed 2026-11-17.)* MATLAB glue on a constant-fed param used to be
+  refused. It now runs in MATLAB before prepare (§1).
 - **Glue → variable node wiring** — there is no saved output to land.
 - **Persisting glue data** in any form. Only the provenance node is written.
 - **Two storage forms** (a one-liner in GUI state *plus* files for multi-line

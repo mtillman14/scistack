@@ -172,12 +172,11 @@ class TestGlueChainHeadKinds:
         resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
         assert resolved.parameter_params == {"config": "delsys_config"}
 
-    def test_a_pathinput_fed_glue_binds_and_leaves_scidb_to_refuse_it(self):
-        """§7 scopes PathInput glue out, but the refusal belongs to scidb.
-
-        Dropping the binding here made an unsupported wiring look like a
-        missing argument. Binding it means ``refuse_pathinput_glue`` raises
-        ``GlueUnsupportedInputError`` with a message that names the problem.
+    def test_a_pathinput_fed_glue_binds_the_pathinput(self):
+        """Issue #21: PathInput -> glue -> fn runs (scidb glues the resolved
+        path once per distinct file). The binding must name the PathInput and
+        carry the chain, so scidb sees a PathInput head; dropping it would
+        make the wiring look like a missing argument.
         """
         manual_nodes = {"g1": _glue_node("glue_x")}
         edges = [

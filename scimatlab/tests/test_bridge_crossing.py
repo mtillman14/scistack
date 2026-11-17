@@ -210,6 +210,7 @@ def test_matlab_never_calls_scidb_with_a_converted_value_directly():
     [
         "datetimes_from_matlab", "datetimes_to_matlab", "durations_to_matlab", "boxed_tolist",
         "for_each_prepare", "for_each_describe_loaded_input", "for_each_save",
+        "apply_path_glue",
         "normalize_stat_result", "save_batch_bridge", "save_variable_bridge",
         "get_batch_item", "get_batch_data_item", "wrap_batch_bridge",
         "load_and_extract", "to_csv_bridge", "variable_filter",

@@ -12,11 +12,14 @@ Covers:
 - chains apply in order; a 2-parameter glue binds by stated binding, not name
 - non-table (scalar) values skip the row contract
 - fusion through ``for_each``: both loaded-column naming modes, Merge inputs,
-  PathInput refusal, and the per-schema-key opt-in
+  and the per-schema-key opt-in
 - glue on a CONSTANT-fed parameter (the Parameter case): applied in prepare,
   recorded as a ``__constant_glue__`` history hop with the RAW value in
-  ``__constants`` (test_constant_glue_provenance.py), the inverted language
-  rule, and the EachOf recursion that used to drop glue entirely
+  ``__constants`` (test_constant_glue_provenance.py), MATLAB constant glue
+  arriving pre-glued, and the EachOf recursion that used to drop glue entirely
+- the one language gate (check_glue_executable): only MATLAB glue in a
+  Python run is refused
+- glue on a PathInput-fed parameter: test_pathinput_glue.py
 """
 
 import logging
@@ -33,10 +36,8 @@ from scidb import (
     GlueRowsChangedError,
     GlueSchemaKeysAlteredError,
     GlueSpec,
-    GlueUnsupportedInputError,
     Merge,
     Parameter,
-    PathInput,
     configure_database,
     for_each,
 )
@@ -45,7 +46,7 @@ from scidb.run.glue import (
     apply_glue_chain,
     bulk_chain,
     chain_hash,
-    check_run_language,
+    check_glue_executable,
     normalize_glue,
     per_combo_chain,
 )
@@ -147,10 +148,6 @@ def pass_force(force):
 
 def sum_numeric(merged):
     return float(np.sum(merged.select_dtypes("number").values))
-
-
-def pass_raw(raw):
-    return raw
 
 
 def _frame(n=3, *, hidden=True, subject="1"):
@@ -382,8 +379,24 @@ class TestChains:
                 )
             }
         )
-        with pytest.raises(GlueLanguageMismatchError):
-            check_run_language(chains, "python")
+        with pytest.raises(GlueLanguageMismatchError, match="cannot execute a .m file"):
+            check_glue_executable(chains, "python")
+
+    def test_every_other_language_and_run_pair_is_allowed(self):
+        """Glue does not care which language its consumer runs in
+        (docs/claude/free-code-glue-nodes.md §1, issue #21): Python glue runs
+        in either run, MATLAB glue in a MATLAB run."""
+        py_chain = normalize_glue({"emg": _spec(glue_drop_baseline)})
+        m_chain = normalize_glue(
+            {
+                "emg": GlueSpec(
+                    name="glue_m", language="matlab", source_text="function y=f(x)\ny=x;\nend"
+                )
+            }
+        )
+        check_glue_executable(py_chain, "python")
+        check_glue_executable(py_chain, "matlab")
+        check_glue_executable(m_chain, "matlab")
 
     def test_bulk_glue_after_per_key_glue_refused(self):
         with pytest.raises(GlueChainOrderError):
@@ -596,19 +609,6 @@ class TestFusionThroughForEach:
             for r in caplog.records
         ), "the Merge identity gap was not reported"
 
-    def test_glue_on_a_pathinput_param_is_refused(self, db):
-        with pytest.raises(GlueUnsupportedInputError) as exc:
-            for_each(
-                pass_raw,
-                inputs={"raw": PathInput("{subject}/{session}.csv", name="{subject}/{session}.csv")},
-                outputs=[Analyzed],
-                db=db,
-                glue={"raw": _spec(glue_drop_baseline)},
-                subject=["1"],
-                session=["A"],
-            )
-        assert "PathInput" in str(exc.value)
-
     def test_row_changing_glue_fails_the_run(self, db):
         _seed_dataframe_variable(db)
         with pytest.raises(GlueRowsChangedError):
@@ -774,12 +774,12 @@ class TestConstantGlue:
             "the edited constant glue did not recompute"
         )
 
-    def test_matlab_glue_on_a_constant_is_refused(self, db):
-        """The inverted language rule. A constant-fed chain runs in prepare —
-        Python on both run paths — so MATLAB glue cannot be applied there, and
-        moving it to a per-combo site would record the pre-glue constant."""
+    def test_matlab_glue_on_a_constant_is_refused_in_a_python_run(self, db):
+        """A Python run cannot execute a .m body (check_glue_executable). In a
+        MATLAB run the same chain runs — +scidb/for_each.m applies it before
+        prepare (test_matlab_constant_glue_arrives_preglued)."""
         _seed_dataframe_variable(db)
-        with pytest.raises(GlueLanguageMismatchError, match="Parameter"):
+        with pytest.raises(GlueLanguageMismatchError, match="cannot execute a .m file"):
             for_each(
                 scale_signal,
                 inputs={"emg": RawEMG, "factor": Parameter(3)},
@@ -823,18 +823,49 @@ class TestConstantGlue:
         """The MATLAB bridge calls prepare directly, with no Step 1 in front
         of it, so an unexpanded Parameter can arrive. Gluing the EachOf object
         would hand the user's code the axis instead of a value."""
-        from scidb.run.glue import apply_constant_glue, split_constant_chains
+        from scidb.run.glue import apply_constant_glue, split_chains
 
         inputs = {"factor": Parameter(1, 2)}
         chains = normalize_glue({"factor": _spec(glue_double_factor)})
-        constant_chains, deferred = split_constant_chains(inputs, chains)
+        split = split_chains(inputs, chains)
 
-        assert set(constant_chains) == {"factor"}
-        assert deferred == {}
+        assert set(split.constant) == {"factor"}
+        assert split.table == {} and split.pathinput == {}
 
-        apply_constant_glue(inputs, constant_chains)
+        apply_constant_glue(inputs, split.constant)
         assert isinstance(inputs["factor"], EachOf)
         assert list(inputs["factor"].alternatives) == [2, 4]
+
+    def test_matlab_constant_glue_arrives_preglued(self):
+        """A MATLAB run applies MATLAB constant glue before prepare and hands
+        the glued value over (``preglued``). Prepare then records exactly what
+        a Python body would have: the RAW value, and the glued value's hash."""
+        from scicanonicalhash import canonical_hash
+
+        from scidb.run.glue import apply_constant_glue
+
+        m_spec = GlueSpec(
+            name="glue_m", language="matlab", source_text="function y=f(x)\ny=x*2;\nend"
+        )
+        inputs = {"factor": 3}
+        applied = apply_constant_glue(
+            inputs, {"factor": [m_spec]}, preglued={"factor": 6}
+        )
+        assert inputs["factor"] == 6, "the function must receive the glued value"
+        assert applied["factor"].raw == 3, "identity must record the RAW value"
+        assert applied["factor"].glued_hash == canonical_hash(6)
+        assert applied["factor"].chain_hash == chain_hash([m_spec])
+
+    def test_matlab_constant_glue_without_its_glued_value_is_refused(self):
+        """A MATLAB body cannot run in prepare; if the glued value did not
+        arrive, refusing beats silently recording the un-glued value."""
+        from scidb.run.glue import apply_constant_glue
+
+        m_spec = GlueSpec(
+            name="glue_m", language="matlab", source_text="function y=f(x)\ny=x*2;\nend"
+        )
+        with pytest.raises(GlueLanguageMismatchError, match="no glued value"):
+            apply_constant_glue({"factor": 3}, {"factor": [m_spec]})
 
 
 class TestGlueSurvivesEachOfExpansion:

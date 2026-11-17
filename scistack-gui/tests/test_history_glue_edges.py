@@ -82,6 +82,38 @@ def test_a_variable_fed_glue_is_drawn_through_its_glue_node():
     assert got == [(GLUE, "manual__glue_to_fn")], got
 
 
+def _build_pathinput(manual_edges, manual_nodes):
+    """A PathInput 'xsens_cfg' recorded as feeding col_names through the glue."""
+    return build_edges(
+        fn_input_params={FKEY: {}},
+        fn_outputs={FKEY: {"XSENS"}},
+        const_fns={},
+        path_inputs={"xsens_cfg": {"functions": [(FKEY, "col_names")]}},
+        manual_edges=manual_edges,
+        hidden_ids=set(),
+        fn_glue_chains={FKEY: {"col_names": ["glue_xsens_config"]}},
+        manual_nodes=manual_nodes,
+    )
+
+
+def test_a_pathinput_fed_glue_is_drawn_through_its_glue_node():
+    """Issue #21: PathInput -> glue -> fn. History must not also draw the
+    PathInput straight into the function beside the glue edge."""
+    from scistack_gui.ids import path_input_node_id
+
+    edges, nodes = _drawn()
+    edges[0] = {**edges[0], "source": path_input_node_id("xsens_cfg")}
+    got = _into_col_names(_build_pathinput(edges, nodes))
+    assert got == [(GLUE, "manual__glue_to_fn")], got
+
+
+def test_without_the_glue_drawn_a_pathinput_keeps_its_direct_edge():
+    from scistack_gui.ids import path_input_node_id
+
+    got = _into_col_names(_build_pathinput([], {}))
+    assert [src for src, _id in got] == [path_input_node_id("xsens_cfg")], got
+
+
 def test_without_the_glue_on_the_canvas_history_keeps_its_direct_edge():
     """Dropping the edge with no glue drawn would lose the connection."""
     got = _into_col_names(_build([], {}))

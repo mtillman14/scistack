@@ -81,9 +81,10 @@ def _reconstruct_glue_chains(glue):
     the glue's content hash — and so the virtual record id the consumer binds
     to — is derived from.
 
-    **Python glue** reaches a MATLAB run only for a CONSTANT-fed parameter,
-    where ``scidb.run.glue.apply_constant_glue`` applies it during prepare
-    (Python's, on both run paths), recording it as a ``__constant_glue__`` history hop.
+    **Python glue** may feed any head in a MATLAB run
+    (docs/claude/free-code-glue-nodes.md §1, "Which language runs where"):
+    prepare applies it to a constant or a table, and
+    ``entry.apply_path_glue`` runs it per path for a PathInput.
     That needs a live callable, and this process has no function registry, so
     the body is loaded from the ``source_file`` the GUI recorded. If it cannot
     be loaded the spec still carries its hash, and the failure is reported

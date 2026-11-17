@@ -922,7 +922,17 @@ def _for_each_execute(
         else set(as_table or ())
     )
     _per_combo_glue = state.per_combo_glue or {}
-    if _per_combo or _inject_combo_metadata or _has_variable_inputs or _per_combo_glue:
+    # PathInput-fed glue: once per distinct resolved path (glue.PerPathGlue).
+    # Kept on `state` so the loop can log each one's hit/miss summary after.
+    state.path_glue_runners = _glue.per_path_glue(state.path_glue or {})
+    _path_glue = state.path_glue_runners
+    if (
+        _per_combo
+        or _inject_combo_metadata
+        or _has_variable_inputs
+        or _per_combo_glue
+        or _path_glue
+    ):
         wrap_reasons = []
         if _per_combo:
             wrap_reasons.append(f"{len(_per_combo)} PerComboLoader input(s)")
@@ -932,6 +942,8 @@ def _for_each_execute(
             wrap_reasons.append("variable input normalization")
         if _per_combo_glue:
             wrap_reasons.append(f"{len(_per_combo_glue)} per-combo glue chain(s)")
+        if _path_glue:
+            wrap_reasons.append(f"{len(_path_glue)} PathInput-fed glue chain(s)")
         Log.debug(f"wrapping function for {', '.join(wrap_reasons)}")
         _ordered_combos = state.full_combos
         _call_idx = [0]
@@ -996,6 +1008,13 @@ def _for_each_execute(
                     bindings=state.bindings,
                     aggregation_mode=state.aggregation_mode,
                 )
+
+            # PathInput-fed glue: scifor has already resolved the PathInput to
+            # this combo's path; the chain runs once per distinct path and
+            # hands back a copy of its result.
+            for _gp, _runner in _path_glue.items():
+                if _gp in resolved:
+                    resolved[_gp] = _runner(resolved[_gp])
 
             # Per-schema-key glue (the D4 opt-in) runs here, on the
             # already-sliced value, immediately before fn sees it — the same
@@ -1118,6 +1137,8 @@ def _for_each_execute(
         if _run_summary["stopped"]:
             _summary_parts.append("stopped (on_error=stop)")
         Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
+        for _runner in _path_glue.values():
+            _runner.log_summary()
 
     return result_tbl
 
@@ -1467,7 +1488,9 @@ def _build_skip_hook(
     # path's own rule and fills this ref; the hook only reads it. Unset, glued
     # params are unknown and compare as plain constants (which then never
     # match: safe, recompute).
-    constant_glue_ref: dict = {"rids": {}, "set": False}
+    # PathInput-fed glue likewise binds a virtual glue record
+    # (provenance.save.pathinput_edge_rid); prepare fills "pathinput_rids".
+    constant_glue_ref: dict = {"rids": {}, "pathinput_rids": {}, "set": False}
     #: invocation id -> whether today's recipe reproduces it (asked once each).
     _recipe_checked: dict[str, bool] = {}
 
@@ -1597,7 +1620,11 @@ def _build_skip_hook(
 
         # PathInputs: the spec that fed the stored record vs the one now.
         stored_pi = sig.get("path_inputs") or {}
+        pi_glue_rids = constant_glue_ref.get("pathinput_rids") or {}
         for name, cur_rid in path_input_rids.items():
+            # Behind glue the edge binds the virtual glue record, so an edited
+            # glue body shows up here as a changed binding.
+            cur_rid = pi_glue_rids.get(name, cur_rid)
             if stored_pi.get(name) != cur_rid:
                 return _recompute(
                     combo_str,

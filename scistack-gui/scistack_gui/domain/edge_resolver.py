@@ -235,12 +235,13 @@ class ResolvedEdges:
     # Parameter or a PathInput. Glue interposes on a binding, it is never a
     # binding of its own, and it is never a step.
     #
-    # Which of those heads is RUNNABLE is scidb's call, not this module's:
-    # ``scidb.run.glue`` applies a variable head at the Step-10/11 fusion point, a
-    # Parameter head before fan-out, and refuses a PathInput head outright
-    # (``GlueUnsupportedInputError``). Resolving the binding honestly here and
-    # letting scidb refuse is what keeps an unsupported head a loud error
-    # instead of a silently missing argument.
+    # Where each head RUNS is scidb's call, not this module's
+    # (``scidb.run.glue.split_chains``): a variable head at the Step-10/11
+    # fusion point, a Parameter head before fan-out, a PathInput head once per
+    # distinct resolved path in the loop. Resolving the binding honestly here
+    # and letting scidb decide (or refuse — ``check_glue_executable``) is what
+    # keeps an unsupported chain a loud error instead of a silently missing
+    # argument.
     glue_chains: dict[str, list[str]] = field(default_factory=dict)
 
     @property
