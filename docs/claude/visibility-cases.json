@@ -32,11 +32,17 @@
     },
     "edge_hides": {
       "main": ["e_removed_on_main"],
-      "sub": ["conn_retired"]
+      "sub": ["conn_retired", "conn_inner_removed", "conn_retired_with_ends"]
     },
     "value_hides": {
       "main": {"Fs": ["100"]},
       "sub": {"Fs": ["200"]}
+    },
+    "edge_hide_ends": {
+      "sub": {
+        "conn_inner_removed": [["pathInput__P", "fn__load__t1"]],
+        "conn_retired_with_ends": [["pathInput__P::main", "fn__load__t1"]]
+      }
     },
     "combos": ["fn__combo__abc"]
   },
@@ -137,6 +143,18 @@
       "name": "a traced connection retired on the step's canvas is hidden",
       "ask": "connection_hidden",
       "connection": "conn_retired", "source": "pathInput__P::main", "target": "fn__load__t1",
+      "expect": true
+    },
+    {
+      "name": "a removed direct line inside the submodule does not hide the live route from the parent through the port",
+      "ask": "connection_hidden",
+      "connection": "conn_inner_removed", "source": "pathInput__P::main", "target": "fn__load__t1",
+      "expect": false
+    },
+    {
+      "name": "a whole-connection hide recorded with the route's own ends hides it",
+      "ask": "connection_hidden",
+      "connection": "conn_retired_with_ends", "source": "pathInput__P::main", "target": "fn__load__t1",
       "expect": true
     },
     {

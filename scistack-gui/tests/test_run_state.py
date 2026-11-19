@@ -495,3 +495,30 @@ class TestCascadeUnrunProducers:
         )
         assert changed["fn__down__abc123"] == "red"
         assert changed[var("Leaf")] == "red"
+
+
+class TestPlacementState:
+    """A submodule placement's state, rolled up from every step inside it."""
+
+    def test_any_red_step_makes_it_red_and_names_it(self):
+        from scistack_gui.domain.run_state import placement_state
+
+        assert placement_state({"fn_a": "green", "fn_b": "red", "fn_c": "pending"}) == (
+            "red",
+            ["fn_b"],
+        )
+
+    def test_pending_without_red(self):
+        from scistack_gui.domain.run_state import placement_state
+
+        assert placement_state({"fn_a": "green", "fn_b": "pending"}) == ("pending", ["fn_b"])
+
+    def test_all_green(self):
+        from scistack_gui.domain.run_state import placement_state
+
+        assert placement_state({"fn_a": "green", "fn_b": "green"}) == ("green", [])
+
+    def test_no_steps_no_state(self):
+        from scistack_gui.domain.run_state import placement_state
+
+        assert placement_state({}) == (None, [])

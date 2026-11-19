@@ -61,6 +61,21 @@ class EdgeView:
     port_wiring: "Wiring | None" = None
     #: The hides this view was judged by (``domain.visibility.Visibility``).
     visibility: "Visibility | None" = field(default=None, compare=False, repr=False)
+    #: Connections cut at a removed port segment. Independent of the asking
+    #: canvas (segments are judged on their own canvas); part of
+    #: ``hidden_edge_ids`` too.
+    severed: frozenset = frozenset()
+
+    def hidden_edge_ids_of_node(self, node_id: str) -> set:
+        """The hidden connections a node's OWN wiring is judged by: its own
+        canvas's hides plus the severed connections, whichever canvas this
+        view was built for. A node then has one disconnected answer, and one
+        colour, from every canvas (scistack-debug.log 2026-11-19: 12 green
+        from main, 6 red from load_filter_emg)."""
+        if self.visibility is None:
+            return set(self.hidden_edge_ids)
+        canvas = self.visibility.canvas_of_node(node_id)
+        return self.visibility.hidden_edge_ids(canvas) | set(self.severed)
 
     @property
     def drawn_list(self) -> list[dict]:
@@ -166,6 +181,7 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
         stale_port=tuple(stale_port),
         port_wiring=port_wiring,
         visibility=vis,
+        severed=frozenset(severed),
     )
 
 

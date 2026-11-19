@@ -884,6 +884,8 @@ def build_graph(
         token_for=token_for,
         is_current=identity.is_current,
         fn_parameter_names=agg.fn_parameter_names,
+        # Each node by its OWN canvas's hides: one colour from every canvas.
+        hidden_edge_ids_of=edge_view.hidden_edge_ids_of_node,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(
         agg.fn_input_params,
@@ -894,9 +896,12 @@ def build_graph(
     )
     if disconnected_wirings:
         logger.info(
-            "[pipeline] %d wiring(s) disconnected: %s",
+            "[pipeline] %d wiring(s) disconnected (fn, token, judged on canvas): %s",
             len(disconnected_wirings),
-            sorted(disconnected_wirings),
+            sorted(
+                (fn, wid, edge_view.visibility.canvas_of_node(ids.fn_node_id(fn, wid)))
+                for fn, wid in disconnected_wirings
+            ),
         )
 
     # --- Compute run states (per call site — state never blurs) ---
@@ -1689,6 +1694,19 @@ def build_graph(
             inputs_changed,
         )
 
+    # Every step's state, on EVERY canvas, before the view narrows to this one:
+    # a placement's state is rolled up from the steps inside it
+    # (scope_service.build_pipeline_nodes, run_state.placement_state).
+    fn_states = (
+        {
+            n["id"]: n["data"]["run_state"]
+            for n in nodes
+            if n.get("type") == "functionNode" and (n.get("data") or {}).get("run_state")
+        }
+        if with_run_states
+        else None
+    )
+
     logger.info("[pipeline] Filtering graph to scope %s", pipeline_id)
     from scistack_gui.domain.scope_filter import resolve_scope_view
     from scistack_gui.services.scope_service import build_pipeline_nodes
@@ -1749,7 +1767,7 @@ def build_graph(
                 "did not use",
                 marked,
             )
-    nodes += build_pipeline_nodes(db, pipeline_id)
+    nodes += build_pipeline_nodes(db, pipeline_id, fn_states)
     from scistack_gui.domain.scope_filter import warn_dangling_edges
 
     warn_dangling_edges(pipeline_id, nodes, edges)

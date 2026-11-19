@@ -77,6 +77,9 @@ class Visibility:
     positions_by_scope: dict
     #: use_id -> the canvas the placement is drawn on.
     use_parent: dict
+    #: canvas -> {connection id: [(source, target) the hide recorded]}. Which
+    #: OCCURRENCES a whole-connection hide names (:meth:`connection_hidden`).
+    edge_hide_ends: dict = field(default_factory=dict)
     _canvas_cache: dict = field(default_factory=dict, compare=False, repr=False)
 
     # ------------------------------------------------------------------
@@ -109,9 +112,12 @@ class Visibility:
                 canvas = parsed[1]
             node_hides.setdefault(canvas, set()).add(str(strip_placement(node_id)))
         edge_hides: dict[str, set] = {}
+        edge_hide_ends: dict[str, dict[str, list]] = {}
         for scope, hide in hides["edges"]:
-            edge_hides.setdefault(scope, set()).add(
-                pipeline_store._hidden_connection_id(hide, manual_nodes)
+            connection = pipeline_store._hidden_connection_id(hide, manual_nodes)
+            edge_hides.setdefault(scope, set()).add(connection)
+            edge_hide_ends.setdefault(scope, {}).setdefault(connection, []).append(
+                (hide.get("source") or "", hide.get("target") or "")
             )
         value_hides: dict[str, dict[str, set]] = {}
         for scope, name, value in hides["values"]:
@@ -125,6 +131,7 @@ class Visibility:
             manual_nodes=manual_nodes,
             positions_by_scope=layout_store._positions_by_scope(db._duck),
             use_parent={u["use_id"]: u["parent_pipeline_id"] for u in uses},
+            edge_hide_ends=edge_hide_ends,
         )
         logger.debug(
             "[visibility] loaded: node hides %s, edge hides %s, value hides %s, "
@@ -259,13 +266,40 @@ class Visibility:
         return not self.edge_hidden(edge) and self.hidden_end(edge) is None
 
     def connection_hidden(self, connection: str, source: str, target: str) -> bool:
-        """A connection traced through ports, hidden as a whole on the canvas
-        of either end (adoption's retired connections are stated on the
-        function node's canvas)."""
-        return any(
-            connection in self.edge_hides.get(self.canvas_of_node(end), ())
-            for end in (source, target)
-        )
+        """A connection traced through ports (``source`` -> ``target``), hidden
+        as a whole: a hide of *connection* on either end's canvas that names
+        the SAME occurrences, i.e. its recorded ends are on the same canvases
+        as *source* and *target*. Adoption's retired connections are recorded
+        with exactly the traced ends (``retire_rewired_edges``).
+
+        A connection id says what the ends are, not which occurrence, so a
+        removed direct line inside a submodule (from the copy of a PathInput
+        on the submodule's canvas) has the SAME id as the live route from the
+        parent's PathInput through the port. Matching by id alone dropped that
+        route and turned every step it fed red (scistack-debug.log 2026-11-19
+        13:55, load_filter_emg). A hide with no recorded ends can't be placed,
+        so it matches by id, as before.
+        """
+        source_canvas = self.canvas_of_node(source)
+        target_canvas = self.canvas_of_node(target)
+        for canvas in dict.fromkeys((source_canvas, target_canvas)):
+            if connection not in self.edge_hides.get(canvas, ()):
+                continue
+            ends = self.edge_hide_ends.get(canvas, {}).get(connection) or [("", "")]
+            for hide_source, hide_target in ends:
+                if not (hide_source and hide_target):
+                    return True
+                if (
+                    self.canvas_of_node(hide_source) == source_canvas
+                    and self.canvas_of_node(hide_target) == target_canvas
+                ):
+                    return True
+            logger.debug(
+                "[visibility] connection %s (%s -> %s) is hidden on %s only as "
+                "another occurrence's line %s; the traced route stays",
+                connection, source, target, canvas, ends[:3],
+            )
+        return False
 
     def hidden_port_ids(self) -> set[str]:
         """Input/output nodes hidden on their own canvas: removed ports."""

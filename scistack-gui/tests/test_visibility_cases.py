@@ -43,6 +43,10 @@ def _world(extra_node_hides: "dict | None" = None) -> Visibility:
         manual_nodes=w["manual_nodes"],
         positions_by_scope={},
         use_parent=w["use_parent"],
+        edge_hide_ends={
+            canvas: {conn: [tuple(pair) for pair in ends] for conn, ends in by_conn.items()}
+            for canvas, by_conn in w.get("edge_hide_ends", {}).items()
+        },
     )
 
 

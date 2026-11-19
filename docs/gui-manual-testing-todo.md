@@ -11,6 +11,26 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## One colour from every canvas, submodule status, position diagnostics (2026-11-19, unchecked)
+
+What changed: a node's colour no longer depends on which canvas you look from; a
+removed line inside a submodule no longer cuts the live route through its port; a
+submodule placement shows the worst state of the steps inside it; the log says
+where each node's position came from on every canvas refresh.
+
+1. Restart the GUI on the AbilityForLife project. Open `load_filter_emg` and
+   `load_filter_xsens`: no step is red (the data is up to date). The log has no
+   `wiring(s) disconnected` for loadDelsysEMGOneFile, filterDelsys, renameFields or
+   loadXSENSOneFile, and no `DAG propagation stalled`.
+2. On main, both placements are green (double border in green, light green fill).
+   Make a step inside one red (e.g. remove its input line): the placement turns red
+   and its tooltip names the step. Put the line back: green again.
+3. Go into a submodule and back out a few times. If main's nodes shift, search the
+   log for `positions from screen` on the refresh with `scope=main`: it lists the
+   nodes laid out fresh and the saved keys that matched no node. Send me that line.
+
+---
+
 ## Hides belong to one canvas (visibility model, 2026-11-19, unchecked)
 
 What changed: a hide applies only to the canvas it was made on

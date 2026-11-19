@@ -10,6 +10,7 @@
 import { Handle, Position } from '@xyflow/react'
 import { variableNodeText, type NodeVariants } from './variableNodeText'
 import { useExpectationBadge } from '../../context/ExpectationBadgesContext'
+import { STATE_STYLES } from './runStateStyles'
 
 export interface Variant {
   constants: Record<string, unknown>
@@ -28,14 +29,6 @@ export interface VariableNodeData {
 
 interface Props {
   data: VariableNodeData
-}
-
-const STATE_STYLES: Record<string, { border: string; background: string }> = {
-  green:   { border: '#16a34a', background: '#f0fdf4' },
-  // Yellow (not orange — orange belongs to path-input nodes): a change
-  // staged in the GUI that isn't in the database yet.
-  pending: { border: '#eab308', background: '#fefce8' },
-  red:     { border: '#dc2626', background: '#fef2f2' },
 }
 
 export default function VariableNode({ data }: Props) {

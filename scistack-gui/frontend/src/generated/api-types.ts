@@ -1653,11 +1653,18 @@ export interface CanvasRefreshRequest {
   folded?: number | null
   get_layout_ms?: number | null
   get_pipeline_ms?: number | null
+  kept?: object[] | null
   nodes?: number | null
+  placed_dagre?: string[] | null
+  placed_on_screen?: number | null
+  placed_saved?: number | null
+  returned?: object[] | null
+  saved_unmatched?: string[] | null
   scope?: string | null
   seq?: number | null
   settled?: number | null
   superseded_by?: number | null
+  suppressed?: object[] | null
   total_ms?: number | null
   trigger?: string | null
 }

@@ -23,6 +23,8 @@
   },
   "include": [
     "src/webviewRpc.ts",
+    "src/positionSources.ts",
+    "src/positionSources.test.ts",
     "src/webviewRpc.test.ts",
     "src/hooks/wsUrl.ts",
     "src/hooks/wsUrl.test.ts",

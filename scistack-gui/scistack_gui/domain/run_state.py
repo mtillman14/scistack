@@ -315,3 +315,24 @@ def cascade_unrun_producers(
             changed,
         )
     return changed
+
+
+def placement_state(member_states: "dict[str, str]") -> "tuple[str | None, list[str]]":
+    """THE state of a submodule placement: ``(state, deciding members)``.
+
+    *member_states* is ``{function node id: run_state}`` for every step inside
+    the submodule, nested submodules included. Red if any step is red, else
+    pending if any is pending, else green: the worst state wins
+    (``_STATE_ORDER``), so the placement on the parent says at a glance whether
+    anything inside needs attention. ``(None, [])`` with no step that has a
+    state (an empty submodule, or a build without run states).
+
+    The deciding members are the steps in the worst state when it is not
+    green, sorted, for the tooltip and the log.
+    """
+    if not member_states:
+        return None, []
+    worst = min(member_states.values(), key=lambda s: _STATE_ORDER.get(s, 2))
+    if worst == "green":
+        return "green", []
+    return worst, sorted(n for n, s in member_states.items() if s == worst)

@@ -23,6 +23,7 @@ import { callBackend, isVSCodeMode } from '../../api'
 import { usePlanRun } from '../../context/PlanRunContext'
 import { useScope, bindingSummary, type BindingSpec } from '../../context/ScopeContext'
 import TunablesPanel from '../Tunables/TunablesPanel'
+import { STATE_STYLES, type RunState } from './runStateStyles'
 
 export interface PipelineNodeData {
   label: string
@@ -30,6 +31,12 @@ export interface PipelineNodeData {
   binding: BindingSpec | null
   inputs: string[]
   outputs: string[]
+  /** Rolled up from every step inside, nested submodules included: red if
+   *  any is red, else pending if any is pending, else green. Absent when
+   *  nothing inside has a state (domain/run_state.placement_state). */
+  run_state?: RunState
+  /** The steps that decided a red or pending state, for the tooltip. */
+  run_state_members?: string[]
 }
 
 interface Props {
@@ -146,8 +153,20 @@ export default function PipelineNode({ id, data }: Props) {
       .catch(err => void showMessage(`Export failed: ${(err as Error).message}`))
   }, [data.child_pipeline_id, data.label])
 
+  // The double border stays (it says "submodule"); its colour and the fill
+  // say the steps' state, like a function node's.
+  const stateStyle = data.run_state ? STATE_STYLES[data.run_state] : null
+  const stateTitle = data.run_state && data.run_state !== 'green' && data.run_state_members?.length
+    ? `\n${data.run_state}: ${data.run_state_members.join(', ')}`
+    : ''
   return (
-    <div style={styles.container} title="Double-click to open this pipeline">
+    <div
+      style={{
+        ...styles.container,
+        ...(stateStyle ? { border: `2px double ${stateStyle.border}`, background: stateStyle.background } : {}),
+      }}
+      title={`Double-click to open this pipeline${stateTitle}`}
+    >
       {data.inputs.map((name, i) => (
         <Handle
           key={name}

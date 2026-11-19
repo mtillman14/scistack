@@ -339,10 +339,92 @@
           ],
           "default": null
         },
+        "kept": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "tsType": "object",
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "nodes": {
           "anyOf": [
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "placed_dagre": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "placed_on_screen": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "placed_saved": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "returned": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "tsType": "object",
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "saved_unmatched": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             {
               "type": "null"
@@ -387,6 +469,22 @@
           "anyOf": [
             {
               "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "suppressed": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "tsType": "object",
+                "type": "object"
+              },
+              "type": "array"
             },
             {
               "type": "null"

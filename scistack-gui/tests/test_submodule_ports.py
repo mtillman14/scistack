@@ -1642,3 +1642,63 @@ class TestStaleTwinOfAnOuterLine:
 
         drawn = [(e["source"], e["target"]) for e in graph["edges"] if e["source"] == use_id]
         assert (use_id, E) in drawn, drawn
+
+
+class TestRemovedInnerLineKeepsThePortRoute:
+    """scistack-debug.log 2026-11-19 13:55 (load_filter_emg all red): a direct
+    line inside the submodule from its own copy of the PathInput was removed.
+    A connection id names what the ends are, so that hide had the same id as
+    the live route from the parent's PathInput through the port, and the
+    route was dropped: every step it fed went "disconnected". A whole-
+    connection hide now applies only to the occurrences it recorded."""
+
+    def _removed_inner_copy_line(self, chain) -> str:
+        r = _extract(chain, "BCD")
+        assert r.status_code == 200, r.text
+        sub = r.json()["pipeline_id"]
+        # The user's shape, written directly so the test can't pass vacuously:
+        # a line from the submodule's own copy of A into B, removed (hidden on
+        # the submodule's canvas, with its ends recorded, as delete_edge does).
+        inner_copy = ids.placement_id(A, sub)
+        db = get_db()
+        ps.write_manual_edge(
+            db, {"id": "e_inner_copy", "source": inner_copy, "target": B, "targetHandle": "in__path"}
+        )
+        ps.hide_edge(db, "e_inner_copy", inner_copy, B, None, "in__path", sub)
+        return sub
+
+    def test_the_route_through_the_port_still_binds(self, chain):
+        from scistack_gui.services.execution_service import no_target_reason
+
+        before = _connections()
+        sub = self._removed_inner_copy_line(chain)
+        assert _connections("main") == before
+        assert _connections(sub) == before
+        assert no_target_reason(get_db(), B) is None
+
+    def test_no_step_is_disconnected_from_either_canvas(self, chain):
+        sub = self._removed_inner_copy_line(chain)
+        for scope in ("main", sub):
+            view = effective_edges(get_db(), scope, caller="test")
+            assert view.open_arguments(B) == []
+            hidden = view.hidden_edge_ids_of_node(B)
+            route = edge_connection_id(
+                {"source": A, "target": B, "targetHandle": "in__path"}, view.manual_nodes
+            )
+            # The hide exists on the submodule's canvas, but names other
+            # occurrences: the traced route is in the wiring either way.
+            assert route in hidden
+            assert route in {
+                edge_connection_id(e, view.manual_nodes) for e in view.wiring_list
+            }
+
+
+class TestPlacementRunState:
+    def test_the_placement_shows_the_worst_state_inside(self, chain):
+        """Never-run steps are red, so the placement is red and names them."""
+        use_id = _extract(chain, "BCD").json()["use_id"]
+        graph = chain.get("/api/pipeline").json()
+        node = next(n for n in graph["nodes"] if n["id"] == use_id)
+        assert node["data"].get("run_state") == "red", node["data"]
+        members = set(node["data"]["run_state_members"])
+        assert members and members <= {"fcn_b", "fcn_d"}, members

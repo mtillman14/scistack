@@ -734,9 +734,37 @@ def pipeline_interface(pipeline_id: str) -> dict:
     )
 
 
-def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
+def _steps_by_canvas(fn_states: dict, vis) -> dict[str, dict[str, str]]:
+    """{canvas: {function node id: run_state}} for the steps not hidden on
+    their own canvas (``Visibility.canvas_of_node``, the membership owner)."""
+    out: dict[str, dict[str, str]] = {}
+    for node_id, state in fn_states.items():
+        if vis.node_hidden(node_id):
+            continue
+        out.setdefault(vis.canvas_of_node(node_id), {})[node_id] = state
+    return out
+
+
+def _steps_inside(child_id: str, by_canvas: dict, children_of: dict, seen=()) -> dict[str, str]:
+    """Every step inside *child_id*, through nested placements (a placement
+    cycle is refused when placed; *seen* guards anyway)."""
+    if child_id in seen:
+        logger.warning("[scope_service] placement cycle through %s; stopped", child_id)
+        return {}
+    seen = (*seen, child_id)
+    steps = dict(by_canvas.get(child_id, {}))
+    for grandchild in children_of.get(child_id, ()):
+        steps.update(_steps_inside(grandchild, by_canvas, children_of, seen))
+    return steps
+
+
+def build_pipeline_nodes(db, scope_id: str, fn_states: "dict | None" = None) -> list[dict]:
     """The pipelineNode entries for one canvas: one per use row on
-    ``scope_id``, carrying the child's name, binding, and ports."""
+    ``scope_id``, carrying the child's name, binding, ports and, given the
+    build's step states (*fn_states*: ``{function node id: run_state}``), the
+    placement's own state rolled up from every step inside
+    (``run_state.placement_state``)."""
+    from scistack_gui.domain.run_state import placement_state
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
 
@@ -749,6 +777,12 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     vis = Visibility.load(db, manual_nodes)
     positions_by_scope = layout_store.read_positions_by_scope()
     names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
+    by_canvas: dict = {}
+    children_of: dict[str, list[str]] = {}
+    if fn_states is not None:
+        by_canvas = _steps_by_canvas(fn_states, vis)
+        for u in ps.get_pipeline_uses(db):
+            children_of.setdefault(u["parent_pipeline_id"], []).append(u["child_pipeline_id"])
 
     nodes = []
     for use in uses:
@@ -761,18 +795,35 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
             vis.hidden_node_ids(child_id),
             positions_by_scope.get(child_id),
         )
+        data = {
+            "label": names.get(child_id, child_id),
+            "child_pipeline_id": child_id,
+            "binding": use["binding"],
+            "inputs": iface["inputs"],
+            "outputs": iface["outputs"],
+        }
+        if fn_states is not None:
+            steps = _steps_inside(child_id, by_canvas, children_of)
+            state, deciding = placement_state(steps)
+            if state is not None:
+                data["run_state"] = state
+                data["run_state_members"] = [
+                    (vis.manual_nodes.get(n) or {}).get("label") or n for n in deciding
+                ]
+            logger.info(
+                "[scope_service] placement %s (%s): %s from %d step(s)%s",
+                use["use_id"],
+                data["label"],
+                state or "no state",
+                len(steps),
+                f"; {state}: {deciding}" if deciding else "",
+            )
         nodes.append(
             {
                 "id": use["use_id"],
                 "type": "pipelineNode",
                 "position": {"x": 0, "y": 0},
-                "data": {
-                    "label": names.get(child_id, child_id),
-                    "child_pipeline_id": child_id,
-                    "binding": use["binding"],
-                    "inputs": iface["inputs"],
-                    "outputs": iface["outputs"],
-                },
+                "data": data,
             }
         )
     logger.info(

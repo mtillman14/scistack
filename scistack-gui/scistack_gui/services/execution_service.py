@@ -34,6 +34,7 @@ from scistack_gui.domain.edge_view import effective_edges, run_scope
 from scistack_gui.ids import (
     FN_ID_PREFIX,
     ROOT_SCOPE,
+    fn_node_id,
     fn_nodes_prefix,
     handle_name,
 )
@@ -1274,12 +1275,13 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     )
 
 
-    # A pipeline run reports on ITS canvas: hides from that scope only.
+    # Each node is judged by its OWN canvas's hides (a pipeline run reaches
+    # into submodules), the same rule the canvas colours by.
     view = effective_edges(
         db, pipeline_id, caller=f"disconnected_report_entries({pipeline_id})"
     )
     hidden_edge_ids = set(view.hidden_edge_ids)
-    if not hidden_edge_ids:
+    if not hidden_edge_ids and not any(view.visibility.edge_hides.values()):
         return []
 
     # The SAME aggregate `build_graph` uses. A narrower hand-rolled copy sat
@@ -1307,6 +1309,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         manual_nodes=manual_nodes,
         is_current=identity.is_current,
         fn_parameter_names=agg.fn_parameter_names,
+        hidden_edge_ids_of=view.hidden_edge_ids_of_node,
     )
     if not seed:
         return []
@@ -1341,6 +1344,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
             continue
         seen_labels.add(fn)
         reason = "required input disconnected"
+        hidden_for_node = view.hidden_edge_ids_of_node(fn_node_id(fn, wid))
         for fkey, params in fn_input_params.items():
             if fkey[0] != fn:
                 continue
@@ -1352,7 +1356,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
                 parameter_names=agg.fn_parameter_names.get(fkey),
             )
             for candidate, handle in candidates.items():
-                if candidate in hidden_edge_ids and (fn, wid, handle) not in manual_index:
+                if candidate in hidden_for_node and (fn, wid, handle) not in manual_index:
                     reason = f"input '{handle_name(handle)}' disconnected"
                     break
         entries.append(_entry(fn, reason))

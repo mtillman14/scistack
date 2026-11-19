@@ -366,7 +366,17 @@ class CanvasRefreshRequest(BaseModel):
     settled: int | None = None
     folded: int | None = None
     dropped: list[dict] | None = None
+    # Sent by canvasRefreshLog all along, dropped here until 2026-11-19 (the
+    # model ignores unknown fields), so the kept/left-out lines never logged.
+    kept: list[dict] | None = None
+    suppressed: list[dict] | None = None
+    returned: list[dict] | None = None
     discarded: str | None = None
+    # Where node positions came from (frontend positionSources.ts).
+    placed_on_screen: int | None = None
+    placed_saved: int | None = None
+    placed_dagre: list[str] | None = None
+    saved_unmatched: list[str] | None = None
 
 
 class ScopeNavigationRequest(BaseModel):

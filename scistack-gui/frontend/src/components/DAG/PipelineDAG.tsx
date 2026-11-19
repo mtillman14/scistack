@@ -57,6 +57,7 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
+import { positionSources } from '../../positionSources'
 import { CanvasRefreshLog, edgeMatchKey, nodeMatchKey, overlayEdges, overlayNodes } from './canvasRefreshLog'
 import { callBackend, isVSCodeMode, pageUndo, seedUndo } from '../../api'
 import { newChange, type Change } from '../../undo'
@@ -251,6 +252,16 @@ export default function PipelineDAG() {
     const layoutData = await callBackend('get_layout', { pipeline_id: currentScope }) as Record<string, unknown>
     const tLayout = performance.now()
     if (discardedAfter(tPipeline - refresh.startedAt, tLayout - tPipeline)) return
+    const savedPositions =
+      (layoutData.positions ?? layoutData) as Record<string, { x: number; y: number }>  // handle both new and legacy format
+    // Diagnostics (2026-11-19, "main's nodes shift after leaving a submodule"):
+    // where each node's position comes from below. A node laid out fresh by
+    // dagre on a scope switch, or a saved key no node has, is the suspect.
+    const placement = positionSources(
+      data.nodes.map(n => n.id),
+      savedPositions,
+      loadedScope.current !== currentScope ? [] : getNodes().map(n => n.id),
+    )
     const report = refreshLog.current.apply(
       refresh,
       {
@@ -265,9 +276,7 @@ export default function PipelineDAG() {
       { get_pipeline_ms: tPipeline - refresh.startedAt, get_layout_ms: tLayout - tPipeline },
       tLayout,
     )
-    callBackend('report_canvas_refresh', { ...report }).catch(() => {})
-    const savedPositions =
-      (layoutData.positions ?? layoutData) as Record<string, { x: number; y: number }>  // handle both new and legacy format
+    callBackend('report_canvas_refresh', { ...report, ...placement }).catch(() => {})
 
     // Constant node values already carry backend-computed `checked` (from
     // persisted hide/unhide-constant-value state — see

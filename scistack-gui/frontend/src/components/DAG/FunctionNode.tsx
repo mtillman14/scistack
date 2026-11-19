@@ -29,6 +29,7 @@ import type { OptionalPort } from './inputPorts'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { describeOutputHandle } from '../Sidebar/columnGroups'
 import WhereChips, { type WhereChip } from './WhereChips'
+import { STATE_STYLES } from './runStateStyles'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -111,13 +112,6 @@ function describeColumns(sel: { columns: string[]; iterate: boolean; groups?: un
   return `${n} columns`
 }
 
-const STATE_STYLES: Record<string, { border: string; background: string }> = {
-  green:   { border: '#16a34a', background: '#f0fdf4' },
-  // Yellow (not orange — orange belongs to path-input nodes): a change
-  // staged in the GUI that isn't in the database yet.
-  pending: { border: '#eab308', background: '#fefce8' },
-  red:     { border: '#dc2626', background: '#fef2f2' },
-}
 
 const VARIANT_DOT: Record<string, string> = {
   green:   '#16a34a',

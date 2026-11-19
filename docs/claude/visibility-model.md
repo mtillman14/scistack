@@ -20,7 +20,7 @@ decides, so one edge gets the same answer whichever canvas asks.
 | Shared entity (variable, Parameter, PathInput, Merge) | `::canvas` suffix; a bare id takes the canvas of the other end of the edge | its bare id is hidden on that canvas |
 | Placement (`use_…`) | its parent canvas | — |
 | Stored edge | the canvas of its ends | its own id or connection id is hidden there, or an end is hidden there |
-| Connection traced through ports | none: it is made of segments | a segment is not live; or the whole connection is hidden on either end's canvas (adoption retires a rewired node's old connections on its canvas) |
+| Connection traced through ports | none: it is made of segments | a segment is not live; or a whole-connection hide on either end's canvas names the SAME occurrences (its recorded ends are on the route's ends' canvases; adoption retires a rewired node's old connections exactly so). A removed direct line from the submodule's own copy of a PathInput has the same connection id as the live route from the parent's PathInput, but other occurrences, so it does not cut the route (2026-11-19 13:55, load_filter_emg) |
 | Parameter value (checkbox) | the canvas of the Parameter occurrence that feeds the argument, traced through ports | that canvas hid the value |
 | Hidden combo | global by design: a `call_id` is one computation everywhere | always |
 
@@ -73,6 +73,21 @@ Before 2026-11-19 about fifteen readers each picked whose hides applied:
 
 Patching each reader never converged; one owner with no asking canvas removes
 the choice.
+
+## One colour from every canvas
+
+A node's "disconnected" answer, and so its colour, is judged by its own
+canvas's hides plus severed connections (`EdgeView.hidden_edge_ids_of_node`,
+passed to `graph_builder.hidden_wirings` by the graph build and the pipeline
+run's skip report). Before 2026-11-19 the asking canvas's hides judged every
+node: the same 12 nodes were 12 green from main and 6–8 red from inside a
+submodule.
+
+A submodule placement shows the worst state of every step inside it, nested
+submodules included (`run_state.placement_state`, applied by
+`scope_service.build_pipeline_nodes` from the build's step states before the
+view narrows to one canvas; `PipelineNode.tsx` draws it with the shared
+`runStateStyles.ts`).
 
 ## When nothing can run
 

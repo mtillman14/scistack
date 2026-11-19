@@ -3350,9 +3350,15 @@ def hidden_wirings(
     *,
     is_current,
     fn_parameter_names: "dict | None" = None,
+    hidden_edge_ids_of=None,
 ) -> set[tuple[str, str]]:
     """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
+
+    *hidden_edge_ids_of(node_id)*, when given, is the set each node is judged
+    by (``EdgeView.hidden_edge_ids_of_node``: its own canvas's hides), in place
+    of the one *hidden_edge_ids* for every node. With one set, a node's colour
+    depended on which canvas asked (docs/claude/visibility-model.md).
 
     The second element is the NODE TOKEN, not the wiring — the two coincide
     unless the node was rewired and run (``identity_token`` /
@@ -3375,7 +3381,7 @@ def hidden_wirings(
     disconnected until every one of them is covered (partial reconnection
     doesn't make it runnable) — see manual_edge_handle_index.
     """
-    if not hidden_edge_ids:
+    if not hidden_edge_ids and hidden_edge_ids_of is None:
         return set()
     manual_index = manual_edge_handle_index(manual_edges)
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
@@ -3404,7 +3410,12 @@ def hidden_wirings(
             const_names=fn_constants.get(fkey, set()),
             parameter_names=(fn_parameter_names or {}).get(fkey),
         )
-        hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_edge_ids}
+        hidden_here = (
+            hidden_edge_ids_of(fn_node_id(fn, wid))
+            if hidden_edge_ids_of is not None
+            else hidden_edge_ids
+        )
+        hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_here}
         if not hidden_handles:
             continue
         uncovered = [h for h in hidden_handles if (fn, wid, h) not in manual_index]

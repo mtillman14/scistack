@@ -71,6 +71,34 @@ def _when(confirm: Any) -> str:
     )
 
 
+def _log_position_sources(seq: int, scope: str, params: dict[str, Any]) -> None:
+    """Where the refresh took each node's position (frontend positionSources.ts).
+
+    A node laid out fresh by dagre has no saved key matching its id, so its
+    place depends on the rest of the graph: the suspect when a canvas's nodes
+    shift after leaving a submodule (2026-11-19). WARN when any node was laid
+    out fresh while saved keys went unmatched (an id/key mismatch), INFO
+    otherwise.
+    """
+    if params.get("placed_saved") is None and params.get("placed_dagre") is None:
+        return
+    dagre = [str(i)[:200] for i in (params.get("placed_dagre") or [])]
+    unmatched = [str(k)[:200] for k in (params.get("saved_unmatched") or [])]
+    log = logger.warning if dagre and unmatched else logger.info
+    log(
+        "[client] canvas refresh #%d (scope=%s): positions from screen %d, saved "
+        "%d, laid out fresh %d %s; saved keys matching no node %d %s",
+        seq,
+        scope,
+        _int(params.get("placed_on_screen"), 0),
+        _int(params.get("placed_saved"), 0),
+        len(dagre),
+        dagre[:20],
+        len(unmatched),
+        unmatched[:20],
+    )
+
+
 def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
     """Log one applied canvas refresh (and any item it wiped).
 
@@ -130,6 +158,7 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
         if superseded_by is not None
         else "",
     )
+    _log_position_sources(seq, scope, params)
     for d in kept:
         logger.info(
             "[client] canvas refresh #%d (%s) kept the just-placed %s %s on screen "
