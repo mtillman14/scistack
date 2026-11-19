@@ -2534,11 +2534,13 @@ def visible_manual_edges(
     hidden_edge_ids: "set[str] | frozenset[str]",
     manual_nodes: "dict[str, dict] | None" = None,
 ) -> list[dict]:
-    """The stored manual edges the canvas can draw: every row that
+    """The stored manual edges ONE canvas's hides leave: every row that
     :func:`manual_edge_is_hidden` does not hide.
 
-    Applied in ONE place: `edge_view.effective_edges`, which every reader
-    uses (tests/test_edge_view_guard.py). The binding functions
+    Single-canvas form only. Readers get their edges from
+    `edge_view.effective_edges` (tests/test_edge_view_guard.py), which judges
+    each edge on its own canvas through `domain.visibility` with the same
+    matching rule (:func:`manual_edge_is_hidden`). The binding functions
     (manual_edge_handle_index, edge_resolver.resolve_function_edges and
     friends) take the view's edges and filter nothing themselves. They each
     used to filter too, the second copy added after the index was fixed while

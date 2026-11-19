@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from scifor import FOR_EACH_OPTIONS, OptionSpec
+from scifor.failures import ActionableError
 
 from scistack_gui.services.run_failures import (
     ON_ERROR_KEY,
@@ -17,6 +18,12 @@ from scistack_gui.services.run_failures import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class NoRunnableStepError(ActionableError, ValueError):
+    """No step of a MATLAB pipeline has anything to run. The message names
+    each step and why (``execution_service._wiring_blocker``), so it is about
+    the user's wiring, not a SciStack bug. A ValueError for existing callers."""
 
 
 # ---------------------------------------------------------------------------
@@ -1870,18 +1877,21 @@ def generate_matlab_pipeline_command(
         fn_name = step["function_name"]
         variants = step.get("variants")
         if not variants:
-            skip_comments.append(
-                f"% SKIPPED: '{fn_name}' — no runnable target derived "
-                "(never run and no output wiring)"
-            )
+            why = step.get("why_none") or "never run and no output wiring"
+            skip_comments.append(f"% SKIPPED: '{fn_name}' — {why}")
             continue
         all_var_types.update(collect_var_types(variants))
         resolved_steps.append((fn_name, _group_variants(variants), step))
 
     if not resolved_steps:
-        raise ValueError(
-            f"generate_matlab_pipeline_command: no runnable MATLAB step in "
-            f"pipeline {pipeline_id!r} — nothing to register"
+        reasons = "; ".join(
+            f"{step['function_name']}: {step.get('why_none') or 'nothing to run'}"
+            for step in steps
+        )
+        raise NoRunnableStepError(
+            f"No step in this pipeline can run. {reasons}."
+            if steps
+            else "No MATLAB step in this pipeline. Nothing to run."
         )
 
     lines.extend(_unresolvable_var_type_lines(all_var_types))

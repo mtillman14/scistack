@@ -11,6 +11,29 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## Hides belong to one canvas (visibility model, 2026-11-19, unchecked)
+
+What changed: a hide applies only to the canvas it was made on
+(`docs/claude/visibility-model.md`). A copy hidden inside a submodule no longer
+cuts the parent's lines into its ports.
+
+1. Restart the GUI on the AbilityForLife project. Click ▶ Run on the
+   `load_filter_xsens` placement. The MATLAB script runs both steps. The log has
+   no "no runnable MATLAB step"; `[execution] … no targets` does not appear for
+   `loadXSENSOneFile` or `filterXSENS`.
+2. On a hypothesis tab, remove a line that main also draws. Main still draws it and
+   still runs.
+3. Untick one value on a Parameter on main that feeds a submodule port. Run the
+   submodule: that value does not run.
+4. Remove the outer line into a submodule port and run the submodule. The error
+   names the step and says the port has nothing connected; it does not say
+   "likely a SciStack bug".
+5. Known follow-up: the EMG submodules' outer lines from `runConfig` point at the old
+   port `in__glue_delsysEMG_config` (renamed in v0.4.10), so they bind nothing. Redraw
+   them onto the renamed port.
+
+---
+
 ## Extract leaves adapter glue outside (2026-11-19, unchecked)
 
 What changed: a glue node goes into a new submodule only when what feeds it and

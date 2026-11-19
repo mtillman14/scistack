@@ -993,6 +993,39 @@ def hidden_node_ids(db, pipeline_id: str | None) -> set[str]:
     return out
 
 
+def hides_by_scope(db) -> dict:
+    """Every hide statement with the canvas it was stated on, in one read:
+    ``{"nodes": [(scope, ref)], "edges": [(scope, hide row)],
+    "values": [(scope, Parameter name, value)], "combos": [ref]}``.
+
+    Raw facts only. What they mean across canvases is
+    ``domain.visibility.Visibility``'s to say (docs/claude/visibility-model.md).
+    """
+    out: dict = {"nodes": [], "edges": [], "values": [], "combos": []}
+    for s in load_statements(db, aspect=ASPECT_HIDDEN):
+        if s.key == HIDDEN_NODE_KEY:
+            out["nodes"].append((s.scope, s.subject_ref))
+        elif s.key == HIDDEN_COMBO_KEY:
+            out["combos"].append(s.subject_ref)
+        elif s.key == HIDDEN_EDGE_KEY:
+            v = s.value or {}
+            out["edges"].append(
+                (
+                    s.scope,
+                    {
+                        "edge_id": s.subject_ref,
+                        "source": v.get("source", ""),
+                        "target": v.get("target", ""),
+                        "source_handle": v.get("source_handle"),
+                        "target_handle": v.get("target_handle"),
+                    },
+                )
+            )
+        elif s.subject_kind == SUBJECT_PARAMETER and s.key:
+            out["values"].append((s.scope, s.subject_ref, s.key))
+    return out
+
+
 def hide_combo(db, node_id: str, function_name: str, variant_key: dict) -> None:
     put_statements(
         db,

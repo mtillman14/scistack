@@ -150,7 +150,9 @@ use the connection_id as their id.
 
 **Hide.** Removing something from view without deleting it (the project's
 never-delete rule). Removing a history edge stores a hide of its connection;
-removing a node stores a hide of its id. Hides are per scope.
+removing a node stores a hide of its id. Hides are per scope: a hide belongs
+to an occurrence on one canvas, and every reader asks `domain.visibility`
+which hides apply ([visibility-model.md](visibility-model.md)).
 
 **Graduation.** Today, when a hand-placed node turns out to be "the same" as a
 derived node, the build deletes the hand-placed row and moves its edges,

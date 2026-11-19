@@ -54,6 +54,10 @@ connections as well.
 
 ### Hides match by connection: `pipeline_store._hidden_connection_id`
 
+*Which canvas's hides apply to an edge is `domain.visibility`'s rule: an edge is
+judged on its own canvas, never the asking one. See
+[visibility-model.md](visibility-model.md).*
+
 - **Stored with endpoints and a port** (every GUI input-edge hide; the frontend
   has sent both since 2026-08-09): it matches the connection of those.
 - **Otherwise** (an API delete without a port, or an output edge): it matches

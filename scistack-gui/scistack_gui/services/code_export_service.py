@@ -569,10 +569,14 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
 
     pending_consts = ps.get_pending_constants(db)
 
+    from scistack_gui.domain.visibility import Visibility
+
+    vis = Visibility.load(db)
     steps: list = []
     for pid in pipeline_ids:
-        hidden_ids = ps.get_hidden_node_ids(db, pid)  # this canvas's hides
         for node_id, fn_label in _scope_function_node_ids(db, pid):
+            # The node's own canvas's hides (domain.visibility, the one owner).
+            hidden_ids = vis.hidden_node_ids(vis.canvas_of_node(node_id))
             targets = apply_pending_overrides(
                 derive_target_for_node(db, node_id), pending_consts
             )
@@ -598,6 +602,9 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
                         fn_label,
                         {
                             **target,
+                            # Whose unticked Parameter values apply
+                            # (build_run_inputs, domain.visibility).
+                            "node_id": node_id,
                             "step": step_name_of(db, node_id),
                             "on_error": on_error_from_config(
                                 (ps.get_node_config(db, node_id) or {}).get("runOptions")
@@ -689,7 +696,7 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
     lines = [_matlab_header(db), ""]
     for i in order:
         fn_label, target, options = steps[i]
-        inputs = build_run_inputs(target, fn_label, db)
+        inputs = build_run_inputs(target, fn_label, db, node_id=target.get("node_id"))
         glue = build_run_glue(target, fn_label)
         output_cls = registry.get_variable_class(target["output_type"])
         inputs_src = _matlab_struct(inputs)

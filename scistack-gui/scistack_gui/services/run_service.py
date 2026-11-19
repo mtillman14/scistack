@@ -49,7 +49,6 @@ from scistack_gui.project.step_names import step_name_of
 from scistack_gui.services.run_failures import RunFailures, on_error_from_config
 from scistack_gui.services import where_service
 from scistack_gui.services.run_report_service import matlab_reports_since, reports_wire
-from scistack_gui.stores import intent_store
 from scistack_gui.stores import pipeline_store as _ps
 from scistack_gui.runtime.ws_hub import push_message
 
@@ -547,9 +546,16 @@ def _derive_targets(run: _SingleRun) -> "list[dict] | None":
     )
     if fn_variants:
         return fn_variants
-    from scistack_gui.services.execution_service import disconnected_reason
+    from scistack_gui.services.execution_service import (
+        disconnected_reason,
+        no_target_reason,
+    )
 
-    reason = disconnected_reason(db, function_name, node_id)
+    # A node names its own blocker (a port with nothing connected, a removed
+    # line, no output); a run by name falls back to the hidden-edge check.
+    reason = (no_target_reason(db, node_id) if node_id else None) or disconnected_reason(
+        db, function_name, node_id
+    )
     error = (
         f"'{function_name}' can't run: {reason}."
         if reason
@@ -660,11 +666,17 @@ def _drop_hidden_targets(
     exclude a specific already-hidden Cartesian-product row from actually
     running, using THIS chokepoint's own distribute/as_table so a hidden
     pending combo's stored call_id stays consistent with what would actually
-    execute here. The hides of the canvas the click came from; a run with no
-    node id (the name-scoped fallback) still sees every scope's."""
+    execute here. The hides of the node's own canvas (domain.visibility); a
+    run with no node id (the name-scoped fallback) has no canvas and sees
+    every canvas's."""
+    from scistack_gui.domain.visibility import Visibility
+
     db, node_id = run.db, run.node_id
-    hidden_ids = _ps.get_hidden_node_ids(
-        db, intent_store.scope_of_node(db, node_id) if node_id else None
+    vis = Visibility.load(db)
+    hidden_ids = (
+        vis.hidden_node_ids(vis.canvas_of_node(node_id))
+        if node_id
+        else vis.hidden_node_ids_any_canvas()
     )
     before = len(unique_targets)
     kept = filter_hidden_targets(
@@ -787,7 +799,7 @@ def _build_target_call(
         run_output_types,
     )
 
-    inputs = build_run_inputs(v, function_name)
+    inputs = build_run_inputs(v, function_name, node_id=node_id)
     # Glue is a property of this step's input binding, resolved right beside
     # the inputs it reshapes — never a step, never a run of its own.
     glue_arg = build_run_glue(v, function_name) or None

@@ -97,6 +97,7 @@ Rules:
 - [Submodule ports](submodule-ports.md) — `submodule-ports.md`
 - [The canvas as a document, explained from the ground up](canvas-as-document-explained.md) — `canvas-as-document-explained.md`
 - [The edge model: one id, one view, one port per argument](edge-model.md) — `edge-model.md`
+- [Visibility: what is hidden, on which canvas](visibility-model.md) — `visibility-model.md`
 - [Undo / redo in the GUI](undo-redo.md) — `undo-redo.md`
 - [VS Code Extension: Server Startup Path and Failure Diagnostics](gui-extension-startup-path.md) — `gui-extension-startup-path.md`
 - [Which node supplies a variant axis — three names that look like one](variant-axis-node-binding.md) — `variant-axis-node-binding.md`

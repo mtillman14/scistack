@@ -419,8 +419,11 @@ def check_new_port(db, node_type: str, label: str, pipeline_id: str) -> None:
             "Input and output nodes belong inside a submodule. This canvas is a "
             "hypothesis, which nothing places, so its ports could never connect."
         )
+    from scistack_gui.domain.visibility import Visibility
+
+    manual_nodes = ps.get_manual_nodes(db)
     existing = ports.ports_of_scope(
-        pipeline_id, ps.get_manual_nodes(db), ps.get_hidden_node_ids(db, pipeline_id)
+        pipeline_id, manual_nodes, Visibility.load(db, manual_nodes).hidden_node_ids(pipeline_id)
     )
     direction = "inputs" if node_type == ports.INPUT_PORT_NODE else "outputs"
     if label in existing[direction]:
@@ -719,11 +722,14 @@ def pipeline_interface(pipeline_id: str) -> dict:
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.runtime.db import get_db
 
+    from scistack_gui.domain.visibility import Visibility
+
     db = get_db()
+    manual_nodes = ps.get_manual_nodes(db)
     return ports.ports_of_scope(
         pipeline_id,
-        ps.get_manual_nodes(db),
-        ps.get_hidden_node_ids(db, pipeline_id),
+        manual_nodes,
+        Visibility.load(db, manual_nodes).hidden_node_ids(pipeline_id),
         layout_store.read_positions_by_scope().get(pipeline_id),
     )
 
@@ -737,17 +743,22 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     uses = ps.get_pipeline_uses(db, scope_id)
     if not uses:
         return []
+    from scistack_gui.domain.visibility import Visibility
+
     manual_nodes = ps.get_manual_nodes(db)
+    vis = Visibility.load(db, manual_nodes)
     positions_by_scope = layout_store.read_positions_by_scope()
     names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
 
     nodes = []
     for use in uses:
         child_id = use["child_pipeline_id"]
+        # A removed port is hidden on the child's canvas, for every placement
+        # (user decision D3, 2026-11-19).
         iface = ports.ports_of_scope(
             child_id,
             manual_nodes,
-            ps.get_hidden_node_ids(db, child_id),
+            vis.hidden_node_ids(child_id),
             positions_by_scope.get(child_id),
         )
         nodes.append(

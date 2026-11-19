@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "about": [
+    "THE visibility rule, as data. Owner: scistack_gui.domain.visibility.Visibility.",
+    "Read by scistack-gui/tests/test_visibility_cases.py. Concept: docs/claude/visibility-model.md.",
+    "",
+    "One world: canvas main places submodule 'sub' (use_1); 'hyp' is a hypothesis.",
+    "Inside sub, the extract left hidden copies of the PathInput, the output",
+    "variable and the Parameter that stayed outside on main (the 2026-11-19 XSENS",
+    "shape). hyp hid its own occurrence of var__Raw.",
+    "",
+    "Rule: a hide belongs to an occurrence on one canvas; an edge is judged on",
+    "its own canvas (the canvas of its ends), never the asking canvas."
+  ],
+  "world": {
+    "manual_nodes": {
+      "fn__load__t1": {"type": "functionNode", "label": "load", "pipeline_id": "sub"},
+      "fn__filter__t2": {"type": "functionNode", "label": "filter", "pipeline_id": "sub"},
+      "fn__main__t3": {"type": "functionNode", "label": "main_step", "pipeline_id": "main"},
+      "fn__hyp__t4": {"type": "functionNode", "label": "hyp_step", "pipeline_id": "hyp"},
+      "inputPortNode__xsens_path__p1": {"type": "inputPortNode", "label": "xsens_path", "pipeline_id": "sub"},
+      "outputPortNode__Filtered__p2": {"type": "outputPortNode", "label": "Filtered", "pipeline_id": "sub"},
+      "pathInput__P": {"type": "pathInputNode", "label": "P", "pipeline_id": "sub"},
+      "var__Filtered": {"type": "variableNode", "label": "Filtered", "pipeline_id": "sub"},
+      "var__Raw": {"type": "variableNode", "label": "Raw", "pipeline_id": "main"},
+      "param__Fs": {"type": "parameterNode", "label": "Fs", "pipeline_id": "main"}
+    },
+    "use_parent": {"use_1": "main"},
+    "node_hides": {
+      "sub": ["pathInput__P", "var__Filtered", "param__Fs"],
+      "hyp": ["var__Raw"]
+    },
+    "edge_hides": {
+      "main": ["e_removed_on_main"],
+      "sub": ["conn_retired"]
+    },
+    "value_hides": {
+      "main": {"Fs": ["100"]},
+      "sub": {"Fs": ["200"]}
+    },
+    "combos": ["fn__combo__abc"]
+  },
+  "cases": [
+    {
+      "name": "the parent's PathInput line into a port is live although the copy inside is hidden",
+      "ask": "edge_live",
+      "edge": {"id": "o1", "source": "pathInput__P::main", "target": "use_1", "targetHandle": "in__xsens_path"},
+      "expect": true
+    },
+    {
+      "name": "the parent's line out of a port to its variable is live although the copy inside is hidden",
+      "ask": "edge_live",
+      "edge": {"id": "o2", "source": "use_1", "sourceHandle": "out__Filtered", "target": "var__Filtered::main"},
+      "expect": true
+    },
+    {
+      "name": "a line inside the submodule from its hidden copy is not live",
+      "ask": "edge_live",
+      "edge": {"id": "i1", "source": "pathInput__P", "target": "fn__load__t1", "targetHandle": "in__path"},
+      "expect": false
+    },
+    {
+      "name": "a hide in a hypothesis does not reach main",
+      "ask": "edge_live",
+      "edge": {"id": "m1", "source": "var__Raw::main", "target": "fn__main__t3", "targetHandle": "in__x"},
+      "expect": true
+    },
+    {
+      "name": "the hypothesis's own occurrence is hidden there",
+      "ask": "edge_live",
+      "edge": {"id": "h1", "source": "var__Raw::hyp", "target": "fn__hyp__t4", "targetHandle": "in__x"},
+      "expect": false
+    },
+    {
+      "name": "a bare shared end takes the canvas of the definite end (main), so the hypothesis hide does not apply",
+      "ask": "edge_live",
+      "edge": {"id": "m2", "source": "var__Raw", "target": "fn__main__t3", "targetHandle": "in__y"},
+      "expect": true
+    },
+    {
+      "name": "an edge removed on main is hidden on main",
+      "ask": "edge_live",
+      "edge": {"id": "e_removed_on_main", "source": "var__Raw::main", "target": "fn__main__t3", "targetHandle": "in__z"},
+      "expect": false
+    },
+    {
+      "name": "the same edge id on another canvas is not hidden by main's hide",
+      "ask": "edge_live",
+      "edge": {"id": "e_removed_on_main", "source": "inputPortNode__xsens_path__p1", "target": "fn__load__t1", "targetHandle": "in__path"},
+      "expect": true
+    },
+    {
+      "name": "a node hidden on sub is hidden there",
+      "ask": "node_hidden_on",
+      "canvas": "sub", "node": "var__Filtered",
+      "expect": true
+    },
+    {
+      "name": "the same node on main is not",
+      "ask": "node_hidden_on",
+      "canvas": "main", "node": "var__Filtered",
+      "expect": false
+    },
+    {
+      "name": "a placed id names its own canvas, whoever asks",
+      "ask": "node_hidden_on",
+      "canvas": "main", "node": "var__Filtered::sub",
+      "expect": true
+    },
+    {
+      "name": "hidden combos are global by design",
+      "ask": "node_hidden_on",
+      "canvas": "hyp", "node": "fn__combo__abc",
+      "expect": true
+    },
+    {
+      "name": "a removed port is hidden on its own canvas, for every placement",
+      "ask": "hidden_port_ids",
+      "extra_node_hides": {"sub": ["outputPortNode__Filtered__p2"]},
+      "expect": ["outputPortNode__Filtered__p2"]
+    },
+    {
+      "name": "a step inside the submodule takes unticked values from the Parameter on main that feeds it",
+      "ask": "hidden_values_for_node",
+      "node": "fn__filter__t2",
+      "wiring": [{"source": "param__Fs::main", "target": "fn__filter__t2", "targetHandle": "in__Fs"}],
+      "expect": {"Fs": ["100"]}
+    },
+    {
+      "name": "with no Parameter edge, the node's own canvas's values apply",
+      "ask": "hidden_values_for_node",
+      "node": "fn__filter__t2",
+      "wiring": [],
+      "expect": {"Fs": ["200"]}
+    },
+    {
+      "name": "a traced connection retired on the step's canvas is hidden",
+      "ask": "connection_hidden",
+      "connection": "conn_retired", "source": "pathInput__P::main", "target": "fn__load__t1",
+      "expect": true
+    },
+    {
+      "name": "the same connection id touching no canvas that hid it is not",
+      "ask": "connection_hidden",
+      "connection": "conn_retired", "source": "var__Raw::main", "target": "fn__hyp__t4",
+      "expect": false
+    }
+  ]
+}

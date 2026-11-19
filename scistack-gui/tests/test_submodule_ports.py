@@ -1136,12 +1136,16 @@ class TestOutputToAVariable:
         use_id = self._submodule(client)
         client.delete("/api/edges/e_var_port")
         view = effective_edges(get_db(), "main", caller="test")
-        assert "e_var_port" in {e["id"] for e in view.drawn}  # hidden on `sub` only
+        # Judged on its own canvas (domain.visibility), whichever canvas asks.
+        assert "e_var_port" not in {e["id"] for e in view.drawn}
+        raw = next(e for e in ps.get_manual_edges(get_db()) if e["id"] == "e_var_port")
         outer = {"id": "e_outer", "source": use_id, "target": "var_out",
                  "sourceHandle": "out__VarX", "targetHandle": None}
 
+        # A caller's list may still carry the removed segment: the trace drops it.
         wiring = trace_through_ports(
-            get_db(), list(view.drawn) + [outer], view.manual_nodes, ps.get_pipeline_uses(get_db())
+            get_db(), list(view.drawn) + [raw, outer], view.manual_nodes,
+            ps.get_pipeline_uses(get_db()),
         )
 
         assert wiring.illegal == ()
@@ -1554,3 +1558,60 @@ class TestRemovingAPortNode:
         assert "o_in" not in self._drawn_on_main()
         assert _undo(wired, "rm_port")["status"] == "ok"
         assert "o_in" in self._drawn_on_main()
+
+
+class TestHiddenCopyInsideTheSubmodule:
+    """scistack-debug.log 2026-11-19 12:38:43: running a submodule whose
+    source and sink stayed on the parent, with hidden copies of them on the
+    submodule's canvas. The copies' hides cut the parent's lines into the
+    ports, so loadXSENSOneFile lost its file input, filterXSENS its output, and
+    the run said "no runnable MATLAB step". A hide belongs to its own canvas
+    (docs/claude/visibility-model.md), so the parent's lines stay live
+    whichever canvas asks."""
+
+    def _xsens_shape(self, chain) -> str:
+        r = _extract(chain, "BCD")
+        assert r.status_code == 200, r.text
+        sub = r.json()["pipeline_id"]
+        assert ps.manual_node_row(get_db(), A)[1] == "main"  # A and E stayed outside
+        ps.hide_node(get_db(), A, sub)
+        ps.hide_node(get_db(), E, sub)
+        return sub
+
+    def test_the_parent_lines_into_its_ports_stay_live(self, chain):
+        before = _connections()
+        sub = self._xsens_shape(chain)
+        assert _connections(sub) == before, "asked from inside the submodule"
+        assert _connections("main") == before, "asked from the parent"
+
+    def test_its_steps_still_have_something_to_run(self, chain):
+        from scistack_gui.services.execution_service import no_target_reason
+
+        self._xsens_shape(chain)
+        assert no_target_reason(get_db(), B) is None
+        assert no_target_reason(get_db(), D) is None
+
+    def test_a_hide_of_the_line_on_the_parent_still_disconnects(self, chain):
+        """The other direction is unchanged: removing the outer line on main
+        disconnects the step inside (TestRemovingALine), now judged on main."""
+        from scistack_gui.services.execution_service import no_target_reason
+
+        use_id = _extract(chain, "BCD").json()["use_id"]
+        outer = next(e for e in ps.get_manual_edges(get_db()) if e["target"] == use_id)
+        assert chain.delete(f"/api/edges/{outer['id']}").status_code == 200
+        reason = no_target_reason(get_db(), B)
+        assert reason is not None and "port" in reason, reason
+
+
+class TestNoTargetReasons:
+    def test_an_open_port_is_named_before_the_hidden_line_it_replaced(self, chain):
+        """_wiring_blocker checks the port with nothing connected first: that is
+        the thing to fix, not the hidden inner edge."""
+        from scistack_gui.services.execution_service import no_target_reason
+
+        sub = _extract(chain, "BCD").json()["pipeline_id"]
+        use_id = next(u["use_id"] for u in ps.get_pipeline_uses(get_db()) if u["child_pipeline_id"] == sub)
+        outer = next(e for e in ps.get_manual_edges(get_db()) if e["target"] == use_id)
+        chain.delete(f"/api/edges/{outer['id']}")
+        reason = no_target_reason(get_db(), B)
+        assert reason.startswith("argument(s)") and "nothing is connected" in reason, reason

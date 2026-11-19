@@ -1092,7 +1092,8 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         )
         manual_nodes = view.manual_nodes
         manual_edges = view.wiring_list
-        hidden_ids = pipeline_store.get_hidden_node_ids(db, scope_id)
+        # The node's own canvas's hides (domain.visibility, the one owner).
+        hidden_ids = view.visibility.hidden_node_ids(view.visibility.canvas_of_node(node_id))
 
         # This node's saved run options. A pipeline run has no live canvas
         # state to read -- it runs nodes the user never selected -- so the
@@ -1159,10 +1160,20 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 fn_label, manual_edges, manual_nodes
             )
 
+        why_none = None
+        if not unique_targets:
+            from scistack_gui.services.execution_service import no_target_reason
+
+            why_none = no_target_reason(db, node_id) or (
+                "every target was hidden, or it has never run and has no output line"
+            )
         steps.append(
             {
                 "function_name": fn_label,
                 "variants": unique_targets,
+                # Why nothing runs, in words, for the script comment and the
+                # error when no step is left (execution_service._wiring_blocker).
+                "why_none": why_none,
                 "schema_filter": params.get("schema_filter"),
                 # Per NODE from its stored level, like the Python pipeline
                 # route — not the pipeline request's one value for every step.

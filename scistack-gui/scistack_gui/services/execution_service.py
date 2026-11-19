@@ -600,20 +600,21 @@ def _attach_stated_inputs(
     )
 
 
-def _hidden_constant_values(db, pipeline_id: "str | None" = None) -> dict[str, set[str]]:
-    """{const_name: {hidden values}} from the ``ConstantNode.tsx`` checkbox
-    state — grouped once per derivation call so ``filter_hidden_
-    constant_value_targets`` (a pure content-match, no call_id hashing) can
-    check every target in one pass. A run from a canvas passes that canvas
-    (``derive_target_for_node`` reads it off the node id); only the
-    name-scoped fallback (``derive_fn_targets``, no node) still unions every
-    scope's hides."""
-    from scistack_gui.stores import pipeline_store
+def hidden_values_for_node(db, node_id: "str | None") -> dict[str, set[str]]:
+    """{declared Parameter name: {hidden values}} (the ``ConstantNode.tsx``
+    checkbox) for a run of *node_id*: each Parameter's unticked values come
+    from the canvas of the Parameter occurrence that feeds the node, traced
+    through submodule ports (``Visibility.hidden_values_for_node``). Unticking
+    a value on a Parameter on main reaches a step inside a submodule.
 
-    hidden: dict[str, set[str]] = {}
-    for row in pipeline_store.list_hidden_parameter_values(db, pipeline_id):
-        hidden.setdefault(row["const_name"], set()).add(row["value"])
-    return hidden
+    With no node (the name-scoped fallback) there is no canvas, so every
+    canvas's hidden values apply."""
+    from scistack_gui.domain.visibility import Visibility
+
+    if not node_id:
+        return Visibility.load(db).hidden_values_any_canvas()
+    view = effective_edges(db, run_scope(db, node_id), caller=f"hidden_values({node_id})")
+    return view.visibility.hidden_values_for_node(node_id, view.wiring_list)
 
 
 def _inferred_targets(resolved, inferred_constants: dict[str, list]) -> list[dict]:
@@ -652,18 +653,16 @@ def _inferred_targets(resolved, inferred_constants: dict[str, list]) -> list[dic
 def _document_function_nodes(db, function_name: str) -> list[str]:
     """Stored function-node rows labelled *function_name*, every scope, that
     are not hidden in their own scope. The name-scoped run's node set."""
+    from scistack_gui.domain.visibility import Visibility
     from scistack_gui.stores import pipeline_store
 
     manual_nodes = pipeline_store.get_manual_nodes(db)
-    hidden_by_scope: dict[str, set[str]] = {}
+    vis = Visibility.load(db, manual_nodes)
     out = []
     for nid, meta in sorted(manual_nodes.items()):
         if meta.get("type") != "functionNode" or meta.get("label") != function_name:
             continue
-        scope = meta.get("pipeline_id") or ROOT_SCOPE
-        if scope not in hidden_by_scope:
-            hidden_by_scope[scope] = pipeline_store.get_hidden_node_ids(db, scope)
-        if nid in hidden_by_scope[scope]:
+        if vis.node_hidden(nid):
             continue
         out.append(nid)
     return out
@@ -788,6 +787,76 @@ def document_disconnected_ports(
     return sorted(ports)
 
 
+def _wiring_blocker(node_id: str, function_name: str, view, resolved) -> "str | None":
+    """THE reason a stored function node's wiring runs nothing, or None.
+    Logged at INFO; the text is user-facing (:func:`no_target_reason`).
+
+    A port with nothing connected is checked BEFORE the hidden-edge rule: when
+    a submodule port feeds the argument, "nothing is connected to the port" is
+    the thing to fix, and the hidden inner edge it replaced is not.
+    """
+    open_arguments = view.open_arguments(node_id)
+    if open_arguments:
+        reason = (
+            f"argument(s) {', '.join(open_arguments)} come from a submodule input "
+            "port that nothing is connected to on the canvas that places it"
+        )
+    else:
+        disconnected = document_disconnected_ports(
+            node_id, view.hidden_edge_ids, resolved, view.manual_nodes
+        )
+        if disconnected:
+            reason = (
+                f"input(s) {', '.join(disconnected)} were disconnected (the line "
+                "was removed and nothing is drawn in its place)"
+            )
+        elif not resolved.output_types:
+            reason = "no output line is drawn from it"
+            if _feeds_an_output_port(node_id, view):
+                reason += (
+                    " (its output goes to a submodule output port that leads to "
+                    "no variable on the canvas that places it)"
+                )
+        else:
+            return None
+    logger.info(
+        "[execution] node %s ('%s'): no targets — %s", node_id, function_name, reason
+    )
+    return reason
+
+
+def _feeds_an_output_port(node_id: str, view) -> bool:
+    from scistack_gui.domain.ports import OUTPUT_PORT_NODE
+
+    return any(
+        e.get("source") == node_id
+        and (view.manual_nodes.get(e.get("target") or "") or {}).get("type") == OUTPUT_PORT_NODE
+        for e in view.drawn
+    )
+
+
+def no_target_reason(db, node_id: str) -> "str | None":
+    """Why :func:`derive_target_for_node` finds nothing to run for *node_id*,
+    in words for the user, or None when the wiring itself is runnable (its
+    targets may still all be filtered as hidden or never run)."""
+    from scistack_gui.domain.edge_resolver import resolve_function_edges
+    from scistack_gui.ids import strip_placement
+
+    view = effective_edges(db, run_scope(db, node_id), caller=f"no_target_reason({node_id})")
+    meta = view.manual_nodes.get(node_id) or view.manual_nodes.get(str(strip_placement(node_id)))
+    if meta is None:
+        return "it is not a stored node on any canvas (refresh the canvas)"
+    if meta.get("type") != "functionNode":
+        return f"it is a {meta.get('type')}, not a function node"
+    resolved = resolve_function_edges(
+        fn_node_ids={node_id},
+        manual_edges=view.wiring_list,
+        manual_nodes=view.manual_nodes,
+        existing_node_labels={},
+    )
+    return _wiring_blocker(node_id, meta.get("label") or node_id, view, resolved)
+
+
 def derive_target_for_node(db, node_id: str) -> list[dict]:
     """The for_each target(s) that ONE stored function node represents.
 
@@ -823,14 +892,12 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
     from scistack_gui.ids import strip_placement
 
-    # The canvas this node is on decides which hides apply — a value
-    # unchecked in one hypothesis must not exclude it from another.
-    from scistack_gui.stores import intent_store
-
-    hidden_values = _hidden_constant_values(db, intent_store.scope_of_node(db, node_id))
-    # The clicked node's canvas decides which hidden edges apply (decision a,
-    # plan-unified-edge-model): an edge hidden in another hypothesis tab does
-    # not disconnect this node.
+    # The clicked node's canvas decides which history-edge hides its own
+    # wiring is matched against (decision a, plan-unified-edge-model); stored
+    # edges and Parameter values are judged on their own canvases
+    # (domain.visibility), so an edge hidden in another hypothesis tab does
+    # not disconnect this node, and a value unticked on the Parameter that
+    # feeds it through a submodule port does exclude it.
 
     def _view():
         return effective_edges(
@@ -864,6 +931,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     function_name = meta["label"]
     manual_nodes = view.manual_nodes
     all_edges = view.wiring_list
+    hidden_values = view.visibility.hidden_values_for_node(node_id, all_edges)
 
     resolved = resolve_function_edges(
         fn_node_ids={node_id},
@@ -871,34 +939,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         manual_nodes=manual_nodes,
         existing_node_labels={},
     )
-    disconnected = document_disconnected_ports(
-        node_id, view.hidden_edge_ids, resolved, manual_nodes
-    )
-    if disconnected:
-        logger.info(
-            "[execution] node %s ('%s'): no targets — disconnected: input port(s) "
-            "%s have a hidden edge and no visible edge in its place",
-            node_id,
-            function_name,
-            disconnected,
-        )
-        return []
-    open_arguments = view.open_arguments(node_id)
-    if open_arguments:
-        logger.info(
-            "[execution] node %s ('%s'): no targets — argument(s) %s are fed by "
-            "a submodule port with nothing connected",
-            node_id,
-            function_name,
-            open_arguments,
-        )
-        return []
-    if not resolved.output_types:
-        logger.info(
-            "[execution] node %s ('%s'): no targets — no output edge drawn",
-            node_id,
-            function_name,
-        )
+    if _wiring_blocker(node_id, function_name, view, resolved) is not None:
         return []
     # The variable_types_view shape — the same one record_dispatch_wirings
     # hashes, and the one history records.
@@ -1412,8 +1453,9 @@ def apply_pending_overrides(targets: list[dict], pending_constants: dict) -> lis
     return out
 
 
-def _hidden_values_for_run(db) -> dict:
-    """Hidden Parameter values for execution, or {} when no database is
+def _hidden_values_for_run(db, node_id: "str | None" = None) -> dict:
+    """Hidden Parameter values for the run of *node_id*
+    (:func:`hidden_values_for_node`), or {} when no database is
     reachable. Best-effort by design: a missing db means "cannot know what
     is unchecked", and running the full declared set is the safe reading --
     never silently running FEWER combos than declared."""
@@ -1431,7 +1473,7 @@ def _hidden_values_for_run(db) -> dict:
             return {}
     if db is None:
         return {}
-    return _hidden_constant_values(db)
+    return hidden_values_for_node(db, node_id)
 
 
 def _apply_hidden_values(param, name: str, function_name: str, hidden: dict):
@@ -1657,7 +1699,9 @@ def _apply_pooling(spec, binding: dict):
     return AcrossVariants(spec)
 
 
-def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
+def build_run_inputs(
+    target: dict, function_name: str, db=None, node_id: "str | None" = None
+) -> dict:
     """The for_each ``inputs=`` dict for a derived target: variable-class
     inputs, scalar constants, and any remaining signature params resolved
     via a stored PathInput or Parameter.
@@ -1717,7 +1761,9 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     # stored plain template/values data that had to be rebuilt here).
     path_inputs_by_name = registry.get_path_inputs_registry()
     params_by_name = registry.get_parameters_registry()
-    hidden_values = _hidden_values_for_run(db)
+    # The run's node decides whose unticked values apply (each feeding
+    # Parameter's own canvas); without one, every canvas's.
+    hidden_values = _hidden_values_for_run(db, node_id)
 
     inputs: dict = {}
     # Constants first: a Parameter binding whose value was already recorded as
@@ -2446,8 +2492,11 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     # runOptions; a hidden pending combo hashed with a different
     # distribute/as_table simply won't match and fails safe (reappears)
     # rather than mis-hiding a different combo. THIS scope's hides: the
-    # compiled pipeline runs one canvas's nodes (_scope_function_node_ids).
-    hidden_ids = pipeline_store.get_hidden_node_ids(db, pipeline_id)
+    # compiled pipeline may reach into submodules (_scope_function_node_ids),
+    # so each node is judged by its OWN canvas's hides (domain.visibility).
+    from scistack_gui.domain.visibility import Visibility
+
+    vis = Visibility.load(db)
 
     for node_id, fn_label in _scope_function_node_ids(db, pipeline_id):
         try:
@@ -2482,7 +2531,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         targets = filter_hidden_targets(
             targets,
             fn_label,
-            hidden_call_ids_for_fn(hidden_ids, fn_label),
+            hidden_call_ids_for_fn(
+                vis.hidden_node_ids(vis.canvas_of_node(node_id)), fn_label
+            ),
             pending_consts,
             step_options,
         )
@@ -2523,7 +2574,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 continue
             seen_target_keys.add(target_key)
             try:
-                inputs = build_run_inputs(target, fn_label, db)
+                inputs = build_run_inputs(target, fn_label, db, node_id=node_id)
                 output_cls = registry.get_variable_class(target["output_type"])
             except KeyError as exc:
                 logger.warning(

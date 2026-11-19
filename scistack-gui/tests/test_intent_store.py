@@ -12,6 +12,7 @@ Stage 5 of `.claude/plan-intent-and-fact.md`; model in
 
 from __future__ import annotations
 
+import pytest
 from scidb.provenance.intent import (
     ASPECT_COLUMNS,
     GLOBAL_SCOPE,
@@ -278,7 +279,8 @@ class TestHidden:
         pipeline_store.hide_node(populated_db, "fn__x__1", "pipe_a")
         assert "fn__x__1" in pipeline_store.get_hidden_node_ids(populated_db, "pipe_a")
         assert "fn__x__1" not in pipeline_store.get_hidden_node_ids(populated_db, "pipe_b")
-        assert "fn__x__1" in pipeline_store.get_hidden_node_ids(populated_db, None)
+        with pytest.raises(ValueError, match="needs a canvas"):
+            pipeline_store.get_hidden_node_ids(populated_db, None)
         pipeline_store.unhide_node(populated_db, "fn__x__1", "pipe_a")
         assert "fn__x__1" not in pipeline_store.get_hidden_node_ids(populated_db, "pipe_a")
 
@@ -325,7 +327,7 @@ class TestHidden:
         listed = pipeline_store.list_hidden_edges(populated_db, "main")
         assert listed[0]["target_handle"] == "in__x" and listed[0]["source"] == "var__A"
         pipeline_store.unhide_edge(populated_db, "e1", "main")
-        assert pipeline_store.get_hidden_edge_ids(populated_db, None) == set()
+        assert pipeline_store.get_hidden_edge_ids(populated_db, "main") == set()
 
 
 class TestWiringAndConstants:
@@ -461,8 +463,11 @@ class TestScopeAware:
 
     def test_hidden_values_are_read_for_the_run_s_canvas(self, populated_db):
         pipeline_store.hide_parameter_values(populated_db, "HZ", ["10"], "pipe_b")
-        from scistack_gui.services.execution_service import _hidden_constant_values
+        from scistack_gui.domain.visibility import Visibility
+        from scistack_gui.services.execution_service import hidden_values_for_node
 
-        assert _hidden_constant_values(populated_db, "pipe_b") == {"HZ": {"10"}}
-        assert _hidden_constant_values(populated_db, ROOT_SCOPE) == {}
-        assert _hidden_constant_values(populated_db, None) == {"HZ": {"10"}}
+        vis = Visibility.load(populated_db)
+        assert vis.hidden_values_on("pipe_b") == {"HZ": {"10"}}
+        assert vis.hidden_values_on(ROOT_SCOPE) == {}
+        # A run naming no node has no canvas: every canvas's hides.
+        assert hidden_values_for_node(populated_db, None) == {"HZ": {"10"}}

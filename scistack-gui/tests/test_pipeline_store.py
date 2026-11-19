@@ -9,6 +9,8 @@ hidden-edges table (hide_edge/unhide_edge) is its own independent set --
 hiding an edge keeps the node itself on screen (red), unlike hiding a node.
 """
 
+import pytest
+
 from scistack_gui.stores import pipeline_store
 
 
@@ -354,9 +356,8 @@ class TestScopedHiding:
     nodes-edges.md) -- a canonical id is scope-INDEPENDENT (graph_builder.
     wiring_id hashes only fn name + input/output shape), so two pipeline
     scopes can independently place the SAME id; hiding it in one must not
-    hide it in the other. ``pipeline_id=None`` on the getters still returns
-    every scope's hidden ids unioned, for the (not yet scope-aware)
-    execution-readiness callers."""
+    hide it in the other. The getters need a canvas; across canvases,
+    readers ask domain.visibility.Visibility (docs/claude/visibility-model.md)."""
 
     NODE_ID = "var__FilteredSignal"
     EDGE_ID = "e__RawSignal__bandpass_filter__abc123"
@@ -367,8 +368,8 @@ class TestScopedHiding:
         assert self.NODE_ID in pipeline_store.get_hidden_node_ids(db, "pipe_a")
         assert self.NODE_ID not in pipeline_store.get_hidden_node_ids(db, "main")
         assert self.NODE_ID not in pipeline_store.get_hidden_node_ids(db, "pipe_b")
-        # Unscoped getter still sees it (execution-path compatibility).
-        assert self.NODE_ID in pipeline_store.get_hidden_node_ids(db)
+        # The default canvas is main, which never hid it.
+        assert self.NODE_ID not in pipeline_store.get_hidden_node_ids(db)
 
     def test_hide_node_in_two_scopes_independently(self, populated_db):
         db = populated_db
@@ -397,7 +398,8 @@ class TestScopedHiding:
         )
         assert self.EDGE_ID in pipeline_store.get_hidden_edge_ids(db, "pipe_a")
         assert self.EDGE_ID not in pipeline_store.get_hidden_edge_ids(db, "main")
-        assert self.EDGE_ID in pipeline_store.get_hidden_edge_ids(db)  # unscoped union
+        with pytest.raises(ValueError, match="needs a canvas"):
+            pipeline_store.get_hidden_edge_ids(db, None)
 
     def test_unhide_edge_scoped_leaves_other_scope_hidden(self, populated_db):
         db = populated_db

@@ -1571,20 +1571,22 @@ def unhide_nodes_by_prefix(
     intent_store.unhide_nodes_by_prefix(db, prefix, pipeline_id)
 
 
-def get_hidden_node_ids(db, pipeline_id: "str | None" = None) -> set[str]:
-    """Return the set of node IDs hidden in ``pipeline_id``.
+def get_hidden_node_ids(db, pipeline_id: str = ROOT_SCOPE) -> set[str]:
+    """The node ids hidden ON canvas ``pipeline_id`` (raw statements), plus
+    the hidden combos, which are global by design.
 
-    ``pipeline_id=None`` returns every scope's hidden ids unioned. Since
-    2026-09-20 execution is scope-aware: a run, a compiled pipeline and both
-    code exports pass the canvas they run from (a click's node id names it —
-    ``intent_store.scope_of_node``), so a node deleted in one hypothesis
-    still runs in another. Only the name-scoped fallback (a run request
-    with no node id) still passes ``None``. Canvas rendering
-    (graph_service.build_graph) has always passed its own scope.
-
-    Pending-constant combo hides remain globally scoped by design and are
-    always unioned in regardless of ``pipeline_id``.
+    A canvas is required. What a hide means for anything another canvas draws
+    (a submodule's port lines, a Parameter feeding a step inside a submodule,
+    a run with no canvas) is ``domain.visibility.Visibility``'s to say, and
+    readers ask it, not this (docs/claude/visibility-model.md). The every-canvas
+    union this used to return for ``None`` is gone: it let a hide in one
+    hypothesis or submodule reach another.
     """
+    if pipeline_id is None:
+        raise ValueError(
+            "get_hidden_node_ids needs a canvas; ask domain.visibility.Visibility "
+            "about hides across canvases"
+        )
     _ensure_tables(db)
     from scistack_gui.stores import intent_store
 
@@ -1943,11 +1945,15 @@ def _hidden_connection_id(hide: dict, manual_nodes: dict) -> str:
     return hide["edge_id"]
 
 
-def get_hidden_edge_ids(db, pipeline_id: "str | None" = None) -> set[str]:
-    """The CONNECTION ids hidden in ``pipeline_id`` (see _hidden_connection_id).
-
-    ``pipeline_id=None`` (default) returns every scope's hidden ids unioned
-    — see get_hidden_node_ids for why (same execution-path caveat)."""
+def get_hidden_edge_ids(db, pipeline_id: str = ROOT_SCOPE) -> set[str]:
+    """The CONNECTION ids hidden ON canvas ``pipeline_id`` (see
+    _hidden_connection_id). A canvas is required, as for get_hidden_node_ids:
+    across canvases, ask ``domain.visibility.Visibility``."""
+    if pipeline_id is None:
+        raise ValueError(
+            "get_hidden_edge_ids needs a canvas; ask domain.visibility.Visibility "
+            "about hides across canvases"
+        )
     _ensure_tables(db)
     from scistack_gui.stores import intent_store
 

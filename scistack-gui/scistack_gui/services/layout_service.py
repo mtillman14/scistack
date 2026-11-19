@@ -383,9 +383,7 @@ def put_edge(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict:
-    from scistack_gui.stores import layout as layout_store
     from scistack_gui.domain.graph_builder import connection_id, find_cycle
-    from scistack_gui.domain.scope_filter import node_scope
 
     logger.info(
         "[layout_service] put_edge called (edge_id=%r, source=%r, target=%r, source_handle=%r, target_handle=%r)",
@@ -402,14 +400,16 @@ def put_edge(
     # creating a redundant manual one. This is what makes delete+reconnect
     # idempotent: state/execution recompute fresh from the real DB history
     # under the original edge id, not a new manual-edge id. Scoped to the
-    # connection's own scope (derived from its endpoints, same as
-    # delete_edge below) so reconnecting in one pipeline never unhides
-    # another pipeline's independent placement of the same shared wiring.
+    # edge's own canvas (Visibility.canvases_of_edge, the rule _hide_edge
+    # writes by) so reconnecting in one pipeline never unhides another
+    # pipeline's independent placement of the same shared wiring.
+    from scistack_gui.domain.visibility import Visibility
+
     manual_nodes = pipeline_store.get_manual_nodes(db)
     candidate = connection_id(source, target, target_handle, manual_nodes)
-    positions_by_scope = layout_store.read_positions_by_scope()
-    scope_id = node_scope(target, manual_nodes, positions_by_scope)
-    hidden_here = pipeline_store.get_hidden_edge_ids(db, scope_id)
+    vis = Visibility.load(db, manual_nodes)
+    scope_id = vis.canvases_of_edge({"id": edge_id, "source": source, "target": target})[0]
+    hidden_here = vis.hidden_edge_ids(scope_id)
     if edge_id in hidden_here and candidate not in hidden_here:
         # A hide made with no port matches by the edge's own id
         # (pipeline_store._hidden_connection_id). Removing a stored edge hides
@@ -649,7 +649,9 @@ def _refuse_illegal_port_wire(
 
     # The same trace the canvas draws from (edge_view owns it): a segment the
     # user removed inside the submodule does not make this connection illegal.
-    wiring = trace_through_ports(db, existing_edges + [edge], view.manual_nodes, uses)
+    wiring = trace_through_ports(
+        db, existing_edges + [edge], view.manual_nodes, uses, view.visibility
+    )
     for from_node, to_node, reason, via in wiring.illegal:
         if edge_id in via:
             logger.warning(
@@ -679,21 +681,17 @@ def _hide_edge_in_its_scope(
     disconnect_removed_arguments). A hide, never a row delete (user decision
     D2, 2026-10-22).
 
-    Scoped to the edge's own scope (derived from its endpoints): the same
-    connection on another pipeline's independent placement stays visible
-    there (plan-scope-hidden-nodes-edges.md)."""
-    from scistack_gui.stores import layout as layout_store
-    from scistack_gui.domain.scope_filter import node_scope
+    Stated on the edge's own canvas (``Visibility.canvases_of_edge``, the
+    rule every reader judges it by): the same connection on another
+    pipeline's independent placement stays visible there
+    (docs/claude/visibility-model.md)."""
+    from scistack_gui.domain.visibility import Visibility
 
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    positions_by_scope = layout_store.read_positions_by_scope()
-    scope_id = (
-        node_scope(target, manual_nodes, positions_by_scope)
-        if target
-        else node_scope(source, manual_nodes, positions_by_scope)
-        if source
-        else ROOT_SCOPE
-    )
+    if source or target:
+        vis = Visibility.load(db)
+        scope_id = vis.canvases_of_edge({"id": edge_id, "source": source, "target": target})[0]
+    else:
+        scope_id = ROOT_SCOPE
     pipeline_store.hide_edge(
         db, edge_id, source, target, source_handle, target_handle, scope_id
     )

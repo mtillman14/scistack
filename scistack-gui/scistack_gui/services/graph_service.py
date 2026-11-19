@@ -301,9 +301,11 @@ def _resolve_node_identity(
     # resolve_identities(hidden_node_ids=) is the one owner of that rule, for
     # stated AND recorded claims (a hidden node used to out-claim a visible
     # twin through its _node_wiring row: scistack.log 2026-10-26 16:53:09).
-    from scistack_gui.stores import pipeline_store as _ps_hidden
+    # A row is hidden on its OWN canvas (domain.visibility): a node removed in
+    # hypothesis B keeps its claim in hypothesis A, where it is still drawn.
+    from scistack_gui.domain.visibility import Visibility
 
-    hidden_everywhere = _ps_hidden.get_hidden_node_ids(db, None)
+    hidden_everywhere = Visibility.load(db, manual_nodes).hidden_rows()
     for key, holders in gb.document_stated_claims(
         manual_nodes, manual_edges, current_by_node, history
     ).items():
@@ -744,16 +746,18 @@ def build_graph(
     from scistack_gui.domain import graph_builder as gb
     from scistack_gui.domain.edge_resolver import resolve_function_edges
 
-    hidden_ids = _ps.get_hidden_node_ids(db, pipeline_id)
-    logger.debug(
-        "[pipeline] loaded %d hidden node ID(s) for scope=%s", len(hidden_ids), pipeline_id
-    )
     # The edges this canvas draws: the ONE loader every reader shares
-    # (domain.edge_view, plan-unified-edge-model step 1).
+    # (domain.edge_view, plan-unified-edge-model step 1). Its visibility is
+    # the one owner of hides (domain.visibility); this canvas's hidden ids are
+    # what it draws by.
     from scistack_gui.domain.edge_view import effective_edges
 
     edge_view = effective_edges(db, pipeline_id, caller=f"build_graph({pipeline_id})")
     hidden_edge_ids = set(edge_view.hidden_edge_ids)
+    hidden_ids = edge_view.visibility.hidden_node_ids(pipeline_id)
+    logger.debug(
+        "[pipeline] loaded %d hidden node ID(s) for scope=%s", len(hidden_ids), pipeline_id
+    )
 
     # --- Fetch aggregated data from scidb (replaces steps 2-5) ---
     logger.info("[pipeline] Fetching aggregated variants from scidb")
@@ -838,11 +842,11 @@ def build_graph(
         # The re-key rewrote node-keyed rows this build already read; re-read
         # them so THIS build draws the node with its edges and hides, rather
         # than one build late.
-        hidden_ids = _ps.get_hidden_node_ids(db, pipeline_id)
         edge_view = effective_edges(
             db, pipeline_id, caller=f"build_graph({pipeline_id}) after re-key"
         )
         hidden_edge_ids = set(edge_view.hidden_edge_ids)
+        hidden_ids = edge_view.visibility.hidden_node_ids(pipeline_id)
         manual_edges_for_fn_lookup = edge_view.wiring_list
         manual_nodes = edge_view.manual_nodes
 
@@ -1102,9 +1106,8 @@ def build_graph(
     )
     nodes = gb.build_variable_nodes(agg.all_var_types, record_counts, run_states, node_variants)
     var_node_count = len(nodes)
-    hidden_const_values: dict[str, set] = {}
-    for row in _ps.list_hidden_parameter_values(db, pipeline_id):
-        hidden_const_values.setdefault(row["const_name"], set()).add(row["value"])
+    # The Parameter nodes drawn here show THIS canvas's unticked values.
+    hidden_const_values: dict[str, set] = edge_view.visibility.hidden_values_on(pipeline_id)
     # Constants and Sweeps are ONE node kind (Parameters, D6) — built
     # together so a Parameter never changes node type or id when a second
     # value turns its declaration from a Constant into a Sweep.
@@ -1249,11 +1252,12 @@ def build_graph(
     )
     # Hidden rows are not drawn. A removed node keeps its stored row (never
     # delete; layout.delete_node only hides it), so the hide is what takes it
-    # off this canvas.
+    # off this canvas. Asked of THIS canvas's occurrence of each row: a shared
+    # entity's one row is drawn on several canvases (domain.visibility).
     hidden_rows = sorted(
         nid
         for nid in manual_nodes
-        if nid in hidden_ids or ids.strip_placement(nid) in hidden_ids
+        if edge_view.visibility.node_hidden_on(pipeline_id, nid)
     )
     if hidden_rows:
         logger.debug("[pipeline] %d hidden stored row(s) not drawn: %s", len(hidden_rows), hidden_rows)

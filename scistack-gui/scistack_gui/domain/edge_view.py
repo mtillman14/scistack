@@ -10,10 +10,13 @@ hypothesis tab disconnected the node in another.
 
 ``effective_edges(db, scope)`` is now the ONE place a reader gets:
 
-- ``drawn``: the stored manual edges the canvas can draw
-  (``graph_builder.visible_manual_edges``: own id not hidden, history twin not
-  hidden);
-- ``hidden_edge_ids``: the history edges hidden in *scope*;
+- ``drawn``: the stored manual edges that are live, each judged on ITS OWN
+  canvas (``domain.visibility``: neither the edge nor an end hidden there).
+  This does not depend on *scope*: a hide inside a submodule never cuts the
+  parent's lines into its ports, whichever canvas asks
+  (docs/claude/visibility-model.md);
+- ``hidden_edge_ids``: the connections hidden on *scope* (what its history
+  edges are matched against), plus connections severed at a removed segment;
 - ``manual_nodes``;
 - ``stale_port``: edges left out of ``drawn`` because their target port is
   no longer an argument of the node's function (:func:`missing_port`);
@@ -25,9 +28,9 @@ Only this module and the edge MUTATORS (layout_service, scope_service,
 layout.py, pipeline_store) may call ``pipeline_store.get_manual_edges`` or
 ``get_hidden_edge_ids``. ``tests/test_edge_view_guard.py`` enforces that.
 
-``scope=None`` means every scope unioned. That is used only by the name-scoped
-run fallback (a run request with no node), the same rule hidden NODES follow
-(``pipeline_store.get_hidden_node_ids``).
+``scope=None`` (no asking canvas: the name-scoped run fallback, and readers
+that want every canvas's edges) affects only ``hidden_edge_ids``, which is
+then every canvas's hidden connections.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from dataclasses import dataclass, field
 
 from scistack_gui.domain import ports
 from scistack_gui.domain.ports import Wiring
+from scistack_gui.domain.visibility import Visibility
 from scistack_gui.ids import PARAM_ID_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -55,6 +59,8 @@ class EdgeView:
     #: Connections traced through submodule ports (``domain.ports.Wiring``),
     #: or ``None`` when no canvas has an input/output node.
     port_wiring: "Wiring | None" = None
+    #: The hides this view was judged by (``domain.visibility.Visibility``).
+    visibility: "Visibility | None" = field(default=None, compare=False, repr=False)
 
     @property
     def drawn_list(self) -> list[dict]:
@@ -84,39 +90,42 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     against the canvas's in scistack.log.
     """
     from scistack_gui.stores import pipeline_store
-    from scistack_gui.domain.graph_builder import visible_manual_edges
-
-    from scistack_gui.ids import strip_placement
 
     stored = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
-    hidden = frozenset(pipeline_store.get_hidden_edge_ids(db, scope))
-    # An edge into or out of a HIDDEN node is not drawn and binds nothing
-    # (canvas-as-document, 2026-10-22). Before adoption, a hidden node's
-    # edges were history edges and vanished with it; now they are stored
-    # rows, so the hide has to reach them here, the one view every reader
-    # uses. Otherwise hiding a PathInput and drawing another onto the same
-    # port ran an EachOf of both.
-    hidden_nodes = pipeline_store.get_hidden_node_ids(db, scope)
+    vis = Visibility.load(db, manual_nodes)
+    # What THIS canvas's history edges are matched against. With no asking
+    # canvas, every canvas's hidden connections.
+    if scope is not None:
+        hidden = frozenset(vis.hidden_edge_ids(scope))
+    else:
+        hidden = frozenset().union(*vis.edge_hides.values()) if vis.edge_hides else frozenset()
     signatures: dict = {}
-    on_hidden_node: list[str] = []
+    hidden_edge_rows: list[dict] = []
+    # An edge into or out of a HIDDEN node is not drawn and binds nothing
+    # (canvas-as-document, 2026-10-22): hiding a PathInput and drawing another
+    # onto the same port must not run an EachOf of both. Judged on the EDGE's
+    # canvas (domain.visibility), never the asking canvas's.
+    on_hidden_node: list[tuple[str, str]] = []
     stale_port: list[dict] = []
     drawn_list = []
-    for e in visible_manual_edges(stored, hidden, manual_nodes):
+    for e in stored:
+        if vis.edge_hidden(e):
+            hidden_edge_rows.append(e)
+            continue
         if _on_retired_port(e):
             continue
         if _on_missing_port(e, manual_nodes, signatures):
             stale_port.append(e)
             continue
-        ends = {e.get("source") or "", e.get("target") or ""}
-        if hidden_nodes and any(
-            end in hidden_nodes or strip_placement(end) in hidden_nodes for end in ends
-        ):
-            on_hidden_node.append(e.get("id"))
+        hidden_end = vis.hidden_end(e)
+        if hidden_end is not None:
+            on_hidden_node.append((e.get("id"), hidden_end))
             continue
         drawn_list.append(e)
+    _log_left_out(caller, hidden_edge_rows, on_hidden_node, vis)
     drawn = tuple(drawn_list)
-    port_wiring, severed = _trace_ports(db, stored, drawn_list, manual_nodes, hidden)
+    port_wiring, severed = _trace_ports(db, stored, drawn_list, manual_nodes, vis)
     if severed:
         hidden = hidden | severed
         from scistack_gui.domain.graph_builder import edge_connection_id
@@ -156,21 +165,41 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
         manual_nodes=manual_nodes,
         stale_port=tuple(stale_port),
         port_wiring=port_wiring,
+        visibility=vis,
+    )
+
+
+def _log_left_out(caller: str, hidden_rows: list, on_hidden_node: list, vis: Visibility) -> None:
+    """DEBUG: which stored edges a hide left out, and on which canvas."""
+    if not (hidden_rows or on_hidden_node) or not logger.isEnabledFor(logging.DEBUG):
+        return
+    logger.debug(
+        "[edge_view] %s: %d stored edge(s) hidden on their canvas %s; %d on a "
+        "node hidden on the edge's canvas %s",
+        caller,
+        len(hidden_rows),
+        [(e.get("id"), list(vis.canvases_of_edge(e))) for e in hidden_rows[:20]],
+        len(on_hidden_node),
+        [
+            (edge_id, end, vis.canvas_of_node(end))
+            for edge_id, end in on_hidden_node[:20]
+        ],
     )
 
 
 def _trace_ports(
-    db, stored: list, drawn: list, manual_nodes: dict, hidden: frozenset
+    db, stored: list, drawn: list, manual_nodes: dict, vis: Visibility
 ) -> "tuple[Wiring | None, frozenset]":
     """``(domain.ports.Wiring, severed connection ids)``, or ``(None, empty)``
     when no canvas has an input/output node.
 
     A segment (an edge touching an input/output node or a placement) lives on
-    exactly one canvas, so a hide of it applies whichever canvas is asking: a
-    run of a node inside a submodule must see an outer edge removed on the
-    parent. Each hidden segment also hides the connection it carried
-    (*severed*), which is what disconnects a node that has recorded history:
-    removing the line ``[submodule] -> C`` removes ``B -> C``.
+    exactly one canvas, and its hides are that canvas's (``domain.visibility``),
+    so a run of a node inside a submodule sees an outer edge removed on the
+    parent, and a node hidden inside never cuts the parent's segment. Each
+    hidden segment also hides the connection it carried (*severed*), which is
+    what disconnects a node that has recorded history: removing the line
+    ``[submodule] -> C`` removes ``B -> C``.
     """
     from scistack_gui.domain.graph_builder import edge_connection_id
     from scistack_gui.stores import pipeline_store
@@ -178,7 +207,7 @@ def _trace_ports(
     if not ports.has_port_nodes(manual_nodes):
         return None, frozenset()
     uses = pipeline_store.get_pipeline_uses(db)
-    wiring = trace_through_ports(db, drawn, manual_nodes, uses)
+    wiring = trace_through_ports(db, drawn, manual_nodes, uses, vis)
     is_segment = _segment_test(manual_nodes, uses)
     drawn_ids = {e.get("id") for e in drawn}
     unhidden = list(drawn) + [
@@ -191,12 +220,29 @@ def _trace_ports(
     severed = frozenset(
         edge_connection_id(w.edge, manual_nodes) for w in possible.wires if w.traced
     ) - set(traced)
+    # A traced connection hidden as a whole (adoption retires a rewired node's
+    # old connections on the node's canvas) counts on either end's canvas,
+    # never the asking canvas's.
     kept = tuple(
         w
         for w in wiring.wires
-        if not w.traced or edge_connection_id(w.edge, manual_nodes) not in hidden
+        if not w.traced
+        or not vis.connection_hidden(
+            edge_connection_id(w.edge, manual_nodes),
+            w.edge.get("source") or "",
+            w.edge.get("target") or "",
+        )
     )
     if len(kept) != len(wiring.wires):
+        logger.debug(
+            "[edge_view] %d traced connection(s) hidden as a whole: %s",
+            len(wiring.wires) - len(kept),
+            [
+                edge_connection_id(w.edge, manual_nodes)
+                for w in wiring.wires
+                if w not in kept
+            ][:20],
+        )
         wiring.wires = kept
     for source, target, reason, via in wiring.illegal:
         _warn_once(
@@ -245,28 +291,28 @@ def _segment_test(manual_nodes: dict, uses: list):
     return is_segment
 
 
-def trace_through_ports(db, edges, manual_nodes: dict, uses: list) -> Wiring:
+def trace_through_ports(
+    db, edges, manual_nodes: dict, uses: list, vis: "Visibility | None" = None
+) -> Wiring:
     """THE trace of *edges* through submodule ports, as every reader must see
     it: the canvas (via :func:`_trace_ports`) and put_edge's legality check.
 
-    A segment lives on exactly one canvas, so a hide of it applies whichever
-    canvas is asking. *edges* comes from one canvas's view, which only drops
-    that canvas's hides, so segments hidden on ANOTHER canvas (inside a
-    submodule, seen from its parent) are removed here, and nodes hidden on any
-    canvas end the trace. Before this was the one owner, put_edge traced the
-    raw view and refused a connection through a segment the user had already
-    removed (scistack-debug.log 2026-11-18 11:41, GitHub #24).
+    A segment lives on exactly one canvas, and only that canvas's hides apply
+    to it (``domain.visibility``), whichever canvas is asking. A caller's edge
+    list may hold segments that are not live (put_edge adds its own edge to a
+    view), so they are judged again here, and a removed port (an input/output
+    node hidden on its own canvas) ends the trace. Before this was the one
+    owner, put_edge traced the raw view and refused a connection through a
+    segment the user had already removed (scistack-debug.log 2026-11-18 11:41,
+    GitHub #24).
     """
-    from scistack_gui.domain.graph_builder import manual_edge_is_hidden
-    from scistack_gui.stores import pipeline_store
-
-    all_hidden = pipeline_store.get_hidden_edge_ids(db, None)
-    hidden_nodes = pipeline_store.get_hidden_node_ids(db, None)
+    if vis is None:
+        vis = Visibility.load(db, manual_nodes)
     is_segment = _segment_test(manual_nodes, uses)
     live = []
     removed = []
     for e in edges:
-        if is_segment(e) and manual_edge_is_hidden(e, all_hidden, manual_nodes):
+        if is_segment(e) and not vis.edge_live(e):
             removed.append(e.get("id"))
         else:
             live.append(e)
@@ -276,7 +322,7 @@ def trace_through_ports(db, edges, manual_nodes: dict, uses: list) -> Wiring:
             len(removed),
             removed[:20],
         )
-    return ports.resolve_wiring(live, manual_nodes, uses, hidden_nodes)
+    return ports.resolve_wiring(live, manual_nodes, uses, vis.hidden_port_ids())
 
 
 #: Messages already logged by :func:`_warn_once`.
@@ -425,9 +471,11 @@ def _on_missing_port(edge: dict, manual_nodes: dict, signatures: dict) -> bool:
 
 
 def run_scope(db, node_id: "str | None") -> "str | None":
-    """The scope a run's hides come from: the clicked node's canvas
-    (``intent_store.scope_of_node``), or every scope when no node is named.
-    Decision (a) of the plan, matching hidden nodes since 2026-09-20."""
+    """The canvas a run asks from: the clicked node's canvas
+    (``intent_store.scope_of_node``), or ``None`` when no node is named. It
+    decides which history-edge hides the node's own wiring is matched against;
+    stored edges are judged on their own canvases whatever it is
+    (docs/claude/visibility-model.md)."""
     if not node_id:
         return None
     from scistack_gui.stores import intent_store

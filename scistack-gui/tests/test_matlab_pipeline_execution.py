@@ -591,6 +591,57 @@ class TestSubmodulesInMatlabPipeline:
         finally:
             matlab_registry._matlab_functions.pop("matlab_proc", None)
 
+    def test_running_the_submodule_ignores_its_hidden_copies_of_outside_nodes(self, client):
+        """scistack-debug.log 2026-11-19 12:38:43 ("no runnable MATLAB step"):
+        the source, sink and Parameter stayed on the parent, and the submodule's
+        canvas held hidden copies of them. Those hides belong to the submodule's
+        canvas only (docs/claude/visibility-model.md), so running the submodule
+        directly still reads the parent's lines into its ports."""
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.services.matlab_command_service import (
+            generate_matlab_pipeline_command,
+        )
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            pid = client.post("/api/pipelines", json={"name": "scope"}).json()["pipeline_id"]
+            _build_matlab_only_scope(client, pid)
+            r = client.post(
+                f"/api/pipelines/{pid}/extract", json={"node_ids": ["mf_a"], "name": "inner"}
+            )
+            assert r.status_code == 200, r.text
+            inner = r.json()["pipeline_id"]
+            for outside in ("mv_in", "mv_out", "mc_gain"):
+                ps.hide_node(get_db(), outside, inner)
+
+            result = generate_matlab_pipeline_command(inner, get_db(), {"mode": "all"})
+
+            for fragment in ("scidb.for_each(@matlab_proc, ", "'signal', RawSignal()",
+                             "{MatlabOutput()}"):
+                assert fragment in result["command"]
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
+    def test_no_runnable_step_names_each_step_and_why(self, client):
+        """The error is about the user's wiring, so it says what to fix and is
+        an ActionableError (never "likely a SciStack bug")."""
+        from scifor.failures import ActionableError
+        from scistack_gui.services.matlab_command_service import (
+            generate_matlab_pipeline_command,
+        )
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            pid = client.post("/api/pipelines", json={"name": "scope"}).json()["pipeline_id"]
+            _build_matlab_only_scope(client, pid)
+            assert client.delete("/api/edges/e_out").status_code == 200
+            with pytest.raises(ActionableError) as excinfo:
+                generate_matlab_pipeline_command(pid, get_db(), {"mode": "all"})
+            assert isinstance(excinfo.value, ValueError)
+            assert "matlab_proc: no output line is drawn from it" in str(excinfo.value)
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
     @pytest.mark.parametrize(
         "binding,shown",
         [
