@@ -23,7 +23,7 @@ def test_as_df_matches_to_csv_output(tmp_path):
     speed = pd.DataFrame(
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "Speed": [1.1, 1.2, 1.3]}
     )
-    merged = Merge(step, speed)
+    merged = Merge(step, speed, name="merged")
 
     df = merged.as_df()
     assert list(df.columns) == ["subject", "trial", "StepLength", "Speed"]
@@ -46,7 +46,7 @@ def test_as_df_rows_on_one_side_only_raise():
         {"subject": [1, 2, 3], "trial": [1, 1, 1], "Speed": [1.1, 1.3, 9.9]}
     )
     with pytest.raises(ValueError, match="Merge would drop rows"):
-        Merge(step, speed).as_df()
+        Merge(step, speed, name="merged").as_df()
 
 
 def test_as_df_where_filter():
@@ -57,7 +57,7 @@ def test_as_df_where_filter():
     speed = pd.DataFrame(
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "Speed": [1.1, 1.2, 1.3]}
     )
-    df = Merge(step, speed).as_df(where=Col("StepLength") > 0.55)
+    df = Merge(step, speed, name="merged").as_df(where=Col("StepLength") > 0.55)
     assert set(df.StepLength) == {0.6, 0.7}
 
 
@@ -69,7 +69,7 @@ def test_as_df_metadata_filter():
     speed = pd.DataFrame(
         {"subject": [1, 2, 3], "trial": [1, 1, 1], "Speed": [1.1, 1.2, 1.3]}
     )
-    df = Merge(step, speed).as_df(subject=[1, 3])
+    df = Merge(step, speed, name="merged").as_df(subject=[1, 3])
     assert set(df.subject) == {1, 3}
 
 
@@ -84,7 +84,7 @@ def test_as_df_column_selection():
         }
     )
     speed = pd.DataFrame({"subject": [1, 1], "trial": [1, 2], "Speed": [1.1, 1.2]})
-    df = Merge(ColumnSelection(gait, ["StepLength"]), speed).as_df()
+    df = Merge(ColumnSelection(gait, ["StepLength"]), speed, name="merged").as_df()
     assert list(df.columns) == ["subject", "trial", "StepLength", "Speed"]
     assert "Cadence" not in df.columns
 
@@ -94,6 +94,6 @@ def test_as_df_returns_dataframe_type():
     set_schema(["subject"])
     a = pd.DataFrame({"subject": [1, 2], "A": [1.0, 2.0]})
     b = pd.DataFrame({"subject": [1, 2], "B": [3.0, 4.0]})
-    df = Merge(a, b).as_df()
+    df = Merge(a, b, name="merged").as_df()
     assert isinstance(df, pd.DataFrame)
     assert list(df.columns) == ["subject", "A", "B"]

@@ -1071,6 +1071,22 @@ def build_graph(
     )
     const_node_count = len(nodes) - var_node_count
     nodes += gb.build_path_input_nodes(agg.path_inputs)
+    # Merge nodes history recorded (docs/claude/merge-node.md). The node's own
+    # setting (config mergeHow, written by the panel or by adoption) is what
+    # the next canvas run uses, so it is what the node shows.
+    for merge_node in gb.build_merge_nodes(gb.merge_specs_from_history(agg.fn_input_params)):
+        stated = ((manual_nodes.get(merge_node["id"]) or {}).get("config") or {}).get(
+            "mergeHow"
+        )
+        if stated:
+            merge_node["data"]["how"] = stated
+            if stated != merge_node["data"]["recorded_how"]:
+                logger.info(
+                    "[merge-node] %s: how=%s on the canvas, %s in history -- the "
+                    "next canvas run uses %s",
+                    merge_node["id"], stated, merge_node["data"]["recorded_how"], stated,
+                )
+        nodes.append(merge_node)
     path_input_node_count = len(nodes) - var_node_count - const_node_count
     sweep_node_count = 0
     # A MATLAB function whose run wrote MORE outputs than its signature

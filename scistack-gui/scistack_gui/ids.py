@@ -68,10 +68,40 @@ recognise a PathInput source to bind it to the parameter its edge names, and
 that recognition should not be a bare string literal repeated across layers.
 """
 
+MERGE_ID_PREFIX = "merge__"
+"""Node-id prefix for every **Merge** node (docs/claude/merge-node.md).
+
+A Merge is identified by its NAME (``Merge(..., name=)``), like a PathInput:
+``merge__{name}`` is the node history draws, and a hand-placed one folds into
+it by label.
+"""
+
+#: A Merge node's input ports are SLOTS, ``in__m{n}``: one per constituent,
+#: in join order (ascending n), plus one empty trailing slot. A slot id is
+#: never reused, so disconnecting a middle slot renames nothing.
+MERGE_SLOT_PREFIX = "in__m"
+#: A Merge node's one output port.
+MERGE_OUT_HANDLE = "out__merge"
+
+
+def merge_slot_handle(n: int) -> str:
+    return f"{MERGE_SLOT_PREFIX}{n}"
+
+
+def merge_slot_of(handle: "str | None") -> "int | None":
+    """The slot number of a Merge input handle, or None if it is not one."""
+    if not handle or not handle.startswith(MERGE_SLOT_PREFIX):
+        return None
+    tail = handle[len(MERGE_SLOT_PREFIX):]
+    return int(tail) if tail.isdigit() else None
+
+
 #: Every prefix a DB-derived (non-manual) canonical id can start with —
 #: shared by anything that needs to
 #: distinguish "this id names real DB data" from a manual/opaque id.
-DB_DERIVED_PREFIXES = (VAR_ID_PREFIX, FN_ID_PREFIX, PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX)
+DB_DERIVED_PREFIXES = (
+    VAR_ID_PREFIX, FN_ID_PREFIX, PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, MERGE_ID_PREFIX
+)
 
 #: React Flow node type -> the canonical id prefix of that kind of node.
 #: The frontend's drop handler mirrors this (it mints manual ids before the
@@ -81,6 +111,7 @@ NODE_TYPE_PREFIXES = {
     "functionNode": FN_ID_PREFIX,
     "parameterNode": PARAM_ID_PREFIX,
     "pathInputNode": PATH_INPUT_ID_PREFIX,
+    "mergeNode": MERGE_ID_PREFIX,
 }
 
 # ---------------------------------------------------------------------------
@@ -256,6 +287,10 @@ def path_input_node_id(name: str) -> BareNodeId:
     return BareNodeId(f"{PATH_INPUT_ID_PREFIX}{name}")
 
 
+def merge_node_id(name: str) -> BareNodeId:
+    return BareNodeId(f"{MERGE_ID_PREFIX}{name}")
+
+
 def fn_nodes_prefix(fn_name: str) -> str:
     """The prefix every composite node id of *fn_name* starts with
     (``fn__{fn}__``) -- for "all of this function's nodes" scans."""
@@ -285,6 +320,7 @@ MANUAL_NODE_PREFIX = {
     "variableNode": "var",
     "parameterNode": "param",
     "pathInputNode": "pathInput",
+    "mergeNode": "merge",
 }
 
 

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 # Hoisted from function bodies (grug follow-up): no cycle, and already
 # loaded by `import scidb`, so this changes neither import order risk nor cost.
+from scidb.model.exceptions import NotFoundError
 from scidb.model.exceptions import SchemaKeyTypeError
 from scidb.model.filters import split_schema_key_filters
 from scidb.provenance.graph import insert_function_sources
@@ -55,6 +56,8 @@ class _DryRunMerge(_scifor.Merge):
         import pandas as pd
 
         self._dry_name = scidb_merge.__name__
+        self.name = scidb_merge.name
+        self.how = scidb_merge.how
         # scifor loops over self.tables in _print_dry_run_iteration
         self.tables = [pd.DataFrame() for _ in scidb_merge.tables]
 
@@ -380,8 +383,18 @@ def _resolve_per_combo_merge(
             actual_spec = actual_spec.data
 
         # Load the variable
-        lv = actual_spec.load(**effective_kw)
         cls_name = getattr(actual_spec, "__name__", type(actual_spec).__name__)
+        try:
+            lv = actual_spec.load(**effective_kw)
+        except NotFoundError:
+            if pcl_merge.merge_spec.how == "exact":
+                raise
+            # A non-exact how decides what a missing side means
+            # (scifor.merge._join_empty): NaN-pad or no rows.
+            Log.debug(f"[merge] {cls_name}: no record at {effective_kw}; empty side")
+            parts.append(_empty_frame())
+            labels.append(cls_name)
+            continue
         if isinstance(lv, list):
             raise ValueError(
                 f"{cls_name}.load() returned multiple results (list), expected exactly 1."
@@ -408,7 +421,15 @@ def _resolve_per_combo_merge(
         parts.append(part_df)
         labels.append(cls_name)
 
-    return merge_frames(parts, list(schema_keys), labels=labels)
+    return merge_frames(
+        parts, list(schema_keys), labels=labels, how=pcl_merge.merge_spec.how
+    )
+
+
+def _empty_frame():
+    import pandas as pd
+
+    return pd.DataFrame()
 
 
 def _to_dataframe(data: Any, cls_name: str) -> "pd.DataFrame":
@@ -661,6 +682,7 @@ def _build_run_bindings(
     pools: dict | None = None,
     iterated_keys: list | None = None,
     rid_to_bp: dict | None = None,
+    merge_params=(),
 ) -> RunBindings:
     """Step 11's classification of every input, as one typed structure.
 
@@ -673,6 +695,7 @@ def _build_run_bindings(
 
     selectors = compute_input_selectors(inputs)
     iterate_params = set(tracked_params or [])
+    merge_set = set(merge_params or ())
     pools = pools or {}
     run = RunBindings(rid_to_bp=dict(rid_to_bp or {}), iterated_keys=tuple(iterated_keys or ()))
     for param, spec in inputs.items():
@@ -684,7 +707,17 @@ def _build_run_bindings(
             kind = InputKind.AGGREGATED if aggregation_mode else InputKind.LINEAGE_ONLY
         elif param in iterate_params:
             kind = InputKind.AGGREGATED if aggregation_mode else InputKind.ITERATE
+        elif param in merge_set:
+            # A bulk-loaded Merge: its constituents' records are edges, never
+            # an axis and never pooled (scidb.run.merge_lineage).
+            kind = InputKind.LINEAGE_ONLY
         else:
+            if isinstance(spec, _scifor.Merge):
+                # Loaded per combo (PerComboLoaderMerge): no lineage yet.
+                Log.debug(
+                    f"[merge] provenance: param={param} loaded per combo -> "
+                    f"constituent records are not lineage edges"
+                )
             continue  # a constant, a PathInput, a marker — not a record-bearing input
         run.inputs[param] = InputBinding(
             param=param,

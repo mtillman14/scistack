@@ -714,7 +714,7 @@ class TestAcrossVariants:
 
     def test_constructor_rules(self, db):
         with pytest.raises(TypeError):
-            AcrossVariants(Merge(Filtered, Scaled))
+            AcrossVariants(Merge(Filtered, Scaled, name="merged"))
         with pytest.raises(TypeError):
             AcrossVariants(EachOf(Filtered, Scaled))
         with pytest.raises(TypeError):

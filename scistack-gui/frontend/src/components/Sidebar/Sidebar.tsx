@@ -24,6 +24,8 @@ import type { SchemaSelection, RunOptions, WhereFilter, ColumnSelectionMap, Unus
 import ParameterSettingsPanel from './ParameterSettingsPanel'
 import VariableSettingsPanel from './VariableSettingsPanel'
 import PathInputSettingsPanel from './PathInputSettingsPanel'
+import MergeSettingsPanel from './MergeSettingsPanel'
+import type { MergeNodeData } from '../DAG/MergeNode'
 import PipelineSettingsPanel from './PipelineSettingsPanel'
 import EndpointPanel from './EndpointPanel'
 import type { PipelineNodeData } from '../DAG/PipelineNode'
@@ -84,6 +86,10 @@ function isVariableNode(node: Node | null): node is Node & { data: { label: stri
 
 function isPathInputNode(node: Node | null): node is Node & { data: PathInputNodeData } {
   return node?.type === 'pathInputNode'
+}
+
+function isMergeNode(node: Node | null): node is Node & { data: MergeNodeData } {
+  return node?.type === 'mergeNode'
 }
 
 function isPipelineNode(node: Node | null): node is Node & { data: PipelineNodeData } {
@@ -262,6 +268,18 @@ export default function Sidebar() {
             alternate_templates={(selectedNode.data as PathInputNodeData).alternate_templates ?? []}
             aliases={(selectedNode.data as PathInputNodeData).aliases ?? {}}
             key_regex={(selectedNode.data as PathInputNodeData).key_regex ?? {}}
+          />
+        )}
+        {isMergeNode(selectedNode) && (
+          <MergeSettingsPanel
+            key={selectedNode.id}
+            id={selectedNode.id}
+            label={(selectedNode.data as MergeNodeData).label}
+            how={(selectedNode.data as MergeNodeData).how ?? 'exact'}
+            hows={(selectedNode.data as MergeNodeData).hows ?? []}
+            constituents={(selectedNode.data as MergeNodeData).constituents ?? []}
+            recordedHow={(selectedNode.data as MergeNodeData).recorded_how}
+            conflict={!!(selectedNode.data as MergeNodeData).conflict}
           />
         )}
         {isPipelineNode(selectedNode) && (

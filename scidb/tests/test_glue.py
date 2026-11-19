@@ -571,7 +571,7 @@ class TestFusionThroughForEach:
 
         for_each(
             sum_numeric,
-            inputs={"merged": Merge(Force, Aux)},
+            inputs={"merged": Merge(Force, Aux, name="merged")},
             outputs=[Analyzed],
             db=db,
             as_table=True,
@@ -595,7 +595,7 @@ class TestFusionThroughForEach:
         with caplog.at_level(logging.WARNING, logger="scidb"):
             for_each(
                 sum_numeric,
-                inputs={"merged": Merge(Force, Aux)},
+                inputs={"merged": Merge(Force, Aux, name="merged")},
                 outputs=[Analyzed],
                 db=db,
                 as_table=True,

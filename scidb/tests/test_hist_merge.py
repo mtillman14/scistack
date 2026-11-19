@@ -153,37 +153,37 @@ def reset_mocks():
 
 class TestMergeClass:
     def test_init_with_two_var_types(self):
-        m = Merge(GaitData, ForceData)
+        m = Merge(GaitData, ForceData, name="merged")
         assert len(m.tables) == 2
 
     def test_init_with_three_var_types(self):
-        m = Merge(StepLength, StepWidth, CadenceRate)
+        m = Merge(StepLength, StepWidth, CadenceRate, name="merged")
         assert len(m.tables) == 3
 
     def test_init_with_one_raises(self):
         with pytest.raises(ValueError, match="at least 2"):
-            Merge(GaitData)
+            Merge(GaitData, name="merged")
 
     def test_init_with_zero_raises(self):
         with pytest.raises(ValueError, match="at least 2"):
-            Merge()
+            Merge(name="merged")
 
     def test_nested_merge_raises(self):
         with pytest.raises(TypeError, match="Cannot nest Merge"):
-            Merge(GaitData, Merge(StepLength, StepWidth))
+            Merge(GaitData, Merge(StepLength, StepWidth, name="merged"), name="merged")
 
     def test_name_property(self):
-        m = Merge(GaitData, ForceData)
-        assert m.__name__ == "Merge(GaitData, ForceData)"
+        m = Merge(GaitData, ForceData, name="merged")
+        assert m.__name__ == "Merge(GaitData, ForceData, name='merged')"
 
     def test_name_with_fixed(self):
-        m = Merge(GaitData, Fixed(PareticSide, session="BL"))
+        m = Merge(GaitData, Fixed(PareticSide, session="BL"), name="merged")
         assert "Fixed(PareticSide, session=BL)" in m.__name__
         assert m.__name__.startswith("Merge(")
 
     def test_name_with_column_selection(self):
         cs = ColumnSelection(GaitData, ["force"])
-        m = Merge(cs, PareticSide)
+        m = Merge(cs, PareticSide, name="merged")
         name = m.__name__
         assert "Merge(" in name
         assert "PareticSide" in name
@@ -206,7 +206,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, ForceData)},
+            inputs={"data": Merge(GaitData, ForceData, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -233,7 +233,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, PareticSide)},
+            inputs={"data": Merge(GaitData, PareticSide, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -260,7 +260,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, PareticSide)},
+            inputs={"data": Merge(GaitData, PareticSide, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -283,7 +283,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"kinematics": Merge(StepLength, StepWidth)},
+            inputs={"kinematics": Merge(StepLength, StepWidth, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -309,7 +309,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"kinematics": Merge(StepLength, StepWidth)},
+            inputs={"kinematics": Merge(StepLength, StepWidth, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -335,7 +335,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(StepLength, StepWidth, CadenceRate)},
+            inputs={"data": Merge(StepLength, StepWidth, CadenceRate, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -358,7 +358,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(StepLength, StepWidth)},
+            inputs={"data": Merge(StepLength, StepWidth, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -391,7 +391,7 @@ class TestMergeInForEach:
 
         for_each(
             process,
-            inputs={"data": Merge(TrackingA, TrackingB)},
+            inputs={"data": Merge(TrackingA, TrackingB, name="merged")},
             outputs=[MockOutput],
             subject=[1, 2, 3],
             save=False,
@@ -418,7 +418,7 @@ class TestMergeInForEach:
 
         for_each(
             process,
-            inputs={"data": Merge(StepLength, StepWidth), "smoothing": 0.5},
+            inputs={"data": Merge(StepLength, StepWidth, name="merged"), "smoothing": 0.5},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -441,7 +441,7 @@ class TestMergeInForEach:
 
         for_each(
             analyze,
-            inputs={"data": Merge(StepLength, StepWidth)},
+            inputs={"data": Merge(StepLength, StepWidth, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -477,7 +477,7 @@ class TestMergeComposability:
 
         for_each(
             process,
-            inputs={"data": Merge(VarA, Fixed(VarB, session="BL"))},
+            inputs={"data": Merge(VarA, Fixed(VarB, session="BL"), name="merged")},
             outputs=[MockOutput],
             subject=[1],
             session=["A"],
@@ -508,7 +508,7 @@ class TestMergeComposability:
         cs = ColumnSelection(GaitData, ["force"])
         for_each(
             analyze,
-            inputs={"data": Merge(cs, PareticSide)},
+            inputs={"data": Merge(cs, PareticSide, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -555,7 +555,7 @@ class TestMergeComposability:
             inputs={
                 "data": Merge(
                     Fixed(ColumnSelection(TrackingGait, ["force"]), session="BL"),
-                    PareticSide,
+                    PareticSide, name="merged",
                 ),
             },
             outputs=[MockOutput],
@@ -594,7 +594,7 @@ class TestMergeErrors:
         with caplog.at_level(logging.DEBUG, logger="scifor"):
             for_each(
                 process,
-                inputs={"data": Merge(StepLength, FailingVar)},
+                inputs={"data": Merge(StepLength, FailingVar, name="merged")},
                 outputs=[MockOutput],
                 subject=[1],
             )
@@ -621,7 +621,7 @@ class TestMergeErrors:
         # The error is caught by for_each's [skip] handler
         for_each(
             process,
-            inputs={"data": Merge(StepLength, MultiVar)},
+            inputs={"data": Merge(StepLength, MultiVar, name="merged")},
             outputs=[MockOutput],
             subject=[1],
         )
@@ -639,7 +639,7 @@ class TestMergeErrors:
         # Column "force" appears in both — should skip with error
         for_each(
             process,
-            inputs={"data": Merge(GaitData, ForceData)},
+            inputs={"data": Merge(GaitData, ForceData, name="merged")},
             outputs=[MockOutput],
             subject=[1],
         )
@@ -656,7 +656,7 @@ class TestMergeErrors:
 
         for_each(
             process,
-            inputs={"data": Merge(StepLength, StepWidth)},
+            inputs={"data": Merge(StepLength, StepWidth, name="merged")},
             outputs=[MockOutput],
             subject=[1],
         )
@@ -668,7 +668,7 @@ class TestMergeErrors:
         with pytest.raises(TypeError, match="Fixed cannot wrap a Merge"):
             for_each(
                 lambda data: "result",
-                inputs={"data": Fixed(Merge(StepLength, StepWidth), session="A")},
+                inputs={"data": Fixed(Merge(StepLength, StepWidth, name="merged"), session="A")},
                 outputs=[MockOutput],
                 subject=[1],
             )
@@ -682,7 +682,7 @@ class TestMergeDryRun:
         """Dry run output shows merge constituents."""
         for_each(
             lambda data: "result",
-            inputs={"data": Merge(GaitData, PareticSide)},
+            inputs={"data": Merge(GaitData, PareticSide, name="merged")},
             outputs=[MockOutput],
             dry_run=True,
             subject=[1],
@@ -697,7 +697,7 @@ class TestMergeDryRun:
         """Dry run shows Fixed details within Merge."""
         for_each(
             lambda data: "result",
-            inputs={"data": Merge(GaitData, Fixed(PareticSide, session="BL"))},
+            inputs={"data": Merge(GaitData, Fixed(PareticSide, session="BL"), name="merged")},
             outputs=[MockOutput],
             dry_run=True,
             subject=[1],
@@ -712,14 +712,14 @@ class TestMergeDryRun:
         """Summary line shows Merge."""
         for_each(
             lambda data: "result",
-            inputs={"data": Merge(GaitData, ForceData)},
+            inputs={"data": Merge(GaitData, ForceData, name="merged")},
             outputs=[MockOutput],
             dry_run=True,
             subject=[1],
         )
 
         output = capsys.readouterr().out
-        assert "Merge(GaitData, ForceData)" in output
+        assert "Merge(GaitData, ForceData, name='merged')" in output
 
 
 # === Edge cases ===
@@ -739,7 +739,7 @@ class TestMergeEdgeCases:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, PareticSide)},
+            inputs={"data": Merge(GaitData, PareticSide, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -763,7 +763,7 @@ class TestMergeEdgeCases:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, PareticSide)},
+            inputs={"data": Merge(GaitData, PareticSide, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -788,7 +788,7 @@ class TestMergeEdgeCases:
 
         for_each(
             analyze,
-            inputs={"data": Merge(GaitData, ForceData)},
+            inputs={"data": Merge(GaitData, ForceData, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,
@@ -811,7 +811,7 @@ class TestMergeEdgeCases:
 
         for_each(
             analyze,
-            inputs={"data": Merge(StepLength, StepWidth, CadenceRate)},
+            inputs={"data": Merge(StepLength, StepWidth, CadenceRate, name="merged")},
             outputs=[MockOutput],
             subject=[1],
             save=False,

@@ -13,7 +13,7 @@
  *   - Background / Controls / Panel: built-in UI chrome from React Flow
  */
 
-import { showMessage, askConfirm } from '../dialogs'
+import { showMessage, askConfirm, askText } from '../dialogs'
 import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
@@ -37,6 +37,7 @@ import VariableNode from './VariableNode'
 import FunctionNode from './FunctionNode'
 import ParameterNode, { type ParameterNodeData } from './ParameterNode'
 import PathInputNode from './PathInputNode'
+import MergeNode from './MergeNode'
 import PipelineNode, { type PipelineNodeData } from './PipelineNode'
 import PortNode from './PortNode'
 import RunsDock from '../RunsDock'
@@ -80,6 +81,7 @@ const nodeTypes = {
   glueNode: GlueNode,
   parameterNode: ParameterNode,
   pathInputNode: PathInputNode,
+  mergeNode: MergeNode,
   pipelineNode: PipelineNode,
   // A submodule's generic input / output nodes (domain/ports.py).
   inputPortNode: PortNode,
@@ -671,7 +673,7 @@ export default function PipelineDAG() {
     e.dataTransfer.dropEffect = 'move'
   }, [])
 
-  const onDrop = useCallback((e: React.DragEvent) => {
+  const onDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
 
     // Pipeline dragged from the sidebar → place a pipeline USE in this scope.
@@ -728,7 +730,21 @@ export default function PipelineDAG() {
 
     const raw = e.dataTransfer.getData('application/scistack-node')
     if (!raw) return
-    const { nodeType, label } = JSON.parse(raw) as { nodeType: string; label: string }
+    const parsed = JSON.parse(raw) as { nodeType: string; label: string }
+    const { nodeType } = parsed
+    let { label } = parsed
+
+    // A Merge is named when it is placed: the name is its identity in history
+    // (docs/claude/merge-node.md). The backend refuses a taken name.
+    if (nodeType === 'mergeNode') {
+      const name = (await askText('Name this Merge (it identifies the joined table in history):', 'merged'))?.trim()
+      if (!name) return
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        void showMessage(`'${name}' is not a valid Merge name: use letters, digits and _ (it becomes name="${name}" in code).`)
+        return
+      }
+      label = name
+    }
 
     // A PathInput's name is its identity: one node per PathInput per canvas.
     // The backend refuses too (layout_service.put_layout); this only saves
@@ -742,7 +758,7 @@ export default function PipelineDAG() {
     }
 
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    const prefix = nodeType === 'functionNode' ? 'fn' : nodeType === 'parameterNode' ? 'param' : nodeType === 'pathInputNode' ? 'pathInput' : 'var'
+    const prefix = nodeType === 'functionNode' ? 'fn' : nodeType === 'parameterNode' ? 'param' : nodeType === 'pathInputNode' ? 'pathInput' : nodeType === 'mergeNode' ? 'merge' : 'var'
     const nodeId = `${prefix}__${label}__${Math.random().toString(36).slice(2, 8)}`
     pendingCenterRef.current.set(nodeId, position)
 
@@ -790,6 +806,7 @@ export default function PipelineDAG() {
             ...(nodeType === 'functionNode' ? fnExtra : {}),
             ...(nodeType === 'parameterNode' ? { values: [], source_kind: 'constant' } : {}),
             ...(nodeType === 'pathInputNode' ? { template: '', root_folder: null, aliases: {}, key_regex: {}, alternate_templates: [] } : {}),
+            ...(nodeType === 'mergeNode' ? { how: 'exact', constituents: [], conflict: false, hows: [] } : {}),
           },
         }
         return [...prev, newNode]

@@ -176,7 +176,7 @@ classdef TestToCsv < matlab.unittest.TestCase
             Side().save('R', 'subject', 1, 'session', 'B');
 
             out = fullfile(testCase.test_dir, 'merged.csv');
-            scidb.Merge(ScalarVar(), Side()).to_csv(out);
+            scidb.Merge(ScalarVar(), Side(), name="merged").to_csv(out);
 
             tbl = readtable(out, 'TextType', 'string');
             cols = string(tbl.Properties.VariableNames);

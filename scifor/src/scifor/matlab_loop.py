@@ -191,6 +191,8 @@ class _Input:
     groups: tuple = ()
     iterate: bool = False
     constituents: tuple = ()
+    merge_name: str = ""
+    how: str = "exact"
     template: str = ""
     text: str = ""
     path_input: Any = None
@@ -397,6 +399,8 @@ def _decode_input(raw: Any, numbers: np.ndarray, path_inputs: dict) -> _Input:
         groups=groups,
         iterate=bool(raw.get("iterate")),
         constituents=constituents,
+        merge_name=str(raw.get("merge_name") or ""),
+        how=str(raw.get("how") or "exact"),
         template=str(raw.get("template") or ""),
         text=str(raw.get("text") or ""),
         path_input=path_input,
@@ -524,7 +528,9 @@ def _surrogate(item: _Input, *, extents_for: "set[str] | None" = None) -> Any:
     if kind == "fixed" and item.inner is not None:
         return Fixed(_surrogate(item.inner, extents_for=extents_for), **item.fixed)
     if kind == "merge":
-        return Merge(*(_surrogate(c) for c in item.constituents))
+        return Merge(
+            *(_surrogate(c) for c in item.constituents), name=item.merge_name, how=item.how
+        )
     if kind == "path_input":
         return item.path_input
     if kind == "path_output":
@@ -802,7 +808,8 @@ def _delivery(item: _Input, surrogate: Any, run: RunPlan, filter_keys: "list[str
                                     located=part.kind != "fixed") if per_combo else 0,
                 "columns": _selected_columns(part, part_surrogate, filter_keys),
             })
-        return {"name": item.name, "kind": "data", "shape": "merge", "constituents": constituents}
+        return {"name": item.name, "kind": "data", "shape": "merge", "how": item.how,
+                "constituents": constituents}
     table = item.filter_table
     if table is None:
         raise MatlabWireError(f"data input {item.name!r} has no table")

@@ -12,10 +12,12 @@ from dataclasses import dataclass, field
 
 from scistack_gui.ids import (
     IN_HANDLE_PREFIX,
+    MERGE_ID_PREFIX,
     OUT_HANDLE_PREFIX,
     PARAM_ID_PREFIX,
     PATH_INPUT_ID_PREFIX,
     VAR_ID_PREFIX,
+    merge_slot_of,
     strip_placement,
 )
 
@@ -34,6 +36,11 @@ BINDING_COLNAME = "colname"
 # under the project's [outputs] folder. Stated on the node, never drawn as an
 # edge — see ``domain/pathoutput_inputs.py``.
 BINDING_PATHOUTPUT = "pathoutput"
+# ref: {"name", "how", "tables": [variable type names in slot order]}. The
+# parameter receives ``scidb.Merge(*tables, name=, how=)`` -- the joined table
+# (docs/claude/merge-node.md). Fed by a Merge node, never by a variable edge.
+BINDING_MERGE = "merge"
+MERGE_NODE_TYPE = "mergeNode"
 
 # Manual-node type for a glue node. A glue node is a *variant of a function
 # node*, not a new kind of thing: same ``in__{param}`` / ``out__`` handles, so
@@ -90,6 +97,19 @@ def variable_binding(
     if pool_variants:
         binding["pool_variants"] = True
     return binding
+
+
+def merge_binding(name: str, how: str, tables: list[str]) -> dict:
+    return {"kind": BINDING_MERGE, "ref": {"name": name, "how": how, "tables": list(tables)}}
+
+
+def merge_binding_key(ref: dict) -> str:
+    """The identity key of a Merge binding -- ``scifor.merge.merge_key``, the
+    spelling ``Merge.to_key()`` records, so a canvas Merge and its history
+    twin hash alike."""
+    from scifor.merge import merge_key
+
+    return merge_key(ref["name"], ref.get("how") or "exact", ref.get("tables") or [])
 
 
 def pathinput_binding(declared_name: str) -> dict:
@@ -186,6 +206,10 @@ def variable_types_view(bindings: dict[str, dict]) -> dict:
             out[param] = ref[0]
         else:
             out[param] = ref
+    # A Merge-fed argument as history spells it: its key (scidb records the
+    # Merge's to_key() as that argument's input type).
+    for param, ref in bindings_of_kind(bindings, BINDING_MERGE).items():
+        out[param] = merge_binding_key(ref)
     return out
 
 
@@ -197,7 +221,7 @@ def loadable_bindings(bindings: dict[str, dict]) -> dict[str, dict]:
     return {
         p: b
         for p, b in (bindings or {}).items()
-        if b["kind"] in (BINDING_VARIABLE, BINDING_PATHINPUT)
+        if b["kind"] in (BINDING_VARIABLE, BINDING_PATHINPUT, BINDING_MERGE)
     }
 
 
@@ -390,6 +414,73 @@ def is_glue_node(node_id: str, manual_nodes: dict[str, dict]) -> bool:
     return bool(meta) and meta.get("type") == GLUE_NODE_TYPE
 
 
+def is_merge_node(node_id: str, manual_nodes: dict[str, dict]) -> bool:
+    """Whether ``node_id`` names a Merge node (stored row or history id)."""
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id))
+    if meta:
+        return meta.get("type") == MERGE_NODE_TYPE
+    return str(strip_placement(node_id)).startswith(MERGE_ID_PREFIX)
+
+
+def merge_node_name(node_id: str, manual_nodes: dict[str, dict]) -> str:
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id)) or {}
+    return meta.get("label") or str(strip_placement(node_id))[len(MERGE_ID_PREFIX):]
+
+
+def merge_node_how(node_id: str, manual_nodes: dict[str, dict]) -> str:
+    """The node's ``how`` -- its config ``mergeHow`` (the settings panel and
+    adoption write it), else ``exact``."""
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id)) or {}
+    return (meta.get("config") or {}).get("mergeHow") or "exact"
+
+
+def merge_constituent_edges(
+    merge_node_id: str, manual_edges: list[dict]
+) -> list[tuple[int, dict]]:
+    """``[(slot, edge)]`` into the Merge node's slot ports, in join order."""
+    bare = strip_placement(merge_node_id)
+    out = []
+    for e in manual_edges:
+        if strip_placement(e.get("target", "")) != bare:
+            continue
+        slot = merge_slot_of(e.get("targetHandle"))
+        if slot is not None:
+            out.append((slot, e))
+    return sorted(out, key=lambda p: p[0])
+
+
+def resolve_merge_node(
+    merge_node_id: str,
+    manual_edges: list[dict],
+    manual_nodes: dict[str, dict],
+    existing_node_labels: dict[str, str],
+) -> dict | None:
+    """The Merge binding a Merge node contributes, or None when fewer than two
+    variables are wired to it. Constituents are read in slot order; a
+    non-variable source on a slot is reported and left out (put_edge refuses
+    drawing one; this guards stored rows)."""
+    name = merge_node_name(merge_node_id, manual_nodes)
+    tables: list[str] = []
+    for slot, e in merge_constituent_edges(merge_node_id, manual_edges):
+        src = resolve_source_binding(e.get("source", ""), manual_nodes, existing_node_labels)
+        if src is None or src["kind"] != BINDING_VARIABLE:
+            logger.warning(
+                "[edge_resolver] Merge %r slot %d is fed by %s, not a variable "
+                "-- left out", name, slot, e.get("source"),
+            )
+            continue
+        tables.append(src["ref"][0])
+    if len(tables) < 2:
+        logger.warning(
+            "[edge_resolver] Merge %r has %d variable(s) wired; it needs at least 2",
+            name, len(tables),
+        )
+        return None
+    how = merge_node_how(merge_node_id, manual_nodes)
+    logger.debug("[merge-node] %s <- Merge(%s, how=%s)", name, tables, how)
+    return merge_binding(name, how, tables)
+
+
 def resolve_glue_chain(
     glue_node_id: str,
     manual_edges: list[dict],
@@ -563,6 +654,25 @@ def resolve_function_edges(
         elif strip_placement(target) in fn_ids:
             # Edge into this function (variable input, PathInput, Parameter).
             th = edge.get("targetHandle") or ""
+
+            # Merge → fn. The parameter receives the joined table of the
+            # variables wired into the Merge node's slots.
+            if is_merge_node(source, manual_nodes):
+                if not th.startswith(IN_HANDLE_PREFIX):
+                    _drop(edge, "Merge edge carries no 'in__<param>' handle")
+                    continue
+                param = th[len(IN_HANDLE_PREFIX) :]
+                binding = resolve_merge_node(
+                    source, manual_edges, manual_nodes, existing_node_labels
+                )
+                if binding is not None:
+                    _bind(param, binding, edge)
+                    logger.info(
+                        "[merge-node] %r <- Merge %r how=%s %s",
+                        param, binding["ref"]["name"], binding["ref"]["how"],
+                        binding["ref"]["tables"],
+                    )
+                continue
 
             # Glue → fn. The parameter binds to whatever is at the HEAD of the
             # chain — variable, Parameter or PathInput — and the glue chain

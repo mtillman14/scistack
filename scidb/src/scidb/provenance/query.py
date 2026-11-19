@@ -26,6 +26,7 @@ from scidb.provenance.graph import (
     GLUE_RECORD_TYPES,
     GLUE_TYPE,
     INTERNAL_RECORD_TYPES,
+    MERGE_TYPE,
     NON_VARIABLE_INPUT_TYPES,
     PATHINPUT_GLUE_TYPE,
     PATHINPUT_TYPE,
@@ -331,6 +332,7 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
             "constants": {},
             "path_inputs": {},
             "glue_chains": {},
+            "merges": {},
         }
 
     cfgs: dict = {}
@@ -338,6 +340,12 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
         cfg = cfgs.setdefault(inv_id, _empty_cfg())
         if rtype == SELECTION_TYPE:
             continue  # a variant of this call site, never a different one
+        if rtype == MERGE_TYPE:
+            # Named by its key, as the forward call_site_inputs names it;
+            # applied after the loop so a constituent edge under the same
+            # param (lineage) cannot overwrite it.
+            cfg["merges"][param] = value_repr
+            continue
         if rtype == PATHINPUT_TYPE:
             cfg["path_inputs"][param] = value_repr
         elif rtype == CONSTANT_TYPE:
@@ -366,8 +374,10 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
         if inv_id in glue_invs or fn_name == SAVE_FUNCTION_NAME:
             out[inv_id] = None
             continue
+        base = cfgs.get(inv_id) or _empty_cfg()
+        base["input_types"].update(base.pop("merges", {}))
         cfg = {
-            **cfgs.get(inv_id, _empty_cfg()),
+            **base,
             "as_table": sorted(as_table) if as_table else [],
             "distribute": bool(distribute),
         }
@@ -513,6 +523,9 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             if rtype in (PATHINPUT_TYPE, PATHINPUT_GLUE_TYPE):
                 # PathInput spec (glued or not) — neither variable nor sweep
                 # constant, and nothing upstream to walk into.
+                continue
+            if rtype == MERGE_TYPE:
+                # The Merge's own record; its constituents are separate edges.
                 continue
             if rtype == SELECTION_TYPE:
                 # A coordinate like a constant, so it accumulates downstream and
@@ -1831,6 +1844,9 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 "declared_names": {},
                 "constant_glue": {},
                 "pathinput_glue": {},
+                # {param: Merge.to_key()} for Merge-fed arguments (the
+                # __merge__ record); their constituents stay in var_inputs.
+                "merges": {},
                 # The axis JSON of a call that narrowed below its level, or None.
                 "selection": None,
             }
@@ -1846,6 +1862,9 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 edges["path_inputs"][param_name] = value_repr
         elif rtype == SELECTION_TYPE:
             edges["selection"] = value_repr
+        elif rtype == MERGE_TYPE:
+            if value_repr is not None:
+                edges["merges"][param_name] = value_repr
         elif rtype == CONSTANT_TYPE:
             edges["constants"][param_name] = _safe_literal(value_repr)
         elif rtype == CONSTANT_GLUE_TYPE:
@@ -2008,10 +2027,16 @@ def stored_invocation_signature(duck, record_id: str):
     const_hashes: dict[str, str] = {}
     path_inputs: dict[str, str] = {}
     constant_glue: dict[str, str] = {}
+    merges: dict[str, str] = {}
     selection = None
     for param, in_rid, selector, rtype, chash, value_repr in rows:
         if rtype == SELECTION_TYPE:
             selection = value_repr
+            continue
+        if rtype == MERGE_TYPE:
+            # The Merge record (name, how, constituents): compared on its own,
+            # never mixed into the variable rid sets.
+            merges[param] = in_rid
             continue
         if rtype == CONSTANT_GLUE_TYPE:
             # A Parameter-fed glued constant: compared by its virtual record
@@ -2036,6 +2061,7 @@ def stored_invocation_signature(duck, record_id: str):
         "path_inputs": path_inputs,
         "constant_glue": constant_glue,
         "selection": selection,
+        "merges": merges,
         "run_options": run_options_label(*opts) if opts else run_options_label(False, None),
     }
 
@@ -2578,6 +2604,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
         # selectors per param from the edges (raw JSON strings)
         selectors = dict(edges.get("selectors", {}))
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
+        # A Merge-fed argument is named by its key, as the forward side names it.
+        input_types.update(edges.get("merges", {}))
         # Glue chains fed into this param, recovered from the virtual record's
         # producing invocation. Part of the config key: two call sites differing
         # only by their glue are different wirings.
@@ -3067,6 +3095,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
         input_types.update(edges["path_inputs"])
+        # A Merge-fed argument rides as its to_key() JSON too
+        # (scidb.provenance.graph.parse_merge_spec reads it back).
+        input_types.update(edges.get("merges", {}))
         glue_names = {
             i["param_name"]: list(i["glue_chain"])
             for i in var_inputs
@@ -4024,12 +4055,27 @@ def _predict_config_invocations(
     from scidb.provenance.graph import (
         compute_constant_record_id,
         compute_invocation_id,
+        compute_merge_record_id,
         compute_pathinput_record_id,
+        parse_merge_spec,
     )
 
     input_types = cfg["input_types"]
     if not input_types:
         return  # PathInput/no-DB-input config — realized_inputless_invocations covers it
+    # A Merge-fed argument (docs/claude/merge-node.md) binds the Merge record
+    # plus EVERY constituent record its join reads at the location
+    # (scidb.run.merge_lineage): pooled, never a cross product; a coarser
+    # constituent broadcasts. It is predicted from its constituents' types.
+    merges = {
+        p: spec
+        for p, spec in ((p, parse_merge_spec(v)) for p, v in input_types.items())
+        if spec is not None
+    }
+    merge_bindings = [
+        (p, compute_merge_record_id(input_types[p])) for p in sorted(merges)
+    ]
+    input_types = {p: v for p, v in input_types.items() if p not in merges}
     selectors = cfg["selectors"]
     across_variants = sorted(cfg.get("across_variants") or [])
     # A Parameter-fed glued constant's edge binds the virtual glue record the
@@ -4056,6 +4102,7 @@ def _predict_config_invocations(
         const_bindings.append(
             (_SELECTION_PARAM, compute_selection_record_id(selection_json))
         )
+    const_bindings += merge_bindings
     # ``defaults`` is ``{vtype: {schema_id: [rid, ...]} | None}`` from
     # ``variant_pins.default_records_by_schema``: when a pin reaches an input
     # type, a run feeds the PINNED DEFAULT records to an unnamed input
@@ -4087,7 +4134,12 @@ def _predict_config_invocations(
         for sid, rids in by_sid.items():
             for raw_rid, virt in zip(raw[p].get(sid, []), rids):
                 bp_by_rid[virt] = bp_by_rid.get(raw_rid, {})
-    param_names = list(input_types.keys())
+    # Each Merge constituent's current records, in join order.
+    merge_parts = {
+        p: [_current_records_by_schema(duck, t) for t in spec["types"] if t]
+        for p, spec in merges.items()
+    }
+    param_names = list(input_types.keys()) + sorted(merges)
     # (invocation_id, schema_id, location) of the level-aware branch, whose
     # output locations are settled after the loop in one batched read.
     planned: list = []
@@ -4120,18 +4172,29 @@ def _predict_config_invocations(
     iterated = cfg.get("iterated_keys")
     schema_keys = list(cfg.get("schema_keys") or [])
     if iterated is None or not schema_keys:
-        common_schema = (
-            set.intersection(*[set(m.keys()) for m in per_param.values()])
-            if per_param
-            else set()
-        )
+        # No level known: a Merge reads, per location, every constituent
+        # record stored exactly there (the never-run fallback's rough rule).
+        merge_by_sid: dict = {}
+        for p, parts in merge_parts.items():
+            union: dict = {}
+            for by_sid in parts:
+                for sid, rids in by_sid.items():
+                    union.setdefault(sid, []).extend(rids)
+            merge_by_sid[p] = union
+        maps = list(per_param.values()) + list(merge_by_sid.values())
+        common_schema = set.intersection(*[set(m.keys()) for m in maps]) if maps else set()
         for sid in common_schema:
-            # one record per choice: (param, [rid])
-            _emit({p: [(p, [rid]) for rid in per_param[p][sid]] for p in param_names}, sid)
+            # one record per choice: (param, [rid]); a Merge is ONE choice
+            choices = {p: [(p, [rid]) for rid in per_param[p][sid]] for p in per_param}
+            choices.update(
+                {p: [(p, sorted(set(m[sid])))] for p, m in merge_by_sid.items()}
+            )
+            _emit(choices, sid)
         return
 
     # Where every record of every param sits, in one query.
     all_sids = {sid for m in per_param.values() for sid in m}
+    all_sids |= {sid for parts in merge_parts.values() for m in parts for sid in m}
     locations = _schema_locations(duck, all_sids, schema_keys)
     iterated_set = set(iterated)
 
@@ -4160,11 +4223,64 @@ def _predict_config_invocations(
             else:
                 coarse.setdefault(p, []).append((loc, list(rids)))
 
+    # A Merge constituent serves a location with every record at or below it
+    # (pooled) plus the enclosing record (broadcast) -- how MergeLineage
+    # picks rows, so the prediction binds what the run bound.
+    merge_served: dict[str, list] = {}  # p -> [({L: [rid]}, [(loc, [rid])]) per constituent]
+    for p, parts in merge_parts.items():
+        served = []
+        for by_sid in parts:
+            part_columns = {k for sid in by_sid for k in locations.get(sid, {})}
+            at_or_below: dict = {}
+            enclosing: list = []
+            for sid, rids in by_sid.items():
+                loc = locations.get(sid, {})
+                if selection_axis is not None and not selection_axis.admits(loc, part_columns):
+                    continue
+                if set(loc) >= iterated_set:
+                    at_or_below.setdefault(_project(loc), []).extend(rids)
+                else:
+                    enclosing.append((loc, list(rids)))
+            served.append((at_or_below, enclosing))
+        merge_served[p] = served
+
+    def _merge_choice(p: str, L: tuple) -> "list | None":
+        """Every constituent record the join reads at *L*, or None when the
+        Merge's ``how`` skips *L* (exact/inner: a constituent is missing;
+        left/right: the first/last is; outer: all are)."""
+        present: list = []
+        rids_all: list = []
+        for at_or_below, enclosing in merge_served[p]:
+            rids = list(at_or_below.get(L, []))
+            rids += [
+                rid
+                for loc, rs in enclosing
+                if all(loc.get(k) == v for k, v in zip(iterated, L) if k in loc)
+                for rid in rs
+            ]
+            present.append(bool(rids))
+            rids_all.extend(rids)
+        how = merges[p]["how"]
+        if not present:
+            return None
+        if how in ("exact", "inner"):
+            ok = all(present)
+        elif how == "left":
+            ok = present[0]
+        elif how == "right":
+            ok = present[-1]
+        else:
+            ok = any(present)
+        return sorted(set(rids_all)) if ok else None
+
     # Candidate locations: every projected location a non-coarse param has
     # data at; each param must be able to serve it.
     candidates: set = set()
     for m in list(at_level.values()) + list(pooled.values()):
         candidates |= set(m)
+    for served in merge_served.values():
+        for at_or_below, _enclosing in served:
+            candidates |= set(at_or_below)
     # The OUTPUT location's schema row — the pair `present_invocation_schema_
     # pairs` will hold once the call has run. An aggregated input's records
     # sit below it, so it is looked up at the iterated level itself; before
@@ -4176,7 +4292,13 @@ def _predict_config_invocations(
         choices_by_param: dict = {}
         ok = True
         for p in param_names:
-            if p in at_level and L in at_level[p]:
+            if p in merges:
+                rids = _merge_choice(p, L)
+                if rids is None:
+                    ok = False
+                    break
+                choices_by_param[p] = [(p, rids)]  # one pooled choice
+            elif p in at_level and L in at_level[p]:
                 choices_by_param[p] = [(p, [rid]) for rid in at_level[p][L]]
             elif p in pooled and L in pooled[p]:
                 rids = pooled[p][L]
@@ -4272,6 +4394,8 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
     from scidb.model.input_spec import is_loadable, type_name
     from scidb.provenance.save import compute_input_selectors
 
+    from scifor import Merge as _Merge
+
     try:
         from scifor import PathInput as _PathInput
         from scifor import PathOutput as _PathOutput
@@ -4293,6 +4417,11 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
         if _PathOutput is not None and isinstance(spec, _PathOutput):
             continue
         if isinstance(spec, ColName):
+            continue
+        if isinstance(spec, _Merge):
+            # Named by its key, as call_site_inputs and the recorded
+            # __merge__ edge name it (docs/claude/merge-node.md).
+            input_types[name] = spec.to_key()
             continue
         if is_loadable(spec):
             if isinstance(spec, AcrossVariants):

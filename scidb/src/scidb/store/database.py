@@ -92,6 +92,7 @@ from scidb.store.db_helpers import (  # noqa: F401 — re-exported
 # Hoisted from function bodies (grug follow-up): no cycle, and already
 # loaded by `import scidb`, so this changes neither import order risk nor cost.
 from scidb.model.log import attach_log_file
+from scidb.provenance.graph import parse_merge_spec as _parse_merge_spec
 from scidb.provenance.graph import parse_path_input_spec as _parse_path_input
 from scidb.provenance.graph import split_call_site_outputs
 from scidb.run.pipeline import Pipeline
@@ -405,6 +406,11 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
                 if recorded:
                     entry["declared_names"][(fkey, param_name)] = recorded
                     functions[fkey]["path_input_names"][param_name] = recorded
+            elif _parse_merge_spec(type_val) is not None:
+                # A Merge-fed argument: its key (name, how, constituents)
+                # stays in input_params for the canvas to draw the Merge
+                # node; it is not a variable type.
+                functions[fkey]["input_params"][param_name] = type_val
             else:
                 all_var_types.add(type_val)
                 functions[fkey]["input_params"][param_name] = type_val

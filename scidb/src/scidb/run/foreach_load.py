@@ -17,6 +17,8 @@ from scidb.model.input_spec import variable_type
 from scidb.model.log import Log
 from scidb.model.roles import endpoint_kind as _roles_endpoint_kind
 from scidb.model.variant import Variant
+from scidb.run.merge_lineage import LoadedMerge
+from scidb.run.merge_lineage import MergeLineage
 from scidb.run.per_combo import PerComboLoader
 from scidb.run.per_combo import PerComboLoaderMerge
 from scidb.store.database import database_or_none
@@ -514,6 +516,7 @@ def _load_input(
                 f"[Merge] {var_spec.__name__}: variant filter={merge_var_filter!r}"
             )
 
+        lineage = MergeLineage()
         for sub_spec in var_spec.tables:
             if where is not None:
                 cls = _get_loadable_class_from_spec(sub_spec)
@@ -538,6 +541,13 @@ def _load_input(
                 branch_params_filter=branch_params_filter,
                 param_name=param_name,
                 use_default=use_default,
+            )
+            # Keep which records this constituent holds BEFORE the strip below:
+            # the lineage edges of the Merge-fed call (scidb.run.merge_lineage).
+            lineage.add(
+                getattr(sub_spec, "__name__", type(sub_spec).__name__),
+                loaded,
+                _schema_keys,
             )
             # Strip scidb metadata columns that would conflict when merged column-wise.
             # __record_id/__branch_params/version appear in every constituent but carry
@@ -571,7 +581,10 @@ def _load_input(
                 ),
             )
             loaded_tables.append(loaded)
-        return _scifor.Merge(*loaded_tables)
+        Log.debug(f"[merge] lineage: {param_name} <- {lineage.describe()}")
+        return LoadedMerge(
+            *loaded_tables, name=var_spec.name, how=var_spec.how, lineage=lineage
+        )
 
     # Fixed: check for Fixed(Merge(...)) error, then load inner
     if isinstance(var_spec, Fixed):
@@ -579,7 +592,7 @@ def _load_input(
             raise TypeError(
                 "Fixed cannot wrap a Merge. Use Fixed on individual "
                 "constituents inside the Merge instead: "
-                "Merge(Fixed(df1, ...), df2)"
+                "Merge(Fixed(df1, ...), df2, name=...)"
             )
         inner_loaded = _load_input(
             var_spec.data,
@@ -772,10 +785,19 @@ def _compute_merge_effective_ids(db, merge_spec: "Merge") -> set:
             )
             effective_sets.append(expanded)
 
-    # Intersection = Merge inner join result
+    # The locations the join keeps, folded left to right as merge_frames
+    # does: exact/inner keep both sides' (an exact join errors on the rest
+    # later), left keeps the accumulated side, right the new one, outer all.
+    how = getattr(merge_spec, "how", "exact")
     result = effective_sets[0]
     for s in effective_sets[1:]:
-        result = result & s
+        if how == "outer":
+            result = result | s
+        elif how == "right":
+            result = set(s)
+        elif how != "left":
+            result = result & s
+    Log.debug(f"[merge] effective locations how={how!r}: {len(result)} schema id(s)")
     return result
 
 

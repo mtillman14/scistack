@@ -65,7 +65,7 @@ def _reject_extra_args(receiver, args) -> None:
             f"to_csv() exports a single variable (or one Merge/ColumnSelection), "
             f"not {_spec_name(receiver)} plus extra variables. To export several "
             f"variables together, build the Merge explicitly and call to_csv on it: "
-            f"Merge({_spec_name(receiver)}, {_spec_name(specs[0])}).to_csv(...). "
+            f"Merge({_spec_name(receiver)}, {_spec_name(specs[0])}, name='...').to_csv(...). "
             f"Everything after 'filename' must be keyword metadata "
             f"(e.g. subject=1, where=..., version='all')."
         )
@@ -225,14 +225,19 @@ def build_flat_table(spec, *, where, version, db, metadata):
         part_dfs.append(part)
 
     # THE Merge rule (scifor.merge.merge_frames), over whole tables: join on
-    # shared schema keys; a shared data column, a location on one side only or
-    # no shared key is an error, never a silent drop.
+    # shared schema keys; a shared data column or no shared key is an error,
+    # and a location on one side only is an error unless the Merge's how=
+    # asks to drop / NaN-pad it (logged at WARN either way).
     labels = [var_type.__name__ for var_type, _c, _e in constituents]
     result = (
         part_dfs[0]
         if len(part_dfs) == 1
         else merge_frames(
-            part_dfs, list(_db.dataset_schema_keys), labels=labels, positional=False
+            part_dfs,
+            list(_db.dataset_schema_keys),
+            labels=labels,
+            positional=False,
+            how=getattr(spec, "how", "exact"),
         )
     )
 

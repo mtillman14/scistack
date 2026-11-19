@@ -56,7 +56,7 @@ class AcrossVariants:
             raise TypeError(
                 "AcrossVariants cannot wrap a Merge. branch_params are namespaced "
                 "per producing function, so pooling must happen per constituent: "
-                "Merge(AcrossVariants(A), B)."
+                "Merge(AcrossVariants(A), B, name='...')."
             )
         if isinstance(var_type, EachOf):
             raise TypeError(

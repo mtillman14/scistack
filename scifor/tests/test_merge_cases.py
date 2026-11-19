@@ -37,7 +37,9 @@ def _run(case: dict) -> pd.DataFrame:
     parts = [pd.DataFrame(p) for p in case["parts"]]
     drop = case.get("drop") or [False] * len(parts)
     parts = [drop_constant_keys(p, keys)[0] if d else p for p, d in zip(parts, drop)]
-    return merge_frames(parts, keys, positional=case.get("positional", True))
+    return merge_frames(
+        parts, keys, positional=case.get("positional", True), how=case.get("how", "exact")
+    )
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda c: f"{c['id']:02d}-{c['name']}")
@@ -48,7 +50,10 @@ def test_merge_case(case):
             _run(case)
         return
     got = _run(case)
-    want = pd.DataFrame(case["expect"])
+    # JSON null = an expected NaN (a NaN-padded cell, how != "exact").
+    want = pd.DataFrame(
+        {k: [float("nan") if x is None else x for x in v] for k, v in case["expect"].items()}
+    )
     assert list(got.columns) == list(want.columns)
     pd.testing.assert_frame_equal(
         got.reset_index(drop=True), want, check_dtype=False

@@ -135,7 +135,7 @@ def _reconstruct_input_for_keys(spec):
         - {"kind": "column_selection", "type_name": str, "columns": list[str]}
         - {"kind": "fixed", "inner": <spec>, "fixed_metadata": dict}
         - {"kind": "variant", "inner": <spec>, "branch_params": dict}
-        - {"kind": "merge", "specs": list[<spec>]}
+        - {"kind": "merge", "specs": list[<spec>], "name": str, "how": str}
         - {"kind": "pathinput", "spec": PathInput.to_spec() JSON}
 
     Anything else is returned unchanged (treated as a constant value).
@@ -197,7 +197,7 @@ def _reconstruct_input_for_keys(spec):
         from scifor import Merge
 
         subs = [_reconstruct_input_for_keys(s) for s in spec["specs"]]
-        return Merge(*subs)
+        return Merge(*subs, name=spec.get("name"), how=spec.get("how") or "exact")
     if kind == "pathinput":
         from scidb.model.log import Log
         from scifor.pathinput import PathInput

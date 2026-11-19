@@ -286,8 +286,10 @@ def compute_call_id(
     from scidb.run.foreach_config import CallSite, RunOptions
 
     from scistack_gui.domain.edge_resolver import (
+        BINDING_MERGE,
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
+        merge_binding_key,
         path_input_names,
     )
 
@@ -309,6 +311,9 @@ def compute_call_id(
                 # scidb's ForEachConfig writes `__across_variants` beside
                 # `__as_table` (a run option, not an input type).
                 across_variants.append(param)
+        elif kind == BINDING_MERGE:
+            # The key scidb records for a Merge-fed argument (Merge.to_key()).
+            inputs[param] = merge_binding_key(binding["ref"])
         elif kind == BINDING_PATHINPUT:
             names = path_input_names(binding["ref"])
             if len(names) != 1:

@@ -4,11 +4,12 @@ classdef Merge
 %   Merges 2+ variable inputs into a single MATLAB table that is passed
 %   as one argument to the function. Each constituent is loaded individually
 %   per iteration, converted to a keyed table (schema key columns + data
-%   columns), and inner-joined on common schema keys.
+%   columns), and joined on common schema keys by scifor.merge_tables.
 %
-%   When constituents return multiple records (e.g. iterating at a coarse
-%   level), the records are joined by their shared schema keys. Unmatched
-%   rows are dropped (inner join). When each constituent returns exactly
+%   name= (required) identifies the Merge (its node on the canvas). how=
+%   picks the join: "exact" (default) errors on a location present on one
+%   side only; "inner", "outer", "left", "right" drop or NaN-pad such rows
+%   like a SQL join, logged at WARN. When each constituent returns exactly
 %   one record, this reduces to a simple column-wise merge.
 %
 %   Table variables contribute all their columns. Array and scalar variables
@@ -26,7 +27,7 @@ classdef Merge
 %   Example:
 %       % Merge a table with a computed column
 %       scidb.for_each(@analyze, ...
-%           struct('data', scidb.Merge(GaitData(), PareticSide())), ...
+%           struct('data', scidb.Merge(GaitData(), PareticSide(), name="gait_side")), ...
 %           {Result()}, ...
 %           subject=[1 2 3]);
 %
@@ -34,43 +35,34 @@ classdef Merge
 %       scidb.for_each(@analyze, ...
 %           struct('data', scidb.Merge( ...
 %               GaitData("force"), ...
-%               scidb.Fixed(PareticSide(), session="BL"))), ...
+%               scidb.Fixed(PareticSide(), session="BL"), name="gait_bl")), ...
 %           {Result()}, ...
 %           subject=[1 2 3], session=["A" "B"]);
 %
 %       % Multi-record merge (joined by schema keys)
 %       scidb.for_each(@analyze, ...
-%           struct('data', scidb.Merge(GaitData(), PareticSide())), ...
+%           struct('data', scidb.Merge(GaitData(), PareticSide(), name="gait_side")), ...
 %           {Result()}, ...
 %           subject=[1 2 3]);
 
     properties (SetAccess = private)
         var_specs  cell  % Cell array of variable specs
+        name       string  % Identity of the Merge (node name), required
+        how        string = "exact"  % Join method, one of scifor.merge_hows()
     end
 
     methods
         function obj = Merge(varargin)
         %MERGE  Construct a Merge wrapper.
         %
-        %   M = scidb.Merge(VarA(), VarB(), ...)
+        %   M = scidb.Merge(VarA(), VarB(), ..., name="m")
+        %   M = scidb.Merge(VarA(), VarB(), ..., name="m", how="left")
         %
         %   Arguments:
         %       2+ variable specs: BaseVariable instances, Fixed wrappers,
         %       or BaseVariable instances with column selection.
 
-            if nargin < 2
-                error('scidb:Merge', ...
-                    'Merge requires at least 2 variable inputs, got %d.', nargin);
-            end
-
-            for i = 1:nargin
-                if isa(varargin{i}, 'scidb.Merge')
-                    error('scidb:Merge', ...
-                        'Cannot nest Merge inside another Merge.');
-                end
-            end
-
-            obj.var_specs = varargin;
+            [obj.var_specs, obj.name, obj.how] = scifor.merge_args(varargin, 'scidb:Merge');
         end
 
         function to_csv(obj, filename, varargin)
@@ -90,7 +82,7 @@ classdef Merge
         %
         %   Example:
         %       % subject,trial,StepLength,Speed
-        %       scidb.Merge(StepLength(), Speed()).to_csv("gait.csv", subject=1);
+        %       scidb.Merge(StepLength(), Speed(), name="gait").to_csv("gait.csv", subject=1);
 
             scidb.internal.validate_csv_filename(filename);
             scidb.internal.reject_csv_spec_args('Merge', varargin);
@@ -106,7 +98,8 @@ classdef Merge
             for i = 1:numel(obj.var_specs)
                 py_specs{i} = constituent_to_py(obj.var_specs{i});
             end
-            py_merge = py.scidb.model.merge.Merge(py_specs{:});
+            py_merge = py.scidb.model.merge.Merge(py_specs{:}, ...
+                pyargs('name', char(obj.name), 'how', char(obj.how)));
 
             scifor.Log.info('[to_csv] Merge(%d) -> %s (version=%s)', ...
                 numel(obj.var_specs), string(filename), version);
@@ -150,7 +143,7 @@ classdef Merge
                     parts{i} = class(spec);
                 end
             end
-            fprintf('  scidb.Merge(%s)\n', strjoin(parts, ', '));
+            fprintf('  scidb.Merge(%s, name="%s", how="%s")\n', strjoin(parts, ', '), obj.name, obj.how);
         end
     end
 end

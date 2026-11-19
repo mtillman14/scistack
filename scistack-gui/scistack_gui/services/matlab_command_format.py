@@ -668,6 +668,9 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
     — the two then have to be threaded through three emit sites each and only
     one of them gets updated.
     """
+    if _is_merge_entry(ref):
+        # A Merge entry reads its constituents' types (the preflight needs them).
+        return [str(t) for t in ref["merge"].get("tables") or []], [], False, False
     if isinstance(ref, dict):
         types = ref.get("types") or []
         if isinstance(types, str):
@@ -774,6 +777,30 @@ def _is_colname_entry(ref) -> bool:
     return isinstance(ref, dict) and bool(ref.get("colname"))
 
 
+def _is_merge_entry(ref) -> bool:
+    """Is this ``variable_inputs`` entry ``{"merge": {"name", "how", "tables"}}``
+    -- a parameter fed by a Merge node (docs/claude/merge-node.md)? Same map as
+    the variables, for the reason :func:`_is_colname_entry` gives."""
+    return isinstance(ref, dict) and isinstance(ref.get("merge"), dict)
+
+
+def _parse_merge(value) -> "dict | None":
+    """A recorded Merge key (``input_types`` value) parsed by THE parser
+    (``scidb.provenance.graph.parse_merge_spec``), else None."""
+    from scidb.provenance.graph import parse_merge_spec
+
+    return parse_merge_spec(value) if isinstance(value, str) else None
+
+
+def _format_merge_input(merge: dict) -> str:
+    """``scidb.Merge(A(), B(), name="m", how="left")`` -- what a code-side
+    MATLAB Merge looks like (``+scidb/Merge.m``)."""
+    parts = [f"{t}()" for t in merge.get("tables") or []]
+    parts.append(f'name="{_escape_matlab_dq(str(merge["name"]))}"')
+    parts.append(f'how="{_escape_matlab_dq(str(merge.get("how") or "exact"))}"')
+    return f"scidb.Merge({', '.join(parts)})"
+
+
 def _overlay_colname_inputs(inputs: dict, variable_inputs: "dict | None") -> dict:
     """Re-assert every ColName entry LAST, over whatever a history variant's
     constants, a PathInput or a Parameter put under the same name — the
@@ -812,6 +839,16 @@ def _variable_input_items(variable_inputs: "dict | None"):
                 param,
             )
             yield param, MATLAB_COLNAME_EXPR
+            continue
+        if _is_merge_entry(ref):
+            logger.info(
+                "generate_matlab_command: parameter %r is Merge %r how=%s of %s",
+                param,
+                ref["merge"].get("name"),
+                ref["merge"].get("how"),
+                ref["merge"].get("tables"),
+            )
+            yield param, _format_merge_input(ref["merge"])
             continue
         names, columns, iterate, pool_variants = _variable_binding_parts(ref)
         if not names:
@@ -1381,6 +1418,11 @@ def collect_var_types(variants: list[dict]) -> set[str]:
                 if parse_path_input(str(type_val)) is not None:
                     excluded_path_inputs += 1
                     continue
+                merge = _parse_merge(type_val)
+                if merge is not None:
+                    # A Merge key: register its constituents, never the key.
+                    all_var_types.update(t for t in merge["types"] if t)
+                    continue
                 if not isinstance(type_val, str):
                     # Unreachable when callers pass targets through
                     # matlab_command_service._matlab_runnable_targets; named
@@ -1525,7 +1567,12 @@ def _for_each_call_lines(
         inputs_dict = {}
         if isinstance(input_types, dict):
             for param_name, type_name in input_types.items():
-                if parse_path_input(str(type_name)) is None:
+                merge = _parse_merge(type_name)
+                if merge is not None:
+                    inputs_dict[param_name] = _format_merge_input(
+                        {"name": merge["name"], "how": merge["how"], "tables": merge["types"]}
+                    )
+                elif parse_path_input(str(type_name)) is None:
                     inputs_dict[param_name] = f"{type_name}()"
         # Overlay the canvas's current variable wiring on top of whatever
         # history recorded — same live-overlay rule as path_inputs below, and

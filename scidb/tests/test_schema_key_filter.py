@@ -274,7 +274,7 @@ class TestSchemaKeyFilterWithMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(Measurement, AuxMeasurement)},
+            inputs={"inputVal": Merge(Measurement, AuxMeasurement, name="merged")},
             outputs=[Measurement],
             as_table=True,
             where=schema_key("session").isin(["BL", "POST"]),
@@ -302,7 +302,7 @@ class TestSchemaKeyFilterWithMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(Measurement, AuxMeasurement)},
+            inputs={"inputVal": Merge(Measurement, AuxMeasurement, name="merged")},
             outputs=[Measurement],
             as_table=True,
             where=schema_key("subject") == 1,
@@ -409,7 +409,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(SubjectLabel, Measurement)},
+            inputs={"inputVal": Merge(SubjectLabel, Measurement, name="merged")},
             outputs=[Measurement],
             as_table=True,
             where=schema_key("session").isin(["BL"]),
@@ -437,7 +437,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(SubjectLabel, Measurement)},
+            inputs={"inputVal": Merge(SubjectLabel, Measurement, name="merged")},
             outputs=[Measurement],
             as_table=True,
             where=schema_key("session") == "POST",
@@ -474,7 +474,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
         # SessionSide == "U" is session-level; SubjectLabel is subject-level → skip for SubjectLabel
         for_each(
             collect,
-            inputs={"inputVal": Merge(SubjectLabel, SessionValue)},
+            inputs={"inputVal": Merge(SubjectLabel, SessionValue, name="merged")},
             outputs=[SessionValue],
             as_table=True,
             where=SessionSide == "U",
@@ -743,7 +743,7 @@ class TestSchemaKeyOnMergeConstituent:
 
         for_each(
             collect,
-            inputs={"merged": Merge(ComputedOutput, ComputedOutput2)},
+            inputs={"merged": Merge(ComputedOutput, ComputedOutput2, name="merged")},
             outputs=[CollectOut],
             where=schema_key("session").isin(["BL"]) & (FilterVar == "U"),
             as_table=True,

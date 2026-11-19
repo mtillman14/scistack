@@ -23,7 +23,7 @@ function varargout = for_each(fn, inputs, varargin)
 %   Inputs can be:
 %   - MATLAB tables        — filtered per combo by schema key columns
 %   - scifor.Fixed(tbl)    — table filtered with overridden metadata
-%   - scifor.Merge(t1, t2) — multiple tables merged column-wise per combo
+%   - scifor.Merge(t1, t2, name="m", how=...) — tables joined per combo
 %   - scifor.ColumnSelection(tbl, cols) — column extraction after filtering
 %   - scifor.PathInput / scifor.PathOutput — a path per combination
 %   - Constants            — passed directly to the function
@@ -404,7 +404,7 @@ function [d, numbers, path_inputs] = describe_input(name, v, candidates, opts, w
     elseif isa(v, 'scifor.Fixed')
         if isa(v.data, 'scifor.Merge')
             error('scifor:for_each', ['Fixed cannot wrap a Merge. Use Fixed on individual ' ...
-                'constituents inside the Merge instead: Merge(Fixed(tbl1, ...), tbl2)']);
+                'constituents inside the Merge instead: Merge(Fixed(tbl1, ...), tbl2, name=...)']);
         end
         d.kind = 'fixed';
         d.fixed = v.fixed_metadata;
@@ -423,6 +423,8 @@ function [d, numbers, path_inputs] = describe_input(name, v, candidates, opts, w
         d.groups = groups;
     elseif isa(v, 'scifor.Merge')
         d.kind = 'merge';
+        d.merge_name = char(v.name);
+        d.how = char(v.how);
         parts = cell(1, numel(v.tables));
         for i = 1:numel(v.tables)
             [parts{i}, numbers, path_inputs] = describe_input(sprintf('%s[%d]', name, i), ...
@@ -1113,9 +1115,10 @@ function result = prepare_merge(merge_spec, d, plan, c, metadata, opts)
         tbl = raw_table_of(merge_spec.tables{i});
         if pd.per_combo
             parts{i} = tbl(slice_rows(plan, pd.slice, c), :);
-            if height(parts{i}) == 0
+            if height(parts{i}) == 0 && merge_spec.how == "exact"
                 % A sparse grid, as for any other per-combo input: an
-                % expected skip (Python: NoDataError).
+                % expected skip (Python: NoDataError). A non-exact how
+                % decides for itself (merge_tables join_empty): NaN-pad or skip.
                 error('scifor:NoData', 'No data for this combo in merge[%d].', i - 1);
             end
             drop(i) = true;
@@ -1126,7 +1129,7 @@ function result = prepare_merge(merge_spec, d, plan, c, metadata, opts)
     end
 
     [merged, dropped_const] = scifor.merge_tables(parts, schema_keys, ...
-        'Drop', drop, 'Columns', columns);
+        'Drop', drop, 'Columns', columns, 'How', merge_spec.how);
     if ~isempty(opts.where)
         merged = apply_where_filter(merged, opts.where);
     end

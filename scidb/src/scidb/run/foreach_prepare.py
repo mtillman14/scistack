@@ -32,6 +32,8 @@ from scidb.run.bindings import RecordPool
 from scidb.run.bindings import RunBindings
 from scidb.run.bindings import Selection
 from scidb.run.bindings import signature_conflicts_with
+from scidb.run.merge_lineage import merge_lineages
+from scidb.run.merge_lineage import merge_rids_at
 from scidb.run.bindings import variant_signature
 from scidb.run.bindings import VariantGroup
 from scidb.run.foreach_call import RunContext
@@ -1544,6 +1546,7 @@ def _expand_aggregation(
     # Step 13: every input's binding, typed — decided once from what Step
     # 11 sorted the inputs into (`RunBindings`). Built BEFORE expansion so
     # each combination's `Selection` can be registered on it.
+    _merge_lineages = merge_lineages(loaded_inputs)
     run_bindings = _build_run_bindings(
         inputs,
         tracked_params=tracked_params,
@@ -1553,6 +1556,7 @@ def _expand_aggregation(
         pools=pools,
         iterated_keys=_iterated_keys_ordered,
         rid_to_bp=rid_to_bp,
+        merge_params=list(_merge_lineages),
     )
 
     # Expand combos over the observed signature combinations per combo —
@@ -1595,6 +1599,7 @@ def _expand_aggregation(
             for p, rid in fixed_rid_values.items():
                 if rid:
                     rids[p] = (str(rid),)
+            rids.update(merge_rids_at(_merge_lineages, combo))
             fc = dict(combo)
             axis = selection_axes.for_combo(combo) if selection_axes and rids else None
             fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups, axis))
@@ -1690,6 +1695,7 @@ def _expand_full_iteration(
 
     # Step 13: the typed bindings, BEFORE expansion so each combination's
     # `Selection` can be registered on them.
+    _merge_lineages = merge_lineages(loaded_inputs)
     run_bindings = _build_run_bindings(
         inputs,
         tracked_params=tracked_params,
@@ -1699,6 +1705,7 @@ def _expand_full_iteration(
         pools=None,
         iterated_keys=None,
         rid_to_bp=rid_to_bp,
+        merge_params=list(_merge_lineages),
     )
 
     # Expand each base combo with all valid rid-combos for that schema location
@@ -1739,6 +1746,8 @@ def _expand_full_iteration(
                     f"record(s) at this location; binding all for lineage"
                 )
             _fixed_rids[_cs_param] = tuple(str(r) for r in _rids)
+        # A Merge's constituent records at this location (lineage only).
+        _fixed_rids.update(merge_rids_at(_merge_lineages, combo))
 
         rid_lists: list = []
         rid_params: list = []

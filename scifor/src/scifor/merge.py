@@ -6,6 +6,28 @@ from scistacklog import Log
 
 from .column_selection import _display_name
 
+#: The join methods a Merge accepts. THE list: the GUI dropdown and MATLAB's
+#: validation read it from here (docs/claude/merge-node.md).
+#:   exact - every location on both sides, else an error (no row dropped)
+#:   inner - locations on both sides; one-side-only rows are dropped
+#:   outer - every location; missing values are NaN
+#:   left  - every left location; right-only rows dropped, gaps NaN
+#:   right - every right location; left-only rows dropped, gaps NaN
+MERGE_HOWS = ("exact", "inner", "outer", "left", "right")
+
+
+def merge_key(name: str, how: str, table_keys: "list[str]") -> str:
+    """The identity key of a Merge -- what :meth:`Merge.to_key` returns. THE
+    one spelling: the GUI predicts a canvas Merge's key through this (with the
+    constituents' type names) so canvas and history agree by construction,
+    as ``pathinput.path_input_key`` does for PathInputs."""
+    import json
+
+    return json.dumps(
+        {"__type": "Merge", "name": name, "how": how, "tables": list(table_keys)},
+        sort_keys=True,
+    )
+
 
 class Merge:
     """
@@ -26,7 +48,7 @@ class Merge:
         for_each(
             analyze,
             inputs={
-                "combined": Merge(gait_df, force_df),
+                "combined": Merge(gait_df, force_df, name="gait_force"),
             },
             subject=[1, 2, 3],
         )
@@ -38,6 +60,7 @@ class Merge:
                 "combined": Merge(
                     gait_df,
                     Fixed(paretic_df, session="BL"),
+                    name="gait_paretic",
                 ),
             },
             subject=[1, 2, 3],
@@ -45,16 +68,29 @@ class Merge:
         )
     """
 
-    def __init__(self, *tables: Any):
+    def __init__(self, *tables: Any, name: str, how: str = "exact"):
         if len(tables) < 2:
             raise ValueError(f"Merge requires at least 2 inputs, got {len(tables)}.")
         for t in tables:
             if isinstance(t, Merge):
                 raise TypeError("Cannot nest Merge inside another Merge.")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"Merge requires a non-empty name= (got {name!r}); it identifies "
+                f"the Merge node on the canvas and in history."
+            )
+        if how not in MERGE_HOWS:
+            raise ValueError(
+                f"Merge how={how!r} is not one of {list(MERGE_HOWS)}. 'exact' "
+                f"(the default) errors on any location present on one side only; "
+                f"the others drop or NaN-pad such rows, like a SQL join."
+            )
         self.tables = tables
+        self.name = name.strip()
+        self.how = how
 
-    def to_key(self) -> str:
-        """Return a canonical string for use as a version key."""
+    def table_keys(self) -> list[str]:
+        """Each constituent's identity spelling, in join order."""
         parts = []
         for spec in self.tables:
             if hasattr(spec, "to_key"):
@@ -63,7 +99,16 @@ class Merge:
                 parts.append(spec.__name__)
             else:
                 parts.append(repr(spec))
-        return f"Merge({', '.join(parts)})"
+        return parts
+
+    def to_key(self) -> str:
+        """The IDENTITY of this Merge as a JSON string: name, how and the
+        constituents in order (any of them changing is another computation).
+
+        The spelling is :func:`merge_key`'s; the ONE parser is
+        ``scidb.provenance.graph.parse_merge_spec``.
+        """
+        return merge_key(self.name, self.how, self.table_keys())
 
     def to_csv(
         self, filename: str, where=None, verbose: bool = False, **metadata: Any
@@ -91,7 +136,7 @@ class Merge:
 
         Example:
             # subject,trial,StepLength,Speed
-            Merge(step_df, speed_df).to_csv("gait.csv", subject=[1, 2])
+            Merge(step_df, speed_df, name="gait").to_csv("gait.csv", subject=[1, 2])
         """
         from .csv_export import export_merge_csv
 
@@ -118,7 +163,7 @@ class Merge:
             **metadata: Per-constituent row filters on matching schema columns.
 
         Example:
-            merged = Merge(step_df, speed_df)
+            merged = Merge(step_df, speed_df, name="gait")
             df = merged.as_df(subject=[1, 2])
         """
         from .csv_export import merge_to_dataframe
@@ -152,7 +197,8 @@ class Merge:
                 parts.append(spec.__name__)
             else:
                 parts.append(_display_name(spec))
-        return f"Merge({', '.join(parts)})"
+        how = "" if self.how == "exact" else f", how={self.how!r}"
+        return f"Merge({', '.join(parts)}, name={self.name!r}{how})"
 
 
 
@@ -241,7 +287,107 @@ def _listed(values) -> str:
     return f"[{shown}]{more}"
 
 
-def _merge_two(left, right, key_set, l_label, r_label, positional):
+def _join_how(left, right, keys, lk, rk, how, l_label, r_label, only_l, only_r):
+    """Rule 3 relaxed by an explicit ``how``: a key on one side only is kept
+    (NaN-padded) or dropped as a SQL join would, and each such row is logged
+    at WARN. Rows follow the driving side (right for ``right``, else left);
+    an ``outer`` join appends the right-only rows after. Columns and the
+    many-to-many / clash / empty errors are exactly as for ``exact``.
+    """
+    import pandas as pd
+
+    r_pos: dict = {}
+    for j, k in enumerate(rk):
+        r_pos.setdefault(k, []).append(j)
+    l_pos: dict = {}
+    for i, k in enumerate(lk):
+        l_pos.setdefault(k, []).append(i)
+
+    pairs: list[tuple] = []  # (left row or None, right row or None)
+    if how == "right":
+        for j, k in enumerate(rk):
+            pairs.extend((i, j) for i in l_pos.get(k, [None]))
+    else:
+        for i, k in enumerate(lk):
+            if k in r_pos:
+                pairs.extend((i, j) for j in r_pos[k])
+            elif how in ("left", "outer"):
+                pairs.append((i, None))
+        if how == "outer":
+            pairs.extend((None, j) for j, k in enumerate(rk) if k not in l_pos)
+
+    def _side(df, idx):
+        return df.reindex([-1 if x is None else x for x in idx]).reset_index(drop=True)
+
+    l_idx = [p[0] for p in pairs]
+    r_idx = [p[1] for p in pairs]
+    out_left = _side(left.reset_index(drop=True), l_idx)
+    # Key values come from whichever side has the row, so a right-only row
+    # keeps its key (and the column keeps its dtype when nothing is missing).
+    for key in keys:
+        out_left[key] = pd.Series(
+            [left[key].iat[i] if i is not None else right[key].iat[j] for i, j in pairs],
+            dtype=left[key].dtype if None not in l_idx else None,
+        )
+    out = pd.concat(
+        [out_left, _side(right.drop(columns=keys).reset_index(drop=True), r_idx)],
+        axis=1,
+    )
+
+    dropped_l = only_l if how in ("inner", "right") else []
+    dropped_r = only_r if how in ("inner", "left") else []
+    padded_l = only_r if how in ("right", "outer") else []  # left columns NaN
+    padded_r = only_l if how in ("left", "outer") else []  # right columns NaN
+    parts = []
+    if dropped_l:
+        parts.append(f"dropped {l_label}-only {keys} {_listed(dropped_l)}")
+    if dropped_r:
+        parts.append(f"dropped {r_label}-only {keys} {_listed(dropped_r)}")
+    if padded_l:
+        parts.append(f"NaN-padded {l_label} columns at {_listed(padded_l)}")
+    if padded_r:
+        parts.append(f"NaN-padded {r_label} columns at {_listed(padded_r)}")
+    if parts:
+        Log.warn(
+            f"[merge] {l_label} + {r_label} how={how!r}: " + "; ".join(parts),
+            layer="scifor",
+        )
+    Log.debug(
+        f"[merge] {l_label} + {r_label}: how={how!r} on {keys} "
+        f"({len(left)} x {len(right)} -> {len(out)} row(s))",
+        layer="scifor",
+    )
+    return out
+
+
+def _join_empty(left, right, how, l_label, r_label):
+    """A non-exact join where one side has no rows (at this combo, or at
+    all): the kept side's rows with the other side's columns NaN, or no rows.
+    The caller turns a 0-row result into "no data" (a skipped combo)."""
+    import pandas as pd
+
+    columns = list(left.columns) + [c for c in right.columns if c not in left.columns]
+    if len(right) == 0 and len(left) > 0 and how in ("left", "outer"):
+        out, kept, empty = left.reindex(columns=columns), l_label, r_label
+    elif len(left) == 0 and len(right) > 0 and how in ("right", "outer"):
+        out, kept, empty = right.reindex(columns=columns), r_label, l_label
+    else:
+        Log.warn(
+            f"[merge] {l_label} + {r_label} how={how!r}: "
+            f"{l_label if len(left) == 0 else r_label} has no rows -> no rows "
+            f"(dropped {len(left) + len(right)})",
+            layer="scifor",
+        )
+        return pd.DataFrame(columns=columns)
+    Log.warn(
+        f"[merge] {l_label} + {r_label} how={how!r}: {empty} has no rows; "
+        f"kept {len(out)} {kept} row(s) with {empty} columns NaN-padded",
+        layer="scifor",
+    )
+    return out.reset_index(drop=True)
+
+
+def _merge_two(left, right, key_set, l_label, r_label, positional, how="exact"):
     import pandas as pd
 
     shared = [c for c in left.columns if c in right.columns]
@@ -254,6 +400,8 @@ def _merge_two(left, right, key_set, l_label, r_label, positional):
             f"({sorted(key_set) if key_set else 'none'}); select the column "
             f"from one constituent with ColumnSelection, or rename it."
         )
+    if how != "exact" and (len(left) == 0 or len(right) == 0):
+        return _join_empty(left, right, how, l_label, r_label)
     for label, df in ((l_label, left), (r_label, right)):
         if len(df) == 0:
             raise ValueError(
@@ -298,6 +446,8 @@ def _merge_two(left, right, key_set, l_label, r_label, positional):
     l_set, r_set = set(lk), set(rk)
     only_l = [k for k in dict.fromkeys(lk) if k not in r_set]
     only_r = [k for k in dict.fromkeys(rk) if k not in l_set]
+    if how != "exact":
+        return _join_how(left, right, keys, lk, rk, how, l_label, r_label, only_l, only_r)
     if only_l or only_r:
         raise ValueError(
             f"Merge would drop rows: {l_label} and {r_label} do not cover the "
@@ -326,7 +476,9 @@ def _merge_two(left, right, key_set, l_label, r_label, positional):
     return out
 
 
-def merge_frames(parts, key_columns=None, *, labels=None, positional: bool = True):
+def merge_frames(
+    parts, key_columns=None, *, labels=None, positional: bool = True, how: str = "exact"
+):
     """Rules 2-5: combine constituent frames into one, left to right.
 
     Args:
@@ -337,7 +489,11 @@ def merge_frames(parts, key_columns=None, *, labels=None, positional: bool = Tru
             export with no schema set).
         labels: names for error messages (default ``merge[i]``).
         positional: allow the no-shared-key column-wise concatenation.
+        how: one of :data:`MERGE_HOWS`, applied at every left-to-right step.
+            Only changes what happens to a key on one side only (rule 3).
     """
+    if how not in MERGE_HOWS:
+        raise ValueError(f"Merge how={how!r} is not one of {list(MERGE_HOWS)}.")
     if not parts:
         raise ValueError("Merge has no constituents.")
     labels = list(labels) if labels else [f"merge[{i}]" for i in range(len(parts))]
@@ -347,7 +503,7 @@ def merge_frames(parts, key_columns=None, *, labels=None, positional: bool = Tru
         raise ValueError(f"Cannot merge: {acc_label} has no rows.")
     for label, part in zip(labels[1:], parts[1:]):
         acc = _merge_two(
-            acc, part.reset_index(drop=True), key_set, acc_label, label, positional
+            acc, part.reset_index(drop=True), key_set, acc_label, label, positional, how
         )
         acc_label = f"{acc_label}+{label}"
     return acc

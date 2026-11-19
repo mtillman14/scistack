@@ -19,6 +19,8 @@ from scidb.provenance.graph import strip_path_input_specs as _strip_path_input_s
 from scistack_gui.ids import (
     FN_ID_PREFIX,
     IN_HANDLE_PREFIX,
+    MERGE_ID_PREFIX,
+    MERGE_OUT_HANDLE,
     PARAM_ID_PREFIX,
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
@@ -26,6 +28,8 @@ from scistack_gui.ids import (
     fn_node_id,
     in_handle,
     out_handle,
+    merge_node_id,
+    merge_slot_handle,
     param_node_id,
     parse_fn_node_id,
     parse_placement_id,
@@ -184,7 +188,9 @@ class GraduationAction:
 #: even when the twin's placement is already positioned (2026-10-01). Function
 #: nodes are not here: a second same-named function node can be a genuinely
 #: new call site, and they graduate by wiring (graph_service refinement).
-ENTITY_NODE_TYPES = frozenset({"variableNode", "pathInputNode", "parameterNode"})
+ENTITY_NODE_TYPES = frozenset(
+    {"variableNode", "pathInputNode", "parameterNode", "mergeNode"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1621,6 +1627,72 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
 
 
 
+def merge_specs_from_history(fn_input_params: dict[FnKey, dict]) -> dict[str, dict]:
+    """``{Merge name: spec}`` from every call site's recorded inputs.
+
+    A Merge-fed argument is recorded as the Merge's ``to_key()``
+    (``scidb.provenance.graph.parse_merge_spec`` is THE parser). Each spec:
+    ``{"how", "types", "tables", "functions": [(fkey, argument)],
+    "conflict": bool}``. One NAME is one node; a name recorded with two
+    different how/constituent lists is drawn from the first and flagged
+    ``conflict`` (WARN), never split silently.
+    """
+    from scidb.provenance.graph import parse_merge_spec
+
+    specs: dict[str, dict] = {}
+    for fkey, params in fn_input_params.items():
+        for arg, value in params.items():
+            spec = parse_merge_spec(value) if isinstance(value, str) else None
+            if spec is None:
+                continue
+            name = spec["name"] or "merge"
+            entry = specs.get(name)
+            if entry is None:
+                entry = specs[name] = {
+                    "how": spec["how"],
+                    "types": spec["types"],
+                    "tables": spec["tables"],
+                    "functions": [],
+                    "conflict": False,
+                }
+            elif (entry["how"], entry["tables"]) != (spec["how"], spec["tables"]):
+                if not entry["conflict"]:
+                    logger.warning(
+                        "[merge-node] Merge %r recorded with two definitions: "
+                        "how=%s %s and how=%s %s -- drawing the first",
+                        name, entry["how"], entry["tables"], spec["how"], spec["tables"],
+                    )
+                entry["conflict"] = True
+            entry["functions"].append((fkey, arg))
+    return specs
+
+
+def build_merge_nodes(specs: dict[str, dict]) -> list[dict]:
+    """One ``mergeNode`` per Merge name history recorded. ``hows`` is
+    ``scifor.merge.MERGE_HOWS`` (THE list) so the panel offers no other."""
+    from scifor.merge import MERGE_HOWS
+
+    nodes = []
+    for name, spec in sorted(specs.items()):
+        nodes.append(
+            {
+                "id": merge_node_id(name),
+                "type": "mergeNode",
+                "position": {"x": 0, "y": 0},
+                "data": {
+                    "label": name,
+                    "how": spec["how"],
+                    "recorded_how": spec["how"],
+                    "constituents": list(spec["types"]),
+                    "conflict": spec["conflict"],
+                    "hows": list(MERGE_HOWS),
+                },
+            }
+        )
+    logger.debug("[graph_builder] built %d Merge node(s)", len(nodes))
+    return nodes
+
+
 def input_port_order(signature: list[str], names) -> list[str]:
     """THE order of a function node's input ports.
 
@@ -2030,10 +2102,38 @@ def build_edges(
     # Variable → function edges (one per call-site target).
     logger.debug("[graph_builder] building variable → function edges")
     hidden_var_to_fn = 0
+    from scidb.provenance.graph import parse_merge_spec
+
+    drawn_merges: set[str] = set()
     for fkey, params in fn_input_params.items():
         fn, cid = fkey
         target_id = fn_node_id(fn, cid)
         for param_name, in_type in params.items():
+            merge = parse_merge_spec(in_type) if isinstance(in_type, str) else None
+            if merge is not None:
+                # A Merge-fed argument: Merge node -> fn, and once per Merge
+                # name its constituents -> the Merge node's slots (join order).
+                mid = merge_node_id(merge["name"])
+                history_edges = [
+                    (mid, target_id, in_handle(param_name), MERGE_OUT_HANDLE)
+                ]
+                if mid not in drawn_merges:
+                    drawn_merges.add(mid)
+                    history_edges += [
+                        (var_node_id(t), mid, merge_slot_handle(i), None)
+                        for i, t in enumerate(merge["types"])
+                        if t
+                    ]
+                for src, tgt, th, sh in history_edges:
+                    edge_id = connection_id(src, tgt, th)
+                    if edge_id in hidden_edge_ids:
+                        hidden_hits.append(edge_id)
+                        continue
+                    edge = {"id": edge_id, "source": src, "target": tgt, "targetHandle": th}
+                    if sh:
+                        edge["sourceHandle"] = sh
+                    edges.append(edge)
+                continue
             if (target_id, param_name) in via_glue:
                 via_glue_hits.append(f"{var_node_id(in_type)}->{fn}.{param_name}")
                 continue
@@ -2445,7 +2545,8 @@ def visible_manual_edges(
 def endpoint_ref(node_id: str, manual_nodes: "dict[str, dict] | None" = None) -> str:
     """The canonical text of one end of a connection: WHAT the node is, not
     which id or placement it has. `fn:{name}:{token}` for a function node, and
-    `var:{type}`, `param:{declared name}`, `pi:{declared name}` for an entity,
+    `var:{type}`, `param:{declared name}`, `pi:{declared name}`, `mg:{Merge name}`
+    for an entity,
     whether the node is DB-derived (`var__X`, `var__X::main`) or hand-placed
     (`var__X__abc123`, read through its stored label). Anything else (a glue
     node, an unrecognised id) is `node:{bare id}`.
@@ -2461,6 +2562,8 @@ def endpoint_ref(node_id: str, manual_nodes: "dict[str, dict] | None" = None) ->
     kind = meta.get("type")
     if bare.startswith(PATH_INPUT_ID_PREFIX) or kind == "pathInputNode":
         return f"pi:{meta.get('label') or bare[len(PATH_INPUT_ID_PREFIX):]}"
+    if bare.startswith(MERGE_ID_PREFIX) or kind == "mergeNode":
+        return f"mg:{meta.get('label') or bare[len(MERGE_ID_PREFIX):]}"
     if bare.startswith(PARAM_ID_PREFIX) or kind == "parameterNode":
         return f"param:{meta.get('label') or bare[len(PARAM_ID_PREFIX):]}"
     var = node_id_to_var_label(node_id or "", {}, manual_nodes)
@@ -3689,6 +3792,16 @@ def build_manual_node(
         extra = {"values": pending_vals}
     elif meta["type"] == "pathInputNode":
         extra = {"template": "", "root_folder": None, "aliases": {}, "key_regex": {}, "alternate_templates": []}
+    elif meta["type"] == "mergeNode":
+        from scifor.merge import MERGE_HOWS
+
+        cfg = node_config or meta.get("config") or {}
+        extra = {
+            "how": cfg.get("mergeHow") or "exact",
+            "constituents": [],
+            "conflict": False,
+            "hows": list(MERGE_HOWS),
+        }
     elif meta["type"] == "glueNode":
         # A glue node is a functionNode VARIANT: same in__{param} / out__
         # handle contract, so edges resolve with no new branch. What it does

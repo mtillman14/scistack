@@ -820,6 +820,8 @@ def for_each_describe_loaded_input(val):
         return {
             "kind": "merge",
             "tables": [for_each_describe_loaded_input(t) for t in val.tables],
+            "name": val.name,
+            "how": val.how,
         }
     if isinstance(val, _SciforPathInput):
         # PathInput is resolved per-combo by MATLAB's +scifor/for_each.m

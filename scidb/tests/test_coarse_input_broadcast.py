@@ -158,7 +158,7 @@ def test_merge_with_coarse_constituent_still_broadcasts(db):
 
     for_each(
         record,
-        {"merged": Merge(TrialSignal, Demographics), "side": Demographics},
+        {"merged": Merge(TrialSignal, Demographics, name="merged"), "side": Demographics},
         [Combined],
         subject=["S01", "S02"],
         session=["BL", "POST"],

@@ -34,6 +34,7 @@ connection_id(source, target, target_handle, manual_nodes) = e__{src}__{tgt}__{a
 | variable (DB-derived or hand-placed) | `var:{type}` |
 | Parameter | `param:{declared name}` |
 | PathInput | `pi:{declared name}` |
+| Merge | `mg:{Merge name}` (its input ports are slots `in__m{n}`, so the port part is `m{n}`) |
 | anything else (glue, unknown) | `node:{bare id}` |
 
 A hand-placed node is read through its stored label, and placement suffixes
@@ -137,6 +138,11 @@ Binding semantics, in `edge_resolver` / `manual_input_overrides` /
   records one wiring per arm and dispatch claims each
   (`edge_resolver.path_input_names` / `path_input_arm_bindings`);
 - a glue node chains.
+- a Merge node joins: the variables on its slots (ascending slot number) become
+  ONE `merge` binding of the argument its output feeds
+  (`edge_resolver.resolve_merge_node`); a Merge-fed argument takes nothing
+  else, and only variables feed a slot (`layout_service._refuse_illegal_merge_wire`).
+  See `merge-node.md`.
 
 Edge existence, visibility and identity are not kind-specific.
 

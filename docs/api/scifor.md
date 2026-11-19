@@ -110,7 +110,7 @@ If `fn` returns a DataFrame, its columns are flattened into the result. If one c
 
 ## Input wrappers
 
-A wrapper changes how one input is sliced for each call. Wrappers nest (`Fixed(Merge(a, b), session="BL")`), and `scidb.for_each` takes the same classes, with variable classes in place of DataFrames.
+A wrapper changes how one input is sliced for each call. Wrappers nest (`Merge(Fixed(a, session="BL"), b, name="ab")`), and `scidb.for_each` takes the same classes, with variable classes in place of DataFrames.
 
 | Wrapper | Use it to |
 |---|---|
@@ -145,20 +145,23 @@ struct('baseline', scifor.Fixed(tbl, session="BL"), 'current', tbl)
 ### Merge
 
 ```python
-Merge(*tables)
+Merge(*tables, name, how="exact")
 ```
 
-Slice each table, then join them on their shared schema keys into one DataFrame. Takes two or more tables, which may be `Fixed` or `ColumnSelection`. A `Merge` can't contain another `Merge`. A data column present in two tables, or a location present on only one side, is an error.
+Slice each table, then join them on their shared schema keys into one DataFrame. Takes two or more tables, which may be `Fixed` or `ColumnSelection`. A `Merge` can't contain another `Merge`. A data column present in two tables is an error.
+
+- `name` (required) identifies the Merge: it is its node on the GUI canvas and part of the consuming function's identity.
+- `how` decides what happens to a location present on only one side: `"exact"` (default) raises an error, `"inner"` drops it, `"outer"` keeps every location with missing values as NaN, `"left"` / `"right"` keep every location of the first / last table. Dropped and NaN-padded rows are logged as warnings. Changing `how` makes a new variant.
 
 /// tab | Python
 ```python
-inputs={"both": Merge(gait_df, Fixed(force_df, session="BL"))}
+inputs={"both": Merge(gait_df, Fixed(force_df, session="BL"), name="gait_force", how="left")}
 ```
 ///
 
 /// tab | MATLAB
 ```matlab
-struct('both', scifor.Merge(gait_tbl, scifor.Fixed(force_tbl, session="BL")))
+struct('both', scifor.Merge(gait_tbl, scifor.Fixed(force_tbl, session="BL"), name="gait_force", how="left"))
 ```
 ///
 

@@ -59,7 +59,7 @@ class TestIsinstanceUnification:
         # DataFrames, it can't load variable types from a database), so
         # it's a subclass, not the identical object.
         assert issubclass(Merge, SciforMerge)
-        assert isinstance(Merge(Measurement, Measurement), SciforMerge)
+        assert isinstance(Merge(Measurement, Measurement, name="merged"), SciforMerge)
 
     def test_colname_is_scifor_colname(self):
         assert ColName is SciforColName

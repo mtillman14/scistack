@@ -1704,6 +1704,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     from scistack_gui.domain import column_selection as _column_selection
     from scistack_gui.domain.edge_resolver import (
         BINDING_COLNAME,
+        BINDING_MERGE,
         BINDING_PARAMETER,
         BINDING_PATHINPUT,
         BINDING_PATHOUTPUT,
@@ -1762,6 +1763,25 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                     ", ".join(type_names),
                     _column_selection.describe(sel),
                 )
+
+        elif kind == BINDING_MERGE:
+            # The joined table of the Merge node's constituents, exactly as a
+            # code-side scidb.Merge (docs/claude/merge-node.md).
+            from scidb import Merge
+
+            inputs[param] = Merge(
+                *(registry.get_variable_class(t) for t in ref["tables"]),
+                name=ref["name"],
+                how=ref.get("how") or "exact",
+            )
+            logger.info(
+                "[execution] '%s': input '%s' is Merge %r how=%s of %s",
+                function_name,
+                param,
+                ref["name"],
+                ref.get("how") or "exact",
+                ref["tables"],
+            )
 
         elif kind == BINDING_PATHINPUT:
             arms = []
@@ -1968,6 +1988,7 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     from scistack_gui.domain import column_selection as _cs
     from scistack_gui.domain.edge_resolver import (
         BINDING_COLNAME,
+        BINDING_MERGE,
         BINDING_PATHOUTPUT,
         BINDING_VARIABLE,
     )
@@ -1988,6 +2009,10 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
                 continue
             if binding.get("kind") == BINDING_COLNAME:
                 out[param] = {"colname": True}
+                continue
+            if binding.get("kind") == BINDING_MERGE:
+                # Rendered as scidb.Merge(...) (matlab_command_format._is_merge_entry).
+                out[param] = {"merge": dict(binding["ref"])}
                 continue
             if binding.get("kind") != BINDING_VARIABLE:
                 continue
@@ -2068,6 +2093,7 @@ def default_schema_level(
     from scidb.run.schema_level import input_levels, resolve_schema_level
     from scistack_gui.project import registry
     from scistack_gui.domain.edge_resolver import (
+        BINDING_MERGE,
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
         path_input_names,
@@ -2098,6 +2124,8 @@ def default_schema_level(
             ref = binding.get("ref")
             if kind == BINDING_VARIABLE:
                 type_names.update(ref if isinstance(ref, (list, tuple)) else [ref])
+            elif kind == BINDING_MERGE:
+                type_names.update(ref.get("tables") or [])
             elif kind == BINDING_PATHINPUT:
                 path_inputs.extend(
                     registry_pis[n] for n in path_input_names(ref) if n in registry_pis

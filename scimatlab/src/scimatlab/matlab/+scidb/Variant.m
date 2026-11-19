@@ -18,7 +18,7 @@ classdef Variant
 %
 %   Variant may also be a Merge constituent for per-constituent pinning:
 %
-%       scidb.Merge(scidb.Variant(A, low_hz=20), B)
+%       scidb.Merge(scidb.Variant(A, low_hz=20), B, name="a_b")
 %
 %   branch_params are namespaced per producing function (e.g. bandpass.low_hz);
 %   a bare name (low_hz) is matched by suffix at load time.
@@ -73,7 +73,7 @@ classdef Variant
                     ['Variant cannot wrap a Merge. branch_params are namespaced ', ...
                      'per producing function, so one branch_param cannot ', ...
                      'sensibly broadcast across Merge constituents. Pin per ', ...
-                     'constituent instead: Merge(Variant(A, low_hz=20), B).']);
+                     'constituent instead: Merge(Variant(A, low_hz=20), B, name=...).']);
             end
 
             if isa(var_type, 'scifor.EachOf')

@@ -1264,7 +1264,7 @@ function val = coerce_meta_columns(val, meta_original_classes)
                 new_tables{i} = coerce_meta_columns(inner, meta_original_classes);
             end
         end
-        val = scifor.Merge(new_tables{:});
+        val = scifor.Merge(new_tables{:}, name=val.name, how=val.how);
         return;
     end
 end
@@ -1315,7 +1315,7 @@ function val = build_scifor_input_from_desc(desc)
 %     'dataframe'         -> MATLAB table  (via from_python)
 %     'fixed'             -> scifor.Fixed(inner, name, value, ...)
 %     'column_selection'  -> scifor.ColumnSelection(inner_table, cols)
-%     'merge'             -> scifor.Merge(inner1, inner2, ...)
+%     'merge'             -> scifor.Merge(inner1, inner2, ..., name=, how=)
 %     'raw'               -> from_python(value) (constants, etc.)
 
     kind = char(desc{'kind'});
@@ -1368,7 +1368,8 @@ function val = build_scifor_input_from_desc(desc)
                 end
                 tables_cell{ti} = inner;
             end
-            val = scifor.Merge(tables_cell{:});
+            val = scifor.Merge(tables_cell{:}, name=string(desc{'name'}), ...
+                how=string(desc{'how'}));
 
         case 'pathinput'
             % The whole to_spec() JSON — aliases and key_regex included.
@@ -1555,7 +1556,8 @@ function spec = describe_input_for_python(val)
         for i = 1:numel(val.var_specs)
             sub_specs{i} = describe_input_for_python(val.var_specs{i});
         end
-        spec = py.dict(pyargs('kind', 'merge', 'specs', py.list(sub_specs)));
+        spec = py.dict(pyargs('kind', 'merge', 'specs', py.list(sub_specs), ...
+            'name', char(val.name), 'how', char(val.how)));
 
     elseif isa(val, 'scidb.Fixed')
         inner_desc = describe_input_for_python(val.var_type);

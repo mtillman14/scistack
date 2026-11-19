@@ -39,6 +39,67 @@ class PortlessEdgeError(ActionableError, ValueError):
     what to do, so the journal files it as a setup problem."""
 
 
+class MergeWireError(ActionableError, ValueError):
+    """An edge a Merge node cannot take (docs/claude/merge-node.md): only
+    variables feed its slots, one per slot, and a Merge-fed argument has no
+    other source. A refusal whose message says what to do."""
+
+
+def _refuse_illegal_merge_wire(
+    manual_nodes: dict, existing_edges: list, source: str, target: str, target_handle
+) -> None:
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_VARIABLE,
+        is_merge_node,
+        merge_node_name,
+        resolve_source_binding,
+    )
+    from scistack_gui.ids import IN_HANDLE_PREFIX, merge_slot_of, strip_placement
+
+    def _same(a: str, b: str) -> bool:
+        return strip_placement(a or "") == strip_placement(b or "")
+
+    def _refuse(msg: str) -> None:
+        logger.warning("[layout_service] put_edge refused: %s", msg)
+        raise MergeWireError(msg)
+
+    if is_merge_node(target, manual_nodes):
+        name = merge_node_name(target, manual_nodes)
+        if merge_slot_of(target_handle) is None:
+            _refuse(f"connect to one of Merge '{name}'s input ports")
+        if is_merge_node(source, manual_nodes):
+            _refuse(f"a Merge cannot feed another Merge ('{name}'); merge all the variables in one")
+        src = resolve_source_binding(source, manual_nodes, {})
+        if src is None or src["kind"] != BINDING_VARIABLE:
+            _refuse(
+                f"only variables can be merged; '{source}' cannot feed Merge '{name}'. "
+                f"Save it to a variable first"
+            )
+        if any(
+            _same(e.get("target"), target) and e.get("targetHandle") == target_handle
+            for e in existing_edges
+        ):
+            _refuse(f"Merge '{name}' port {target_handle} already has a variable; use the empty port")
+        return
+
+    if not target_handle:
+        return
+    on_port = [
+        e for e in existing_edges
+        if _same(e.get("target"), target) and e.get("targetHandle") == target_handle
+    ]
+    if is_merge_node(source, manual_nodes) and on_port:
+        _refuse(
+            f"'{target_handle[len(IN_HANDLE_PREFIX):]}' already has an input; a Merge-fed "
+            f"argument takes the Merge alone. Remove the other edge first"
+        )
+    if any(is_merge_node(e.get("source", ""), manual_nodes) for e in on_port):
+        _refuse(
+            f"'{target_handle[len(IN_HANDLE_PREFIX):]}' is fed by a Merge; add the variable "
+            f"to the Merge instead"
+        )
+
+
 class EdgeCycleError(ActionableError, ValueError):
     """Connecting two nodes would close a dependency cycle. A refusal whose
     message says which edge to remove, so the journal files it as a setup
@@ -106,6 +167,23 @@ def put_layout(
                         f"node, or declare a new PathInput with its own name."
                     ),
                     "reason": "duplicate_path_input",
+                    "existing_node_id": existing,
+                }
+        if node_type == "mergeNode":
+            existing = _named_merge_node(label, node_id)
+            if existing is not None:
+                logger.info(
+                    "[layout_service] Refusing Merge %r: the name is taken by %r",
+                    label,
+                    existing,
+                )
+                return {
+                    "ok": False,
+                    "error": (
+                        f"A Merge named '{label}' already exists. A Merge's name "
+                        f"is its identity in history -- pick another name."
+                    ),
+                    "reason": "duplicate_merge_name",
                     "existing_node_id": existing,
                 }
         if node_type in ports.PORT_NODE_TYPES and not _is_stored_node(node_id):
@@ -184,6 +262,23 @@ def _is_stored_node(node_id: str) -> bool:
     from scistack_gui.runtime.db import get_db
 
     return node_id in pipeline_store.get_manual_nodes(get_db())
+
+
+def _named_merge_node(label: str, node_id: str) -> "str | None":
+    """Another stored Merge node (any scope) named *label*, or None. Moving
+    or re-saving *node_id* itself is not a clash."""
+    from scistack_gui.ids import strip_placement
+    from scistack_gui.runtime.db import get_db
+
+    me = strip_placement(node_id)
+    for nid, meta in pipeline_store.get_manual_nodes(get_db()).items():
+        if (
+            meta.get("type") == "mergeNode"
+            and meta.get("label") == label
+            and strip_placement(nid) != me
+        ):
+            return nid
+    return None
 
 
 def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
@@ -321,6 +416,7 @@ def put_edge(
             f"cycle: {' -> '.join(cycle_path)}"
         )
     _refuse_portless_function_input(manual_nodes, edge_id, source, target, target_handle)
+    _refuse_illegal_merge_wire(manual_nodes, existing_edges, source, target, target_handle)
     _refuse_illegal_port_wire(db, view, existing_edges, edge_id, source, target, source_handle, target_handle)
     pipeline_store.write_manual_edge(
         db,

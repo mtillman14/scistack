@@ -188,6 +188,12 @@ def _pooled_inner(value):
     return value.var_type if isinstance(value, AcrossVariants) else None
 
 
+def _is_merge(value) -> bool:
+    from scifor import Merge
+
+    return isinstance(value, Merge)
+
+
 def _py_literal(value) -> str:
     """A bare class (BaseVariable subclass) -> its name; everything else
     -> repr(). EachOf/PathInput's own __repr__ already produce valid,
@@ -215,6 +221,10 @@ def _py_literal(value) -> str:
         if len(columns) == 1:
             return f"{base}[{columns[0]!r}]"
         return f"{base}[{columns!r}]"
+    if _is_merge(value):
+        items = ", ".join(_py_literal(t) for t in value.tables)
+        how = "" if value.how == "exact" else f", how={value.how!r}"
+        return f"Merge({items}, name={value.name!r}{how})"
     if isinstance(value, type):
         return value.__name__
     if type(value) is _each_of_cls():
@@ -302,6 +312,7 @@ def _py_header(db) -> str:
         "    AcrossVariants,",
         "    ColName,",
         "    EachOf,",
+        "    Merge,",
         "    Parameter,",
         "    PathInput,",
         "    configure_database,",
@@ -439,6 +450,9 @@ def _matlab_literal(value) -> str:
         if len(columns) == 1:
             return f"{name}({_matlab_str(columns[0])})"
         return f"{name}([" + ", ".join(_matlab_str(c) for c in columns) + "])"
+    if _is_merge(value):
+        items = ", ".join(_matlab_literal(t) for t in value.tables)
+        return f'scidb.Merge({items}, name="{value.name}", how="{value.how}")'
     if isinstance(value, type):
         return f"{value.__name__}()"  # MATLAB convention: constructed instance
     alternatives = getattr(value, "alternatives", None)

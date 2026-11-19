@@ -164,7 +164,7 @@ scidb.for_each(@bandpass, ...
 ```python
 inputs={
     "baseline": Fixed(StepLength, session="BL"),
-    "both":     Merge(Kinematics, Fixed(Force, session="BL")),
+    "both":     Merge(Kinematics, Fixed(Force, session="BL"), name="kin_force"),
     "speed":    GaitData["speed"],
     "cutoff":   EachOf(10, 20),
     "raw":      PathInput("{subject}/raw.csv", name="raw"),
@@ -176,7 +176,7 @@ inputs={
 ```matlab
 struct( ...
     'baseline', scidb.Fixed(StepLength(), session="BL"), ...
-    'both',     scidb.Merge(Kinematics(), scidb.Fixed(Force(), session="BL")), ...
+    'both',     scidb.Merge(Kinematics(), scidb.Fixed(Force(), session="BL"), name="kin_force"), ...
     'speed',    GaitData("speed"), ...
     'cutoff',   scifor.EachOf(10, 20), ...
     'raw',      scidb.PathInput("{subject}/raw.csv", name="raw"))
@@ -230,7 +230,7 @@ Variant(var_type, *, fn=None, code_version=None, run_options=None, **branch_para
 
 | Argument | Meaning |
 |---|---|
-| `var_type` | A variable class, a column selection, a `Fixed`, or another `Variant`. Not a `Merge` (pin each constituent instead: `Merge(Variant(A, low_hz=20), B)`), and not an `EachOf` (`EachOf` stays outermost). |
+| `var_type` | A variable class, a column selection, a `Fixed`, or another `Variant`. Not a `Merge` (pin each constituent instead: `Merge(Variant(A, low_hz=20), B, name="ab")`), and not an `EachOf` (`EachOf` stays outermost). |
 | `**branch_params` | The constants to pin, e.g. `low_hz=20`. A bare name matches whichever upstream step has a constant of that name. |
 | `fn` | The producing function, for when two upstream steps share a constant name: `fn="bandpass", low_hz=20` pins `bandpass.low_hz`. It applies only to this level of a nested `Variant`. |
 | `code_version` | Pin the code that produced the record: `"v1"`, `"v2"`, ... (per function) or `"latest"`. A named version drops locations that never ran it; `"latest"` is decided per location and drops none. |

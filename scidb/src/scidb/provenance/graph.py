@@ -29,6 +29,7 @@ Identity (see §5 of the design doc)::
 from __future__ import annotations
 
 import hashlib
+import re
 import logging
 import uuid
 from collections.abc import Iterable
@@ -55,6 +56,9 @@ __all__ = [
     "PATHINPUT_TYPE",
     "SELECTION_TYPE",
     "SELECTION_VALUE_TYPE",
+    "MERGE_TYPE",
+    "MERGE_VALUE_TYPE",
+    "compute_merge_record_id",
     "compute_selection_record_id",
     "PATHINPUT_VALUE_TYPE",
     "SAVE_FUNCTION_NAME",
@@ -139,6 +143,16 @@ PATHINPUT_GLUE_TYPE = "__pathinput_glue__"
 SELECTION_TYPE = "__selection__"
 SELECTION_VALUE_TYPE = "Selection"
 
+# Sentinel ``type`` for a *Merge* input record (docs/claude/merge-node.md). A
+# Merge-fed argument has one edge per constituent record it read (lineage,
+# ``scidb.run.merge_lineage``) PLUS one edge to this record, whose value in
+# ``_constant`` is the Merge's ``to_key()`` (name, how, constituents). It is what
+# lets the recorded call site name the Merge exactly as the forward
+# ``call_site_inputs`` does, makes ``how`` part of ``invocation_id``, and lets
+# history draw the Merge node. No schema location, no save event, no data.
+MERGE_TYPE = "__merge__"
+MERGE_VALUE_TYPE = "Merge"
+
 # The type sets readers test against — THE owners; never spell the members
 # inline (in SQL or Python), or one reader drifts when a type is added.
 #: Every virtual glue record, any head.
@@ -153,6 +167,7 @@ NON_VARIABLE_INPUT_TYPES = (
     CONSTANT_GLUE_TYPE,
     PATHINPUT_GLUE_TYPE,
     SELECTION_TYPE,
+    MERGE_TYPE,
 )
 #: Record types that are provenance plumbing, never user data.
 INTERNAL_RECORD_TYPES = (
@@ -162,6 +177,7 @@ INTERNAL_RECORD_TYPES = (
     CONSTANT_GLUE_TYPE,
     PATHINPUT_GLUE_TYPE,
     SELECTION_TYPE,
+    MERGE_TYPE,
 )
 
 # ``param_name`` on a glue invocation's single input edge. Fixed rather than
@@ -317,6 +333,12 @@ def compute_pathinput_record_id(value: str) -> str:
     if key is None:
         raise ValueError(f"not a named PathInput key or spec: {value!r}")
     return _sha16(PATHINPUT_TYPE, f"spec:{key}")
+
+
+def compute_merge_record_id(key: str) -> str:
+    """Id of the Merge input record (see :data:`MERGE_TYPE`): one per Merge
+    identity key (``Merge.to_key()`` / ``scifor.merge.merge_key``)."""
+    return _sha16(MERGE_TYPE, f"key:{key}")
 
 
 def compute_glue_record_id(
@@ -586,6 +608,44 @@ def parse_path_input_spec(value) -> "dict | None":
         "name": parsed.get("name"),
         "template": parsed.get("template"),
         "root_folder": parsed.get("root_folder"),
+    }
+
+
+_MERGE_WRAPPER_RE = re.compile(
+    r"^(?:(?:Fixed|Variant|AcrossVariants)\()*([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def parse_merge_spec(value) -> "dict | None":
+    """``{"name", "how", "tables", "types"}`` when *value* (an ``__inputs`` /
+    ``input_types`` entry) is a ``Merge.to_key()``, else ``None``.
+
+    ``tables`` are the constituents' identity spellings in join order;
+    ``types`` the variable type each one reads (``Fixed(X, ...)``,
+    ``Variant(X, ...)``, ``X[...]`` all read ``X``), ``None`` when it is not a
+    variable. THE parser (docs/claude/merge-node.md): the GUI's history
+    reconstruction and anything else reading a recorded Merge use this.
+    """
+    import json as _json
+
+    if not isinstance(value, str) or not value.startswith("{"):
+        return None
+    try:
+        parsed = _json.loads(value)
+    except (_json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or parsed.get("__type") != "Merge":
+        return None
+    tables = [str(t) for t in parsed.get("tables") or []]
+    types = []
+    for t in tables:
+        m = _MERGE_WRAPPER_RE.match(t)
+        types.append(m.group(1) if m and not t.startswith("<") else None)
+    return {
+        "name": parsed.get("name"),
+        "how": parsed.get("how") or "exact",
+        "tables": tables,
+        "types": types,
     }
 
 

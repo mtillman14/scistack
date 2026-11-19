@@ -3,7 +3,7 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
 %
 %   [RESULT, DROPPED] = scifor.merge_tables(PARTS, SCHEMA_KEYS)
 %   [...] = scifor.merge_tables(PARTS, SCHEMA_KEYS, 'Drop', TF, 'Columns', C, ...
-%                               'Labels', LABELS, 'Positional', TF)
+%                               'Labels', LABELS, 'Positional', TF, 'How', HOW)
 %
 %   The rule is owned by Python (scifor.merge: drop_constant_keys +
 %   merge_frames). The join must run on MATLAB tables, so this file runs the
@@ -21,6 +21,12 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
 %        mismatches are an error ('Positional', false: always an error)
 %     5. a part with no rows is an error
 %
+%   'How' (default "exact", the rules above) is one of scifor.merge_hows():
+%   inner/outer/left/right relax ONLY rule 3's one-side-only error and rule 5
+%   per side, dropping or NaN-padding rows like a SQL join (logged at WARN).
+%   Rows follow the right side for "right", else the left; "outer" appends
+%   right-only rows. Clash and many-to-many stay errors.
+%
 %   DROPPED is a struct: each dropped key -> its value, for keys whose
 %   dropped values agree across parts (MATLAB's loop adds them back).
 
@@ -29,7 +35,13 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
     p.addParameter('Labels', strings(0));
     p.addParameter('Positional', true);
     p.addParameter('Columns', {});
+    p.addParameter('How', "exact");
     p.parse(varargin{:});
+    how = string(p.Results.How);
+    if ~any(how == scifor.merge_hows())
+        error('scifor:Merge', 'Merge how="%s" is not one of %s.', how, ...
+            strjoin(scifor.merge_hows(), ', '));
+    end
     drop = logical(p.Results.Drop);
     labels = string(p.Results.Labels);
     if isempty(labels)
@@ -78,7 +90,7 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
     end
     for i = 2:numel(parts)
         result = merge_two(result, parts{i}, schema_keys, acc_label, ...
-            labels(i), p.Results.Positional);
+            labels(i), p.Results.Positional, how);
         acc_label = acc_label + "+" + labels(i);
     end
 end
@@ -111,7 +123,7 @@ function [tbl, dropped] = drop_constant(tbl, schema_keys)
 end
 
 
-function result = merge_two(left, right, schema_keys, l_label, r_label, positional)
+function result = merge_two(left, right, schema_keys, l_label, r_label, positional, how)
     lcols = string(left.Properties.VariableNames);
     rcols = string(right.Properties.VariableNames);
     shared = intersect(lcols, rcols, 'stable');
@@ -123,6 +135,10 @@ function result = merge_two(left, right, schema_keys, l_label, r_label, position
             'select the column from one constituent with ColumnSelection, ' ...
             'or rename it.'], strjoin(clash, ', '), l_label, r_label, ...
             strjoin(schema_keys, ', '));
+    end
+    if how ~= "exact" && (height(left) == 0 || height(right) == 0)
+        result = join_empty(left, right, how, l_label, r_label);
+        return;
     end
     if height(left) == 0
         error('scifor:Merge', 'Cannot merge: %s has no rows.', l_label);
@@ -162,6 +178,10 @@ function result = merge_two(left, right, schema_keys, l_label, r_label, position
     end
     only_l = setdiff(lk, rk, 'stable');
     only_r = setdiff(rk, lk, 'stable');
+    if how ~= "exact"
+        result = join_how(left, right, keys, lk, rk, how, l_label, r_label, only_l, only_r);
+        return;
+    end
     if ~isempty(only_l) || ~isempty(only_r)
         error('scifor:Merge', ['Merge would drop rows: %s and %s do not cover ' ...
             'the same %s. %d key value(s) only in %s, %d only in %s. Filter ' ...
@@ -221,4 +241,156 @@ function tbl = select_columns(tbl, cols, label)
             missing_cols(1), label, strjoin(tbl.Properties.VariableNames, ', '));
     end
     tbl = tbl(:, cellstr(cols));
+end
+
+
+function result = join_how(left, right, keys, lk, rk, how, l_label, r_label, only_l, only_r)
+%JOIN_HOW  Rule 3 relaxed by an explicit How (Python: merge._join_how).
+    l_idx = zeros(0, 1);
+    r_idx = zeros(0, 1);
+    if how == "right"
+        for j = 1:numel(rk)
+            hits = find(lk == rk(j));
+            if isempty(hits)
+                hits = 0;
+            end
+            l_idx = [l_idx; hits(:)]; %#ok<AGROW>
+            r_idx = [r_idx; repmat(j, numel(hits), 1)]; %#ok<AGROW>
+        end
+    else
+        for i = 1:numel(lk)
+            hits = find(rk == lk(i));
+            if ~isempty(hits)
+                l_idx = [l_idx; repmat(i, numel(hits), 1)]; %#ok<AGROW>
+                r_idx = [r_idx; hits(:)]; %#ok<AGROW>
+            elseif how == "left" || how == "outer"
+                l_idx(end + 1, 1) = i; %#ok<AGROW>
+                r_idx(end + 1, 1) = 0; %#ok<AGROW>
+            end
+        end
+        if how == "outer"
+            extra = find(~ismember(rk, lk));
+            l_idx = [l_idx; zeros(numel(extra), 1)];
+            r_idx = [r_idx; extra(:)];
+        end
+    end
+
+    out_left = take_rows(left, l_idx);
+    from_right = l_idx == 0;
+    for k = reshape(keys, 1, [])
+        name = char(k);
+        kc = left.(name);
+        kc = kc(max(l_idx, 1), :);
+        if any(from_right)
+            rc = right.(name);
+            kc(from_right, :) = rc(r_idx(from_right), :);
+        end
+        out_left.(name) = kc;
+    end
+    rcols = string(right.Properties.VariableNames);
+    rest = right(:, ~ismember(rcols, keys));
+    result = [out_left, take_rows(rest, r_idx)];
+
+    msgs = string.empty;
+    if any(how == ["inner" "right"]) && ~isempty(only_l)
+        msgs(end + 1) = sprintf('dropped %d %s-only key value(s)', numel(only_l), l_label);
+    end
+    if any(how == ["inner" "left"]) && ~isempty(only_r)
+        msgs(end + 1) = sprintf('dropped %d %s-only key value(s)', numel(only_r), r_label);
+    end
+    if any(how == ["right" "outer"]) && ~isempty(only_r)
+        msgs(end + 1) = sprintf('NaN-padded %s columns at %d key value(s)', l_label, numel(only_r));
+    end
+    if any(how == ["left" "outer"]) && ~isempty(only_l)
+        msgs(end + 1) = sprintf('NaN-padded %s columns at %d key value(s)', r_label, numel(only_l));
+    end
+    if ~isempty(msgs)
+        scifor.Log.warn('[merge] %s + %s how=%s: %s', l_label, r_label, how, strjoin(msgs, '; '));
+    end
+    scifor.Log.debug('[merge] %s + %s: how=%s on %s (%d x %d -> %d row(s))', ...
+        l_label, r_label, how, strjoin(keys, ', '), height(left), height(right), height(result));
+end
+
+
+function result = join_empty(left, right, how, l_label, r_label)
+%JOIN_EMPTY  A non-exact join with one side empty (Python: merge._join_empty).
+    rcols = string(right.Properties.VariableNames);
+    extra = right(:, ~ismember(rcols, string(left.Properties.VariableNames)));
+    if height(right) == 0 && height(left) > 0 && any(how == ["left" "outer"])
+        result = [left, take_rows(extra, zeros(height(left), 1))];
+        scifor.Log.warn('[merge] %s + %s how=%s: %s has no rows; kept %d %s row(s) with %s columns NaN-padded', ...
+            l_label, r_label, how, r_label, height(left), l_label, r_label);
+    elseif height(left) == 0 && height(right) > 0 && any(how == ["right" "outer"])
+        lcols = string(left.Properties.VariableNames);
+        shared = ismember(lcols, rcols);
+        result = take_rows(left, zeros(height(right), 1));
+        for name = lcols(shared)
+            result.(char(name)) = right.(char(name));
+        end
+        result = [result, extra];
+        scifor.Log.warn('[merge] %s + %s how=%s: %s has no rows; kept %d %s row(s) with %s columns NaN-padded', ...
+            l_label, r_label, how, l_label, height(right), r_label, l_label);
+    else
+        result = [left([], :), extra([], :)];
+        scifor.Log.warn('[merge] %s + %s how=%s: one side has no rows -> no rows', ...
+            l_label, r_label, how);
+    end
+end
+
+
+function out = take_rows(tbl, idx)
+%TAKE_ROWS  tbl(idx, :) where idx == 0 is a row of missing values (NaN,
+%   <missing>, NaT, <undefined>; numbers become double, as pandas does).
+    n = numel(idx);
+    mask = idx(:) == 0;
+    names = tbl.Properties.VariableNames;
+    if height(tbl) == 0
+        out = table();
+        for i = 1:numel(names)
+            out.(names{i}) = blank_column(tbl.(names{i}), n);
+        end
+        if isempty(names)
+            out = table('Size', [n 0], 'VariableTypes', {}, 'VariableNames', {});
+        end
+        return;
+    end
+    safe = idx(:);
+    safe(mask) = 1;
+    out = tbl(safe, :);
+    if ~any(mask)
+        return;
+    end
+    for i = 1:numel(names)
+        col = out.(names{i});
+        if (isnumeric(col) && ~isfloat(col)) || islogical(col)
+            col = double(col);
+        end
+        if isfloat(col)
+            col(mask, :) = NaN;
+        elseif iscell(col)
+            col(mask, :) = {NaN};
+        else
+            col(mask, :) = missing;
+        end
+        out.(names{i}) = col;
+    end
+end
+
+
+function col = blank_column(like, n)
+    w = max(size(like, 2), 1);
+    if isnumeric(like) || islogical(like)
+        col = NaN(n, w);
+    elseif iscell(like)
+        col = repmat({NaN}, n, w);
+    elseif isstring(like)
+        col = strings(n, w);
+        col(:) = missing;
+    elseif isdatetime(like)
+        col = NaT(n, w);
+    elseif iscategorical(like)
+        col = repmat(categorical(missing), n, w);
+    else
+        col = repmat(missing, n, w);
+    end
 end

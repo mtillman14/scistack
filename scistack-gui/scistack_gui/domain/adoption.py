@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 #: Node types adoption stores. Glue and pipeline nodes are only ever created
 #: by a person, so they are always rows already.
 ADOPTABLE_NODE_TYPES = frozenset(
-    {"variableNode", "functionNode", "parameterNode", "pathInputNode"}
+    {"variableNode", "functionNode", "parameterNode", "pathInputNode", "mergeNode"}
 )
 
 
@@ -63,6 +63,9 @@ class AdoptionPlan:
     edges: list[dict] = field(default_factory=list)
     #: ``(Parameter, value)`` to state
     values: list[tuple[str, str]] = field(default_factory=list)
+    #: ``(node_id, config)`` a node is stored with -- a Merge node's recorded
+    #: ``mergeHow``, so a canvas re-run joins as history did.
+    configs: list[tuple[str, dict]] = field(default_factory=list)
     #: ``(subject, node_id, scope)`` marker rows, one per thing above
     subjects: list[tuple[str, str, str]] = field(default_factory=list)
 
@@ -168,6 +171,8 @@ def plan_adoption(
             continue
         label = (n.get("data") or {}).get("label") or bare
         plan.nodes.append((bare, n["type"], label, scopes[0]))
+        if n["type"] == "mergeNode" and (n.get("data") or {}).get("recorded_how"):
+            plan.configs.append((bare, {"mergeHow": n["data"]["recorded_how"]}))
         plan.subjects.append((subject, bare, scopes[0]))
 
     stored = rows | plan.node_ids

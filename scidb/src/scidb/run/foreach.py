@@ -201,6 +201,7 @@ from scicanonicalhash import canonical_hash as _chash
 from scidb.model.filters import SchemaKeyInFilter
 from scidb.model.filters import raw_sql
 from scidb.provenance import query as provenance_query
+from scidb.provenance.graph import compute_merge_record_id
 from scidb.provenance.graph import compute_pathinput_record_id
 from scidb.provenance.graph import normalize_as_table
 from scidb.provenance.query import check_recorded_selectors
@@ -1418,7 +1419,13 @@ def _build_skip_hook(
     # (provenance_save._pathinput_bindings) — part of identity, so a record
     # produced from a different file is stale.
     path_input_rids: dict = {}
+    # Merge record ids, as the save path binds them (provenance_save.
+    # _merge_bindings): a changed how/name/constituent list is another call.
+    merge_rids: dict = {}
     for name, value in inputs.items():
+        if isinstance(value, Merge):
+            merge_rids[name] = compute_merge_record_id(value.to_key())
+            continue
         if is_loadable(value):
             continue
         if _PathInput is not None and isinstance(value, _PathInput):
@@ -1630,6 +1637,13 @@ def _build_skip_hook(
                     combo_str,
                     f"PathInput {name} changed ({stored_pi.get(name)} -> {cur_rid})",
                 )
+
+        # Merges: the record naming the Merge (name, how, constituents).
+        stored_merges = sig.get("merges") or {}
+        if stored_merges != merge_rids:
+            return _recompute(
+                combo_str, f"Merge changed ({stored_merges} -> {merge_rids})"
+            )
 
         Log.debug(f"[skip] {combo_str}")
         return True

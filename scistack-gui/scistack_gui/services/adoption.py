@@ -324,6 +324,12 @@ def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
             logger.info(
                 "[adoption] %s keeps its recorded settings: %s", node_id, new
             )
+        for node_id, config in plan.configs:
+            existing = ps.get_node_config(db, node_id) or {}
+            new = {k: v for k, v in config.items() if not existing.get(k)}
+            if new:
+                ps.update_node_config(db, node_id, {**existing, **new})
+                logger.info("[adoption] %s stored with its recorded %s", node_id, new)
         written_values = intent_store.state_constants(db, plan.values)
         for c in combos:
             intent_store.hide_combo(db, c["node_id"], c["function_name"], c["variant_key"])

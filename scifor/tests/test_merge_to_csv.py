@@ -36,7 +36,7 @@ def test_two_dataframes_inner_join_one_copy_of_schema(tmp_path):
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "Speed": [1.1, 1.2, 1.3]}
     )
     out = tmp_path / "gait.csv"
-    Merge(step, speed).to_csv(str(out))
+    Merge(step, speed, name="merged").to_csv(str(out))
 
     df = _read(out)
     # One copy of each schema column, plus both data columns.
@@ -59,7 +59,7 @@ def test_rows_on_one_side_only_raise(tmp_path):
     )
     out = tmp_path / "gait.csv"
     with pytest.raises(ValueError, match="Merge would drop rows"):
-        Merge(step, speed).to_csv(str(out))
+        Merge(step, speed, name="merged").to_csv(str(out))
     assert not out.exists()
 
 
@@ -71,7 +71,7 @@ def test_partial_schema_overlap_joins_on_common_keys(tmp_path):
     )
     per_subject = pd.DataFrame({"subject": [1], "Height": [180.0]})
     out = tmp_path / "j.csv"
-    Merge(per_trial, per_subject).to_csv(str(out))
+    Merge(per_trial, per_subject, name="merged").to_csv(str(out))
 
     df = _read(out)
     assert list(df.columns) == ["subject", "trial", "StepLength", "Height"]
@@ -94,7 +94,7 @@ def test_where_filter(tmp_path):
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "Speed": [1.1, 1.2, 1.3]}
     )
     out = tmp_path / "gait.csv"
-    Merge(step, speed).to_csv(str(out), where=Col("StepLength") > 0.55)
+    Merge(step, speed, name="merged").to_csv(str(out), where=Col("StepLength") > 0.55)
 
     df = _read(out)
     assert set(df.StepLength) == {0.6, 0.7}
@@ -110,7 +110,7 @@ def test_metadata_scalar_filter(tmp_path):
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "Speed": [1.1, 1.2, 1.3]}
     )
     out = tmp_path / "gait.csv"
-    Merge(step, speed).to_csv(str(out), subject=1)
+    Merge(step, speed, name="merged").to_csv(str(out), subject=1)
 
     df = _read(out)
     assert set(df.subject) == {1}
@@ -127,7 +127,7 @@ def test_metadata_list_filter(tmp_path):
         {"subject": [1, 2, 3], "trial": [1, 1, 1], "Speed": [1.1, 1.2, 1.3]}
     )
     out = tmp_path / "gait.csv"
-    Merge(step, speed).to_csv(str(out), subject=[1, 3])
+    Merge(step, speed, name="merged").to_csv(str(out), subject=[1, 3])
 
     df = _read(out)
     assert set(df.subject) == {1, 3}
@@ -151,7 +151,7 @@ def test_column_selection_keeps_join_keys(tmp_path):
     )
     speed = pd.DataFrame({"subject": [1, 1], "trial": [1, 2], "Speed": [1.1, 1.2]})
     out = tmp_path / "sel.csv"
-    Merge(ColumnSelection(gait, ["StepLength"]), speed).to_csv(str(out))
+    Merge(ColumnSelection(gait, ["StepLength"]), speed, name="merged").to_csv(str(out))
 
     df = _read(out)
     assert list(df.columns) == ["subject", "trial", "StepLength", "Speed"]
@@ -169,7 +169,7 @@ def test_non_csv_filename_rejected(tmp_path):
     a = pd.DataFrame({"subject": [1], "A": [1.0]})
     b = pd.DataFrame({"subject": [1], "B": [2.0]})
     with pytest.raises(ValueError, match="must be a string ending with '.csv'"):
-        Merge(a, b).to_csv(str(tmp_path / "out.txt"))
+        Merge(a, b, name="merged").to_csv(str(tmp_path / "out.txt"))
 
 
 def test_no_shared_schema_column_errors(tmp_path):
@@ -178,4 +178,4 @@ def test_no_shared_schema_column_errors(tmp_path):
     a = pd.DataFrame({"subject": [1], "A": [1.0]})
     b = pd.DataFrame({"session": ["pre"], "B": [2.0]})
     with pytest.raises(ValueError, match="no shared schema column"):
-        Merge(a, b).to_csv(str(tmp_path / "out.csv"))
+        Merge(a, b, name="merged").to_csv(str(tmp_path / "out.csv"))

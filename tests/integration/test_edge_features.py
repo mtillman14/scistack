@@ -427,7 +427,7 @@ def test_merge_joins_two_inputs_column_wise(scratch_db, pipeline):
 
     outcome, error = attempt(
         run_summary, scidb.for_each, widths,
-        {"both": Merge(pipeline.CycleSymmetry, pipeline.TrialInfo)}, [Combined],
+        {"both": Merge(pipeline.CycleSymmetry, pipeline.TrialInfo, name="merged")}, [Combined],
         subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[], cycle=[],
     )
     assert error is None, error

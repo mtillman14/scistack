@@ -6,6 +6,8 @@ imports these from scifor instead of its own copies -- see Landmine A in
 docs/claude / the unification plan.
 """
 
+import json
+
 import pandas as pd
 
 from scifor import ColumnSelection, Fixed, Merge
@@ -37,13 +39,24 @@ def test_fixed_to_key_with_column_selection():
 
 
 def test_merge_to_key_with_types():
-    m = Merge(Dummy, Dummy)
-    assert m.to_key() == "Merge(Dummy, Dummy)"
+    m = Merge(Dummy, Dummy, name="merged")
+    assert json.loads(m.to_key()) == {
+        "__type": "Merge", "name": "merged", "how": "exact", "tables": ["Dummy", "Dummy"],
+    }
 
 
 def test_merge_to_key_with_fixed():
-    m = Merge(Dummy, Fixed(Dummy, session="BL"))
-    assert m.to_key() == "Merge(Dummy, Fixed(Dummy, session='BL'))"
+    m = Merge(Dummy, Fixed(Dummy, session="BL"), name="merged")
+    assert json.loads(m.to_key())["tables"] == ["Dummy", "Fixed(Dummy, session='BL')"]
+
+
+def test_merge_to_key_changes_with_name_and_how():
+    keys = {
+        Merge(Dummy, Dummy, name="a").to_key(),
+        Merge(Dummy, Dummy, name="b").to_key(),
+        Merge(Dummy, Dummy, name="a", how="left").to_key(),
+    }
+    assert len(keys) == 3
 
 
 def test_column_selection_to_key_basic():

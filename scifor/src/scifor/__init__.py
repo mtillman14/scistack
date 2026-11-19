@@ -75,7 +75,7 @@ from .locations import (
     narrow_frame,
     narrow_inputs,
 )
-from .merge import Merge
+from .merge import MERGE_HOWS, Merge
 from .options import DB_ONLY_KWARGS, FOR_EACH_OPTIONS, UNSET, OptionSpec
 from .outputs import COLUMN_NAME_ATTR, output_column_name
 from .pathinput import (
@@ -165,6 +165,7 @@ __all__ = [
     # Input wrappers
     "Fixed",
     "Merge",
+    "MERGE_HOWS",
     "Argument",
     "function_arguments",
     "ColumnSelection",

@@ -15,43 +15,34 @@ classdef Merge
 %
 %   Example:
 %       scifor.for_each(@analyze, ...
-%           struct('data', scifor.Merge(gait_table, force_table)), ...
+%           struct('data', scifor.Merge(gait_table, force_table, name="gait_force")), ...
 %           subject=[1 2 3])
 %
 %       % With Fixed override
 %       scifor.for_each(@analyze, ...
 %           struct('data', scifor.Merge( ...
 %               gait_table, ...
-%               scifor.Fixed(baseline_table, session="BL"))), ...
+%               scifor.Fixed(baseline_table, session="BL"), name="gait_bl")), ...
 %           subject=[1 2 3], session=["A" "B"])
 
     properties (SetAccess = private)
         tables  cell  % Cell array of table specs
+        name    string  % Identity of the Merge (node name), required
+        how     string = "exact"  % Join method, one of scifor.merge_hows()
     end
 
     methods
         function obj = Merge(varargin)
         %MERGE  Construct a Merge wrapper.
         %
-        %   M = scifor.Merge(table1, table2, ...)
+        %   M = scifor.Merge(table1, table2, ..., name="m")
+        %   M = scifor.Merge(table1, table2, ..., name="m", how="left")
         %
         %   Arguments:
         %       2+ table specs: MATLAB tables, Fixed wrappers,
         %       or ColumnSelection wrappers.
 
-            if nargin < 2
-                error('scifor:Merge', ...
-                    'Merge requires at least 2 inputs, got %d.', nargin);
-            end
-
-            for i = 1:nargin
-                if isa(varargin{i}, 'scifor.Merge')
-                    error('scifor:Merge', ...
-                        'Cannot nest Merge inside another Merge.');
-                end
-            end
-
-            obj.tables = varargin;
+            [obj.tables, obj.name, obj.how] = scifor.merge_args(varargin, 'scifor:Merge');
         end
 
         function disp(obj)
@@ -81,7 +72,7 @@ classdef Merge
                     parts{i} = class(spec);
                 end
             end
-            fprintf('  scifor.Merge(%s)\n', strjoin(parts, ', '));
+            fprintf('  scifor.Merge(%s, name="%s", how="%s")\n', strjoin(parts, ', '), obj.name, obj.how);
         end
     end
 end

@@ -2740,7 +2740,7 @@ def _prepare_input(
         raise TypeError(
             "Fixed cannot wrap a Merge. Use Fixed on individual "
             "constituents inside the Merge instead: "
-            "Merge(Fixed(df1, ...), df2)"
+            "Merge(Fixed(df1, ...), df2, name=...)"
         )
 
     # Resolve the raw DataFrame and effective metadata
@@ -2936,9 +2936,10 @@ def _prepare_merge(
 
         if _is_per_combo_df(df, schema_keys):
             filtered = _filter_df_for_combo(df, effective_metadata, schema_keys)
-            if len(filtered) == 0:
+            if len(filtered) == 0 and merge_spec.how == "exact":
                 # A sparse grid, as for any other per-combo input: an expected
-                # skip, never a NaN-padded merge.
+                # skip, never a NaN-padded merge. A non-exact how decides for
+                # itself (merge._join_empty): left/right/outer may NaN-pad.
                 raise NoDataError(f"No data for this combo in {label}.")
             part_df, _dropped = drop_constant_keys(filtered, schema_keys)
         else:
@@ -2961,7 +2962,9 @@ def _prepare_merge(
         parts.append(part_df)
         labels.append(label)
 
-    merged = _apply_where_filter(merge_frames(parts, schema_keys, labels=labels), where)
+    merged = _apply_where_filter(
+        merge_frames(parts, schema_keys, labels=labels, how=merge_spec.how), where
+    )
     if len(merged) == 0:
         raise NoDataError("No data for this combo after merge.")
     return merged

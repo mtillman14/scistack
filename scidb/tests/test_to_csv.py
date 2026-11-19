@@ -215,7 +215,7 @@ def test_merge_of_scalars_writes_wide_table(db, tmp_path):
     _Speed.save(1.5, subject=1, trial=2)
 
     out = tmp_path / "merged.csv"
-    Merge(ScalarValue, _Speed).to_csv(str(out))
+    Merge(ScalarValue, _Speed, name="merged").to_csv(str(out))
 
     df = _read(out)
     assert set(df.columns) == {"subject", "trial", "ScalarValue", "_Speed"}
@@ -235,7 +235,7 @@ def test_merge_with_where_filter(db, tmp_path):
     _Side.save("R", subject=1, trial=2)
 
     out = tmp_path / "merged_filtered.csv"
-    Merge(ScalarValue, _Speed).to_csv(str(out), where=_Side == "L")
+    Merge(ScalarValue, _Speed, name="merged").to_csv(str(out), where=_Side == "L")
 
     df = _read(out)
     assert set(df.columns) == {"subject", "trial", "ScalarValue", "_Speed"}
@@ -250,7 +250,7 @@ def test_merge_broadcasts_coarser_level(db, tmp_path):
     _Speed.save(1.5, subject=1, trial=2)
 
     out = tmp_path / "broadcast.csv"
-    Merge(ScalarValue, _Speed).to_csv(str(out), subject=1)
+    Merge(ScalarValue, _Speed, name="merged").to_csv(str(out), subject=1)
 
     df = _read(out)
     assert set(df.columns) == {"subject", "trial", "ScalarValue", "_Speed"}

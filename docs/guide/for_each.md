@@ -123,11 +123,14 @@ Variable-type inputs can be wrapped to change *what* gets loaded:
            outputs=[Delta], subject=[], session=[])
   ```
 
-- **`Merge(A, B)`** — combine several variables into one table input per
-  iteration. Constituents may themselves be `Fixed`/column selections:
+- **`Merge(A, B, name="gait")`** — combine several variables into one table
+  input per iteration. `name` is required; `how=` (`"exact"` default,
+  `"inner"`, `"outer"`, `"left"`, `"right"`) decides what happens to a
+  location present on one side only. Constituents may themselves be
+  `Fixed`/column selections:
 
   ```python
-  inputs={"gait": Merge(GaitData, ForceData)}
+  inputs={"gait": Merge(GaitData, ForceData, name="gait", how="left")}
   ```
 
   The rule is the same in Python, MATLAB and `to_csv`:

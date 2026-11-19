@@ -141,7 +141,7 @@ All methods are called on instances of BaseVariable subclasses:
 | `Type().load(name=val, 'version', id, ...)` | Load a specific record by record_id |
 | `Type().list_versions(name=val, ...)` | List all versions |
 | `Type().provenance(name=val, ...)` | Get lineage information |
-| `Type().to_csv(filename, name=val, ...)` | Export to a flat CSV (one row per schema_id). Works for scalars, single-row tables, `Type("col")` column selection, and `scidb.Merge(A(), B()).to_csv(...)` |
+| `Type().to_csv(filename, name=val, ...)` | Export to a flat CSV (one row per schema_id). Works for scalars, single-row tables, `Type("col")` column selection, and `scidb.Merge(A(), B(), name="ab").to_csv(...)` |
 
 ### Batch Execution & Provenance
 

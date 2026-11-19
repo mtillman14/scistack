@@ -273,7 +273,7 @@ class Variant:
 
     ``Variant`` may also be a ``Merge`` constituent for **per-constituent** pinning::
 
-        Merge(Variant(A, low_hz=20), B)
+        Merge(Variant(A, low_hz=20), B, name="a_b")
 
     branch_params are namespaced per producing function (e.g. ``bandpass.low_hz``);
     a bare name (``low_hz``) is matched by suffix at load time. When the bare name
@@ -396,7 +396,7 @@ class Variant:
                 "Variant cannot wrap a Merge. branch_params are namespaced per "
                 "producing function, so one branch_param cannot sensibly broadcast "
                 "across Merge constituents. Pin per constituent instead: "
-                "Merge(Variant(A, low_hz=20), B)."
+                "Merge(Variant(A, low_hz=20), B, name='...')."
             )
         if isinstance(var_type, EachOf):
             raise TypeError(

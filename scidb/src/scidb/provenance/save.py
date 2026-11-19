@@ -37,6 +37,8 @@ from scidb.provenance.graph import (
     CONSTANT_GLUE_TYPE,
     CONSTANT_TYPE,
     PATHINPUT_GLUE_TYPE,
+    MERGE_TYPE,
+    MERGE_VALUE_TYPE,
     PATHINPUT_TYPE,
     PATHINPUT_VALUE_TYPE,
     SELECTION_TYPE,
@@ -44,6 +46,7 @@ from scidb.provenance.graph import (
     compute_selection_record_id,
     compute_constant_record_id,
     compute_invocation_id,
+    compute_merge_record_id,
     compute_pathinput_record_id,
     constant_record_id_from_hash,
     constant_value_repr,
@@ -505,6 +508,7 @@ def invocation_identity(meta: dict, bindings) -> str:
     edges.extend(constant_bindings(const_b, _constant_glue(meta)))
     edges.extend(_pathinput_bindings(meta))
     edges.extend(_selection_bindings(meta))
+    edges.extend(_merge_bindings(meta))
     return compute_invocation_id(
         meta.get("__fn_hash") or "",
         as_table,
@@ -514,6 +518,30 @@ def invocation_identity(meta: dict, bindings) -> str:
         iteration_level=_iteration_level(meta),
         function_name=meta.get("__fn"),
     )
+
+
+def _merge_keys(meta: dict) -> dict[str, str]:
+    """``{param: Merge.to_key()}`` for every Merge-fed argument in
+    ``__inputs`` -- read by THE parser (``graph.parse_merge_spec``)."""
+    from scidb.provenance.graph import parse_merge_spec
+
+    return {
+        param: val
+        for param, val in _parse_json_dict(meta.get("__inputs")).items()
+        if parse_merge_spec(val) is not None
+    }
+
+
+def _merge_bindings(meta: dict) -> list[Binding]:
+    """The Merge edges of a call (one per Merge-fed argument), bound to the
+    Merge's ``__merge__`` record. Part of identity, so a changed ``how``,
+    name or constituent list is another invocation (docs/claude/merge-node.md).
+    The constituents' own records are separate lineage edges under the same
+    param (``scidb.run.merge_lineage``)."""
+    return [
+        Binding(param, compute_merge_record_id(key), None)
+        for param, key in sorted(_merge_keys(meta).items())
+    ]
 
 
 def _selection_bindings(meta: dict) -> list[Binding]:
@@ -772,6 +800,21 @@ def record_run(
                     f"[provenance] fn={fn_name}: {len(pathinput_b)} PathInput "
                     f"edge(s) folded into invocation "
                     f"{dict((b.param, b.rid) for b in pathinput_b)}"
+                )
+            merge_b = _merge_bindings(meta)
+            bindings.extend(merge_b)
+            merge_keys = _merge_keys(meta)
+            for b in merge_b:
+                key = merge_keys[b.param]
+                ch = canonical_hash(key)
+                constant_rows[b.rid] = (b.rid, key, MERGE_VALUE_TYPE, ch)
+                entity_rows.setdefault(
+                    b.rid, (b.rid, created_at, MERGE_TYPE, None, ch, None, False)
+                )
+            if merge_b:
+                Log.debug(
+                    f"[provenance] fn={fn_name}: Merge edge(s) "
+                    f"{dict((b.param, b.rid) for b in merge_b)}"
                 )
             selection_b = _selection_bindings(meta)
             bindings.extend(selection_b)

@@ -232,7 +232,7 @@ classdef TestSciforForEach < matlab.unittest.TestCase
             result = scifor.for_each( ...
                 @(combined) double(ismember('force', combined.Properties.VariableNames) ...
                     && ismember('emg', combined.Properties.VariableNames)), ...
-                struct('combined', scifor.Merge(tbl1, tbl2)), ...
+                struct('combined', scifor.Merge(tbl1, tbl2, name="merged")), ...
                 subject=[1 2]);
 
             tc.verifyEqual(result.output, [1; 1]);
@@ -241,15 +241,15 @@ classdef TestSciforForEach < matlab.unittest.TestCase
         function test_merge_constructor_requires_two(tc)
         %   Merge requires at least 2 inputs.
             tbl = table([1], 'VariableNames', {'x'});
-            tc.verifyError(@() scifor.Merge(tbl), 'scifor:Merge');
+            tc.verifyError(@() scifor.Merge(tbl, name="merged"), 'scifor:Merge');
         end
 
         function test_merge_no_nesting(tc)
         %   Cannot nest Merge inside Merge.
             tbl1 = table([1], 'VariableNames', {'x'});
             tbl2 = table([1], 'VariableNames', {'y'});
-            m = scifor.Merge(tbl1, tbl2);
-            tc.verifyError(@() scifor.Merge(m, tbl1), 'scifor:Merge');
+            m = scifor.Merge(tbl1, tbl2, name="merged");
+            tc.verifyError(@() scifor.Merge(m, tbl1, name="merged"), 'scifor:Merge');
         end
 
         function test_merge_with_fixed(tc)
@@ -264,7 +264,7 @@ classdef TestSciforForEach < matlab.unittest.TestCase
             % Force always comes from session=pre (Fixed), emg varies
             result = scifor.for_each(@(combined) combined.force, ...
                 struct('combined', scifor.Merge( ...
-                    scifor.Fixed(tbl1, session="pre"), tbl2)), ...
+                    scifor.Fixed(tbl1, session="pre"), tbl2, name="merged")), ...
                 subject=[1], session=["pre" "post"]);
 
             tc.verifyEqual(height(result), 2);

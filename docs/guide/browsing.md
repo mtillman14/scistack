@@ -73,7 +73,7 @@ silent drop (narrow both with metadata or `where=` first). A coarser variable
 ```python
 from scidb import Merge
 
-Merge(StepLength, Speed).to_csv("gait.csv")
+Merge(StepLength, Speed, name="gait").to_csv("gait.csv")
 ```
 
 ## Pull a DataFrame in Python
@@ -85,7 +85,7 @@ For programmatic analysis without a file round-trip, get a DataFrame directly:
 
   ```python
   from scifor import Col
-  df = Merge(StepLength, Speed).as_df(where=Col("StepLength") > 0.55)
+  df = Merge(StepLength, Speed, name="gait").as_df(where=Col("StepLength") > 0.55)
   ```
 
 - **A single variable** → `load(..., as_df=True)` (see
@@ -104,7 +104,7 @@ For programmatic analysis without a file round-trip, get a DataFrame directly:
 |---|---|
 | Eyeball what's stored | DBeaver / DuckDB viewer on the `.duckdb` file |
 | One flat CSV per variable | `VariableClass.to_csv("out.csv", …)` |
-| Several variables joined into one CSV | `Merge(A, B).to_csv("out.csv")` |
+| Several variables joined into one CSV | `Merge(A, B, name="ab").to_csv("out.csv")` |
 | Every record's raw rows to CSV | `db.export_to_csv(VariableClass, "out.csv", …)` |
 | A DataFrame in Python | `Merge(...).as_df()` · `load(as_df=True)` · `for_each(save=False)` |
 

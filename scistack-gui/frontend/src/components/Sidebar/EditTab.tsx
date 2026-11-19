@@ -613,7 +613,7 @@ export default function EditTab() {
 
   const onDragStart = (
     e: React.DragEvent,
-    nodeType: 'functionNode' | 'glueNode' | 'variableNode' | 'parameterNode' | 'pathInputNode',
+    nodeType: 'functionNode' | 'glueNode' | 'variableNode' | 'parameterNode' | 'pathInputNode' | 'mergeNode',
     label: string,
   ) => {
     e.dataTransfer.setData(
@@ -1087,6 +1087,12 @@ export default function EditTab() {
               </button>
             }
           >
+            <DragItem
+              label="⋈ Merge (drag onto the canvas)"
+              color="#0d9488"
+              trailingTitle="Joins two or more variables into one table on their shared schema keys. Wire variables into its ports; the empty port takes the next one."
+              onDragStart={e => onDragStart(e, 'mergeNode', '')}
+            />
             <SortSelect
               value={varSort}
               options={[['az', 'A→Z'], ['last_saved', 'Last saved']]}

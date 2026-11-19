@@ -32,7 +32,7 @@ class Merge(_SciforMerge):
 
         Example:
             # subject,trial,StepLength,Speed
-            Merge(StepLength, Speed).to_csv("gait.csv", subject=[1, 2])
+            Merge(StepLength, Speed, name="gait").to_csv("gait.csv", subject=[1, 2])
         """
         from scidb.csv_export import export_csv
 

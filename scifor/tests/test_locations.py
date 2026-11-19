@@ -468,7 +468,7 @@ class TestRowsBelowTheIterationLevel:
 
     def test_merge_constituents_are_narrowed_but_a_fixed_one_is_not(self):
         pinned = Fixed(_minutes_frame(), minute="5")
-        merge = Merge(_minutes_frame(), pinned)
+        merge = Merge(_minutes_frame(), pinned, name="merged")
         narrowed = narrow_inputs({"m": merge}, {"include": [[["minute", "6"]]]})["m"]
         assert narrowed.tables[0]["minute"].unique().tolist() == ["6"]
         assert narrowed.tables[1] is pinned

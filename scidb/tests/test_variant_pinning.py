@@ -136,7 +136,7 @@ def _make_two_variants(db, subjects=("S01",), sessions=("1",)):
 class TestVariantConstruction:
     def test_rejects_merge(self):
         with pytest.raises(TypeError, match="cannot wrap a Merge"):
-            Variant(Merge(FilteredEMG, Force), low_hz=20)
+            Variant(Merge(FilteredEMG, Force, name="merged"), low_hz=20)
 
     def test_rejects_each_of(self):
         with pytest.raises(TypeError, match="cannot wrap an EachOf"):
@@ -352,7 +352,7 @@ class TestVariantInMerge:
         # Force has a single variant
         Force.save(7.0, subject="S01", session="1")
 
-        spec = Merge(Variant(FilteredEMG, low_hz=20), Force)
+        spec = Merge(Variant(FilteredEMG, low_hz=20), Force, name="merged")
         for_each(collect, {"merged": spec}, [Result], as_table=True, save=False)
 
         assert len(captured) == 1

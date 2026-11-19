@@ -32,7 +32,14 @@
     "schema_keys null = every shared column is a key (a flat-table export",
     "with no schema set); Python only, so applies_to omits matlab.",
     "today: what each language did before stage 1, from reading the code;",
-    "informational, not asserted."
+    "informational, not asserted.",
+    "",
+    "how (decided 2026-11-17, docs/claude/merge-node.md): optional per case,",
+    "default exact (rules 1-5 above). inner/outer/left/right relax ONLY rule",
+    "3's one-side-only error (and rule 5 per side): rows are dropped or",
+    "NaN-padded like a SQL join; rows follow the right side for right, else",
+    "the left, outer appends right-only rows. Clash and many-to-many stay",
+    "errors. null in expect = NaN."
   ],
   "cases": [
     {
@@ -203,6 +210,66 @@
       "parts": [{"subject": [1, 2], "a": [1, 2]}, {"subject": [2, 1], "b": [4, 3]}],
       "expect": {"subject": [1, 2], "a": [1, 2], "b": [3, 4]},
       "today": {"python": "inner join, same rows", "matlab": "n/a"}
+    },
+    {
+      "id": 17, "name": "how_inner_drops_one_side_only",
+      "schema_keys": ["subject", "trial"], "how": "inner",
+      "parts": [
+        {"trial": [1, 2, 3], "force": [10, 20, 30]},
+        {"trial": [1, 2], "emg": [0.1, 0.2]}
+      ],
+      "expect": {"trial": [1, 2], "force": [10, 20], "emg": [0.1, 0.2]}
+    },
+    {
+      "id": 18, "name": "how_left_pads_missing_right",
+      "schema_keys": ["subject", "trial"], "how": "left",
+      "parts": [
+        {"trial": [1, 2, 3], "force": [10, 20, 30]},
+        {"trial": [1, 2], "emg": [0.1, 0.2]}
+      ],
+      "expect": {"trial": [1, 2, 3], "force": [10, 20, 30], "emg": [0.1, 0.2, null]}
+    },
+    {
+      "id": 19, "name": "how_right_follows_right_rows",
+      "schema_keys": ["subject", "trial"], "how": "right",
+      "parts": [
+        {"trial": [1, 2, 3], "force": [10, 20, 30]},
+        {"trial": [2, 1], "emg": [0.2, 0.1]}
+      ],
+      "expect": {"trial": [2, 1], "force": [20, 10], "emg": [0.2, 0.1]}
+    },
+    {
+      "id": 20, "name": "how_outer_keeps_both_sides",
+      "schema_keys": ["subject", "trial"], "how": "outer",
+      "parts": [
+        {"trial": [1, 2], "force": [10, 20]},
+        {"trial": [2, 3], "emg": [0.2, 0.3]}
+      ],
+      "expect": {"trial": [1, 2, 3], "force": [10, 20, null], "emg": [null, 0.2, 0.3]}
+    },
+    {
+      "id": 21, "name": "how_outer_many_to_many_still_errors",
+      "schema_keys": ["subject", "trial"], "how": "outer",
+      "parts": [{"trial": [1, 1], "a": [1, 2]}, {"trial": [1, 1], "b": [3, 4]}],
+      "error": "many_to_many"
+    },
+    {
+      "id": 22, "name": "how_left_empty_right_pads",
+      "schema_keys": ["subject", "trial"], "how": "left",
+      "parts": [{"trial": [1, 2], "force": [10, 20]}, {"emg": []}],
+      "expect": {"trial": [1, 2], "force": [10, 20], "emg": [null, null]}
+    },
+    {
+      "id": 23, "name": "how_inner_empty_side_no_rows",
+      "schema_keys": ["subject", "trial"], "how": "inner",
+      "parts": [{"trial": [1, 2], "force": [10, 20]}, {"emg": []}],
+      "expect": {"trial": [], "force": [], "emg": []}
+    },
+    {
+      "id": 24, "name": "how_left_shared_data_column_still_errors",
+      "schema_keys": ["subject", "trial"], "how": "left",
+      "parts": [{"trial": [1], "x": [1]}, {"trial": [1], "x": [2]}],
+      "error": "conflict"
     }
   ]
 }

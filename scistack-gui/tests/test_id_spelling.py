@@ -24,6 +24,7 @@ PREFIXES = (
     ids.FN_ID_PREFIX,
     ids.PARAM_ID_PREFIX,
     ids.PATH_INPUT_ID_PREFIX,
+    ids.MERGE_ID_PREFIX,
     ids.IN_HANDLE_PREFIX,
     ids.OUT_HANDLE_PREFIX,
 )

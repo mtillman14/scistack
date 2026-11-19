@@ -38,6 +38,9 @@ classdef TestMergeCases < matlab.unittest.TestCase
                 if isfield(c, 'positional')
                     args = [args, {'Positional', logical(c.positional)}]; %#ok<AGROW>
                 end
+                if isfield(c, 'how')
+                    args = [args, {'How', string(c.how)}]; %#ok<AGROW>
+                end
                 if isfield(c, 'error')
                     try
                         scifor.merge_tables(parts, keys, args{:});
@@ -82,7 +85,9 @@ function t = table_of(s)
     t = table();
     for i = 1:numel(names)
         v = s.(names{i});
-        if iscell(v)
+        if iscell(v) && all(cellfun(@isempty, v))
+            v = NaN(numel(v), 1);   % [null, null]: expected NaN cells
+        elseif iscell(v)
             v = string(v);
         end
         t.(names{i}) = reshape(v, [], 1);

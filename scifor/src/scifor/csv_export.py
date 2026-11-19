@@ -107,6 +107,7 @@ def merge_to_dataframe(
         schema_keys or None,
         labels=labels,
         positional=False,
+        how=merge.how,
     )
 
     # The where= predicate spans the merged row, so apply it once to the joined

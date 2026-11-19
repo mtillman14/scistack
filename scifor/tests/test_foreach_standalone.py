@@ -394,7 +394,7 @@ def test_merge_two_dataframes():
 
     for_each(
         fn,
-        inputs={"combined": Merge(df1, df2)},
+        inputs={"combined": Merge(df1, df2, name="merged")},
         subject=[1, 2],
     )
     assert len(received) == 2

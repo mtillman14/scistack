@@ -142,7 +142,7 @@ class TestVariableFilterMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=Side == "L",
@@ -168,7 +168,7 @@ class TestVariableFilterMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=Side == "R",
@@ -200,7 +200,7 @@ class TestCoarserVariableFilterMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=SubjectGroup == "A",
@@ -233,7 +233,7 @@ class TestNotFilterMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=~(Side == "L"),
@@ -265,7 +265,7 @@ class TestCompoundFilterMerge:
 
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=(Side == "L") & (SubjectGroup == "A"),
@@ -298,7 +298,7 @@ class TestMergeFilterCoverageError:
             with pytest.raises(ValueError, match="missing data"):
                 for_each(
                     lambda inputVal: inputVal,
-                    inputs={"inputVal": Merge(GaitData, ForceData)},
+                    inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
                     outputs=[GaitData],
                     as_table=True,
                     where=Side == "L",
@@ -329,7 +329,7 @@ class TestMergeFilterNoFalsePositive:
         # Must NOT raise
         for_each(
             collect,
-            inputs={"inputVal": Merge(GaitData, ForceData)},
+            inputs={"inputVal": Merge(GaitData, ForceData, name="merged")},
             outputs=[GaitData],
             as_table=True,
             where=Side == "L",
@@ -492,7 +492,7 @@ class TestMergeSelectsVariantByBranchParam:
         for_each(
             collect,
             inputs={
-                "inputVal": Merge(Partner, Variant(Derived, fn="_derive", factor=1))
+                "inputVal": Merge(Partner, Variant(Derived, fn="_derive", factor=1), name="merged")
             },
             outputs=[Derived],
             as_table=True,
@@ -524,7 +524,7 @@ class TestMergeSelectsVariantByBranchParam:
         for_each(
             collect,
             inputs={
-                "inputVal": Merge(Partner, Variant(Derived, fn="_derive", factor=100))
+                "inputVal": Merge(Partner, Variant(Derived, fn="_derive", factor=100), name="merged")
             },
             outputs=[Derived],
             as_table=True,

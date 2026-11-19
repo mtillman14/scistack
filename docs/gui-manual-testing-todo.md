@@ -11,6 +11,24 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Merge node (join variables, name= / how=) — added 2026-11-18
+
+What changed: a **Merge** node joins two or more variables into one table that feeds a function argument (docs/claude/merge-node.md). Reinstall scistack-gui (both bundles are rebuilt) and restart the GUI first.
+
+1. Sidebar → **Variables** tab: the first row is **⋈ Merge (drag onto the canvas)**. Drag it onto the canvas: a dialog asks **Name this Merge**. Enter `gait_force` → a teal node `⋈ gait_force`, `how=exact`, with two ports `1. (empty)` and `2. (empty)`.
+2. Drop a second Merge and give it the same name: the node is taken back and a message says the name already exists. A name with a space is refused with a message.
+3. Wire variable A into port 1: the node keeps two ports (`1. A`, `2. (empty)`). Wire variable B into port 2: a third empty port appears. Wire C into it: a fourth appears.
+4. Remove the edge into port 2: the ports close up (`1. A`, `2. C`, `3. (empty)`); nothing else on the canvas changes.
+5. Try to wire a Parameter, a PathInput or another Merge into a port: refused with a message ("only variables can be merged" / "cannot feed another Merge"). Wire a variable into an occupied port: refused.
+6. Wire the Merge's output (right handle) into a function argument. Then try to wire a variable into that same argument: refused ("fed by a Merge").
+7. Select the Merge node: the sidebar shows **Merge** with **Join (how)** = exact and a one-line description. Change it to `left`: the node shows `how=left`.
+8. Run the function (Python): scistack.log has `[merge-node] '<arg>' <- Merge 'gait_force' how=left [...]` and `[execution] ... is Merge 'gait_force' how=left`. Where a variable lacks a location the other has, the log has a `[merge] ... how='left': NaN-padded ...` WARN and the function received NaN there. After the run the function node turns **green**.
+9. Same with a MATLAB function: the generated command contains `scidb.Merge(A(), B(), name="gait_force", how="left")`.
+10. From code: `for_each(fn, {"x": Merge(A, B, name="m2", how="outer")}, [Out], ...)`, then refresh: a `⋈ m2` node appears wired A → slot 1, B → slot 2, `m2` → fn.x, showing `how=outer`. Change it to `inner` in the panel: the node shows `how=inner (was outer)` and the panel says the next run is a new variant.
+11. Export the pipeline to code (node menu): the script imports `Merge` and contains `Merge(A, B, name='gait_force', how='left')`.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. In-app dialogs replace confirm/prompt/alert; Clear All Data — added 2026-11-17
 
 What changed: the VS Code webview has no native dialogs, so every `window.confirm` / `prompt` / `alert` silently did nothing. All of them are now drawn in-app (`components/dialogs.tsx`). Also: Clear All Data's backup works on Windows and a clear removes the schema key combinations. Reinstall scistack-gui (bundles are rebuilt) first.

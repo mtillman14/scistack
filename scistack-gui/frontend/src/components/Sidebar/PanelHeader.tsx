@@ -33,7 +33,7 @@ import type { Badge, BadgeSection } from './sidebarBadges'
 
 export type PanelKind =
   | 'function' | 'plot' | 'stat' | 'glue'
-  | 'variable' | 'parameter' | 'pathInput' | 'submodule'
+  | 'variable' | 'parameter' | 'pathInput' | 'merge' | 'submodule'
 
 const KIND_DISPLAY: Record<PanelKind, { icon: string; label: string; color: string }> = {
   function: { icon: 'f(x)', label: 'Function', color: '#7b68ee' },
@@ -43,6 +43,7 @@ const KIND_DISPLAY: Record<PanelKind, { icon: string; label: string; color: stri
   variable: { icon: 'x', label: 'Variable', color: '#2a9d8f' },
   parameter: { icon: 'P', label: 'Parameter', color: '#2a9d8f' },
   pathInput: { icon: '📁', label: 'Path Input', color: '#d97706' },
+  merge: { icon: '⋈', label: 'Merge', color: '#0d9488' },
   submodule: { icon: '⧉', label: 'Submodule', color: '#a21caf' },
 }
 
