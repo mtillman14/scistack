@@ -11,6 +11,35 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## Extract leaves adapter glue outside (2026-11-19, unchecked)
+
+What changed: a glue node goes into a new submodule only when what feeds it and
+what it feeds both go in. Otherwise it stays on the canvas, feeding the new input
+port, which is named after the argument.
+
+1. On a scratch canvas, select `PathInput -> glue -> function -> variable -> function`
+   and extract. The PathInput and the glue stay outside. The glue is wired to an input
+   port named after the function's argument (e.g. `config`). The log has
+   `kept outside as … glue ['glue_…']`.
+2. Select `function -> variable -> glue -> function -> variable` and extract. The glue
+   moves inside.
+3. Run the pipeline. Results are unchanged, and nothing re-runs.
+
+---
+
+## A glue can feed a submodule placed in two tabs (2026-11-19, unchecked)
+
+What changed: when a submodule is placed both on `main` and in a hypothesis tab, the
+two placements must be wired the same way. Each tab has its own copy of a glue, and
+copies of the same glue function now count as the same source.
+
+1. On `main`, connect `glue_delsysEMG_config` to the `delsys_emg_config` port of
+   `load_filter_emg`. It connects, with no "Another placement of this submodule…" error.
+2. Connecting a glue that runs a different function into that port is still refused,
+   with the ⎘ Duplicate advice.
+
+---
+
 ## A PathInput -> glue line on `main` stays drawn (2026-11-19, unchecked)
 
 What changed: a glue node is identified by its own id, not by its function. Before,

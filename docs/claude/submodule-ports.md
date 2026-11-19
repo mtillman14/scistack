@@ -25,10 +25,22 @@ for nothing else.
 node (variable, Parameter, PathInput) that nothing feeds on the canvas is a
 source; one that feeds nothing is a sink. Extract leaves both on the parent, so
 their edges cross the boundary and get ports, wired automatically. Steps
-(functions, glue, merges, placements) always move. Owner:
+(functions, merges, placements) always move. Owner:
 `ports.split_selection`, run before `plan_boundary`, so there is still one port
 rule. A selection of only sources and sinks is refused. To put a PathInput
 inside on purpose (a library that loads its own data), move it in afterwards.
+
+**Glue stays outside unless it sits inside** (user decision 2026-11-19). A glue
+node is a situation-specific adapter that makes code from different origins fit,
+which a reusable submodule should not carry. A selected glue moves only when
+everything feeding it and everything it feeds move. This is repeated until nothing
+changes, so a glue chain off an outside source stays out whole.
+`PathInput -> glue -> fn` keeps the glue beside the PathInput, feeding the new
+input port. `fn -> var -> glue -> fn` moves it, because the first step always
+needs it to feed the second. An explicitly selected glue the rule keeps out stays
+out. It is listed as `glue` in the extract's `kept outside` INFO line
+(`SelectionSplit.glue`). Existing submodules keep their glue: move it out by
+hand.
 
 Worked example `pathinputA -> fcnB -> varC -> fcnD -> varE`: A is a source and
 E a sink, so selecting them changes nothing.
@@ -48,9 +60,11 @@ E a sink, so selecting them changes nothing.
 Selecting B and D without C is refused: a path leaves the selection and
 returns (user decision 2026-11-03).
 
-A port is named after the variable crossing, else the outside node: a
-PathInput feeding a glue node names its port after the PathInput (a glue
-node's id starts `var__`, but it is a step, not a variable).
+A port is named after the variable crossing, else the outside node (a
+PathInput or Parameter). An input port fed by a glue node is named after the
+**argument** it feeds (`config`, not `glue_delsysEMG_config`): the argument is
+what any reuser supplies. A glue node's id starts `var__`, but it is never
+read as a variable.
 
 ## Storage: segments, read as one
 
@@ -113,6 +127,10 @@ glue_x`, and that id also hid a fresh `runConfig -> glue_x` line drawn on `main`
 to `hidden` after it has built `drawn`, so such a clash shows up as a drawn edge that
 the build leaves out. It now logs a WARN (`shares its connection id … severed at a
 removed port`).
+The one-wiring check across placements (`ports.placement_conflict`) asks a different
+question: is this the same **source**? There, a glue node counts as its function
+(`glue:{label}`, `ports._same_source_ref`), because a duplicated hypothesis tab holds its
+own copy of the glue, and that copy feeds its placement just as well.
 
 ## Owners
 
@@ -124,7 +142,7 @@ removed port`).
 | What a node is wired to | `EdgeView.wiring_list` |
 | One wiring per submodule | `ports.placement_conflict`, called by `put_edge` |
 | A value has one owner | `execution_service._refuse_params_on_ports`, at compile |
-| What an extract moves (sources and sinks stay) | `ports.split_selection`, before `plan_boundary` |
+| What an extract moves (sources, sinks and outside glue stay) | `ports.split_selection`, before `plan_boundary` |
 | Which ports a selection needs | `ports.plan_boundary`, written by `scope_service.extract_to_submodule` |
 | Moving a node to another canvas | `layout.move_node_to_canvas`: row, position, edges, statements |
 | A removed line between two moved nodes | `intent_store.move_edge_hides`, called once by `extract_to_submodule` after the moves |

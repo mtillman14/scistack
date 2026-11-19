@@ -209,7 +209,8 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
 
     The selection's sources and sinks (data nodes nothing feeds, or that feed
     nothing) stay on this canvas, wired to the new ports
-    (:func:`domain.ports.split_selection`, GitHub #22).
+    (:func:`domain.ports.split_selection`, GitHub #22), and so does a glue
+    node unless it sits between two nodes that move (2026-11-19).
 
     A crossing edge hidden on this canvas is left as it is: it binds nothing,
     and redrawing it restores it. A selection a path leaves and re-enters is
@@ -263,20 +264,23 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     if not split.moved:
         logger.warning(
             "[scope_service] extract_to_submodule refused: every selected node on "
-            "'%s' is a source or a sink: sources %s, sinks %s",
-            pipeline_id, split.sources, split.sinks,
+            "'%s' stays outside: sources %s, sinks %s, glue %s",
+            pipeline_id, split.sources, split.sinks, split.glue,
         )
         raise SubmoduleSelectionError(
             "Can't make a submodule from this selection: it holds only inputs "
-            "(nothing feeds them) and end results (they feed nothing), and those "
-            "stay on this canvas. Select the steps between them too."
+            "(nothing feeds them), end results (they feed nothing) and glue nodes "
+            "next to them, and those stay on this canvas. Select the steps "
+            "between them too."
         )
-    if split.sources or split.sinks:
+    if split.sources or split.sinks or split.glue:
         logger.info(
             "[scope_service] extract_to_submodule: kept outside as sources %s / "
-            "sinks %s; %d node(s) move",
+            "sinks %s / glue %s (a glue moves only between two moved nodes); "
+            "%d node(s) move",
             [label_of(n) for n in split.sources],
             [label_of(n) for n in split.sinks],
+            [label_of(n) for n in split.glue],
             len(split.moved),
         )
     node_id_set = split.moved
@@ -301,7 +305,13 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
             "or leave out the node it returns to."
         )
 
-    planned = ports.plan_boundary(crossing, is_moved, var_label_of, label_of)
+    planned = ports.plan_boundary(
+        crossing,
+        is_moved,
+        var_label_of,
+        label_of,
+        lambda end: ports.is_glue(end, manual_nodes),
+    )
 
     # Centroid of the selection's CURRENT positions, for the placed node.
     parent_positions = positions_by_scope.get(pipeline_id, {})

@@ -314,9 +314,13 @@ def placement_conflict(edge: dict, edges, manual_nodes: dict, uses: list) -> "st
 
     Ends are compared by what they ARE (``graph_builder.endpoint_ref``), not by
     node id: a duplicated hypothesis holds its own node for the same variable.
+    A glue node is compared by its function here (:func:`_same_source_ref`).
     A placement with nothing connected yet conflicts with nothing.
     """
-    from scistack_gui.domain.graph_builder import endpoint_ref
+    from scistack_gui.domain.graph_builder import endpoint_ref as _ref
+
+    def endpoint_ref(node_id: str, nodes: dict) -> str:
+        return _same_source_ref(node_id, nodes, _ref)
 
     use_by_id = {u["use_id"]: u for u in uses}
 
@@ -350,6 +354,22 @@ def placement_conflict(edge: dict, edges, manual_nodes: dict, uses: list) -> "st
     if existing and mine not in existing:
         return existing[0]
     return None
+
+
+def _same_source_ref(node_id: str, manual_nodes: dict, endpoint_ref) -> str:
+    """What an end of a port connection IS, for the one-wiring check.
+
+    ``endpoint_ref`` everywhere except a glue node, which is its function
+    (``glue:{label}``). A glue node's CONNECTION id is the node itself
+    (two glues are two wires to hide), but a duplicated hypothesis tab holds
+    its own copy of the glue, and that copy feeds the placement just as well.
+    scistack-debug.log 2026-11-19: ``glue_delsysEMG_config -> load_filter_emg``
+    on main was refused because the tab's copy fed the tab's placement.
+    """
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id)) or {}
+    if meta.get("type") == "glueNode" and meta.get("label"):
+        return f"glue:{meta['label']}"
+    return endpoint_ref(node_id, manual_nodes)
 
 
 def port_fed_arguments(scope: str, edges, manual_nodes: dict, uses: list) -> set[tuple[str, str]]:
@@ -424,6 +444,8 @@ class SelectionSplit:
     sources: list[str]
     #: Data nodes that feed nothing (a final result).
     sinks: list[str]
+    #: Glue nodes left outside: something feeding them or fed by them stays out.
+    glue: list[str] = field(default_factory=list)
 
 
 def split_selection(selected, edges, manual_nodes: dict, owner_of) -> SelectionSplit:
@@ -433,24 +455,57 @@ def split_selection(selected, edges, manual_nodes: dict, owner_of) -> SelectionS
     outgoing edge is a sink. They stay where they are, so :func:`plan_boundary`
     sees their edges as crossing and gives each an input or output port, wired
     to them on the parent. Steps (functions, glue, merges, placements) always
-    move.
+    move, except glue.
+
+    **Glue** (user decision 2026-11-19) is a situation-specific adapter that
+    makes code from different origins fit, which a reusable submodule should
+    not carry. A selected glue node moves only when everything feeding it AND
+    everything it feeds move: ``fn -> var -> glue -> fn`` moves it, while
+    ``PathInput -> glue -> fn`` leaves it beside the PathInput, feeding the
+    new input port. This is repeated until nothing changes, so a glue chain off
+    an outside source stays out whole.
 
     *edges* are the edges drawn on the canvas; *owner_of(edge end)* is the
     selected node id an end names (bare or placed spelling), else ``None``.
     """
     has_in: set = set()
     has_out: set = set()
+    feeders: dict = {}
+    consumers: dict = {}
     for edge in edges:
         source = owner_of(edge.get("source") or "")
         target = owner_of(edge.get("target") or "")
         if source is not None:
             has_out.add(source)
+            consumers.setdefault(source, []).append(target)
         if target is not None:
             has_in.add(target)
+            feeders.setdefault(target, []).append(source)
     entities = {n for n in selected if entity_type(n, manual_nodes) is not None}
     sources = sorted(n for n in entities if n not in has_in)
     sinks = sorted(n for n in entities if n in has_in and n not in has_out)
-    return SelectionSplit(set(selected) - set(sources) - set(sinks), sources, sinks)
+    moved = set(selected) - set(sources) - set(sinks)
+
+    glue_out: set = set()
+    changed = True
+    while changed:
+        changed = False
+        for node in sorted(moved):
+            if not is_glue(node, manual_nodes):
+                continue
+            ins, outs = feeders.get(node, []), consumers.get(node, [])
+            if ins and outs and all(n in moved for n in ins + outs):
+                continue
+            moved.discard(node)
+            glue_out.add(node)
+            changed = True
+    return SelectionSplit(moved, sources, sinks, sorted(glue_out))
+
+
+def is_glue(node_id: str, manual_nodes: dict) -> bool:
+    """Whether *node_id* is a glue node (always a stored row)."""
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id)) or {}
+    return meta.get("type") == "glueNode"
 
 
 @dataclass
@@ -463,7 +518,9 @@ class PlannedPort:
     edges: list[dict] = field(default_factory=list)
 
 
-def plan_boundary(crossing: list[dict], is_moved, var_label_of, label_of) -> list[PlannedPort]:
+def plan_boundary(
+    crossing: list[dict], is_moved, var_label_of, label_of, is_glue_node=lambda _n: False
+) -> list[PlannedPort]:
     """The ports a selection needs: one per source crossing the boundary, in a
     stable order. A source feeding several nodes across the boundary is one
     port; two sources are two ports.
@@ -472,7 +529,9 @@ def plan_boundary(crossing: list[dict], is_moved, var_label_of, label_of) -> lis
     *var_label_of(node id)* is its variable type or ``None``; *label_of(node
     id)* its display name. A port is named after the variable crossing, else
     the node outside the selection for an input (a PathInput, a Parameter) or
-    the source for an output.
+    the source for an output. An input fed by a glue node (*is_glue_node*) is
+    named after the argument it feeds: the glue is this situation's adapter,
+    the argument is what any reuser supplies (user decision 2026-11-19).
     """
     grouped: dict[tuple, PlannedPort] = {}
     for edge in crossing:
@@ -481,7 +540,11 @@ def plan_boundary(crossing: list[dict], is_moved, var_label_of, label_of) -> lis
         key = (direction, source, edge.get("sourceHandle"))
         planned = grouped.get(key)
         if planned is None:
-            name = var_label_of(source) or var_label_of(target) or label_of(source)
+            argument = handle_name(edge.get("targetHandle"), IN_HANDLE_PREFIX)
+            if direction == INPUT_PORT_NODE and argument and is_glue_node(source):
+                name = argument
+            else:
+                name = var_label_of(source) or var_label_of(target) or label_of(source)
             planned = grouped[key] = PlannedPort(direction, name)
         planned.edges.append(edge)
 

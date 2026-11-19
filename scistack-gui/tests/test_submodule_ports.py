@@ -177,10 +177,55 @@ class TestSourcesAndSinks:
         split = ports.split_selection(
             selected, edges, manual, lambda end: end if end in selected else None
         )
-        # w is unconnected: a source (nothing feeds it). A glue node is a step.
+        # w is unconnected: a source (nothing feeds it). The glue is fed by the
+        # source pi, which stays out, so it stays out with it.
         assert split.sources == ["pi", "w"]
         assert split.sinks == ["end"]
-        assert split.moved == {"var__glue_g__1", "f", "v"}
+        assert split.glue == ["var__glue_g__1"]
+        assert split.moved == {"f", "v"}
+
+    GLUE_NODES = {
+        "pi": {"type": "pathInputNode", "label": "p"},
+        "f1": {"type": "functionNode", "label": "f1"},
+        "v1": {"type": "variableNode", "label": "V1"},
+        "g1": {"type": "glueNode", "label": "g1"},
+        "g2": {"type": "glueNode", "label": "g2"},
+        "f2": {"type": "functionNode", "label": "f2"},
+        "v2": {"type": "variableNode", "label": "V2"},
+    }
+
+    @pytest.mark.parametrize(
+        "edges,selected,glue_out",
+        [
+            # PathInput -> glue -> fn -> var: an adapter, stays out.
+            ([("pi", "g1"), ("g1", "f2"), ("f2", "v2")], {"pi", "g1", "f2", "v2"}, ["g1"]),
+            # fn -> var -> glue -> fn -> var: part of the graph, moves.
+            (
+                [("f1", "v1"), ("v1", "g1"), ("g1", "f2"), ("f2", "v2")],
+                {"f1", "v1", "g1", "f2", "v2"},
+                [],
+            ),
+            # A chain off the outside source stays out whole.
+            (
+                [("pi", "g1"), ("g1", "g2"), ("g2", "f2"), ("f2", "v2")],
+                {"pi", "g1", "g2", "f2", "v2"},
+                ["g1", "g2"],
+            ),
+            # Its consumer is not selected: it stays with the consumer.
+            ([("f1", "v1"), ("v1", "g1"), ("g1", "f2")], {"f1", "v1", "g1"}, ["g1"]),
+            # Nothing feeds it.
+            ([("g1", "f2"), ("f2", "v2")], {"g1", "f2", "v2"}, ["g1"]),
+        ],
+    )
+    def test_a_glue_moves_only_between_two_moved_nodes(self, edges, selected, glue_out):
+        split = ports.split_selection(
+            selected,
+            [_edge(f"e{i}", s, t) for i, (s, t) in enumerate(edges)],
+            self.GLUE_NODES,
+            lambda end: end if end in selected else None,
+        )
+        assert split.glue == glue_out
+        assert not set(glue_out) & split.moved
 
     def test_the_load_filter_emg_shape(self, client, glue_project):
         """The user's 2026-11-18 extract: two Parameters, a PathInput through a
@@ -229,14 +274,57 @@ class TestSourcesAndSinks:
         assert r.status_code == 200, r.text
         pid = r.json()["pipeline_id"]
         interface = client.get(f"/api/pipelines/{pid}/interface").json()
-        # The PathInput's port is named after it, not after the glue node it feeds.
-        assert sorted(interface["inputs"]) == ["high", "low", "runConfig"]
+        # The glue stays beside runConfig (an adapter, 2026-11-19), and the port
+        # it feeds is named after the argument, not the glue.
+        assert sorted(interface["inputs"]) == ["config", "high", "low"]
         assert interface["outputs"] == ["RenamedEMG"]
         db = get_db()
-        for kept in ("param__low", "param__high", "pathInput__runConfig", "mv_renamed"):
+        for kept in ("param__low", "param__high", "pathInput__runConfig", glue_id, "mv_renamed"):
             assert ps.manual_node_row(db, kept)[1] == "main", kept
-        for moved in (glue_id, "mf_load", "mv_raw", "mf_filter", "mv_filtered", "mf_rename"):
+        for moved in ("mf_load", "mv_raw", "mf_filter", "mv_filtered", "mf_rename"):
             assert ps.manual_node_row(db, moved)[1] == pid, moved
+        assert _connections() == before
+        # What runs: the glue still feeds load's config, through the port.
+        view = effective_edges(db, None, caller="test")
+        assert any(
+            e["source"] == glue_id and e["target"] == "mf_load" and e.get("targetHandle") == "in__config"
+            for e in view.wiring_list
+        )
+
+    def test_a_glue_inside_the_graph_moves(self, client, glue_project):
+        """fn -> var -> glue -> fn: the first step always needs the glue to feed
+        the second, so it is part of the submodule."""
+        glue = client.post("/api/glue", json={"name": "cfg"}).json()["name"]
+        glue_id = "var__glue_cfg__cd34ef56"
+        for node_id, kind, label in [
+            ("pathInput__src", "pathInputNode", "src"),
+            ("mf_a", "functionNode", "fa"),
+            ("mv_a", "variableNode", "VarA"),
+            (glue_id, "glueNode", glue),
+            ("mf_b", "functionNode", "fb"),
+            ("mv_b", "variableNode", "VarB"),
+        ]:
+            _place(client, node_id, kind, label)
+        for edge_id, source, target, handle in [
+            ("a0", "pathInput__src", "mf_a", "in__path"),
+            ("a1", "mf_a", "mv_a", None),
+            ("a2", "mv_a", glue_id, "in__value"),
+            ("a3", glue_id, "mf_b", "in__x"),
+            ("a4", "mf_b", "mv_b", None),
+        ]:
+            body = {"source": source, "target": target}
+            if handle:
+                body["target_handle"] = handle
+            assert client.put(f"/api/edges/{edge_id}", json=body).status_code == 200
+        before = _connections()
+
+        r = client.post(
+            "/api/pipelines/main/extract",
+            json={"node_ids": ["mf_a", "mv_a", glue_id, "mf_b", "mv_b"], "name": "inner"},
+        )
+
+        assert r.status_code == 200, r.text
+        assert ps.manual_node_row(get_db(), glue_id)[1] == r.json()["pipeline_id"]
         assert _connections() == before
 
 
@@ -525,6 +613,40 @@ class TestOneWiring:
         view = effective_edges(get_db(), None, caller="test")
         into_fn = [e for e in view.wiring_list if e["target"] == "mf"]
         assert [(e["source"], e["targetHandle"]) for e in into_fn] == [("mv_a", "in__a")]
+
+    def _two_glues(self, client, second_name: "str | None" = None):
+        """Two glue nodes on main, ids shaped like the GUI's. Same function
+        unless *second_name* names another."""
+        first = client.post("/api/glue", json={"name": "cfg"}).json()["name"]
+        second = (
+            client.post("/api/glue", json={"name": second_name}).json()["name"]
+            if second_name
+            else first
+        )
+        ids_ = (f"var__{first}__aaa111", f"glueNode__{second}__bbb222")
+        _place(client, ids_[0], "glueNode", first)
+        _place(client, ids_[1], "glueNode", second)
+        return ids_
+
+    def test_a_copy_of_the_same_glue_on_another_placement_is_the_same_source(
+        self, client, glue_project
+    ):
+        """scistack-debug.log 2026-11-19: a hypothesis tab's copy of
+        glue_delsysEMG_config fed its placement of load_filter_emg, so feeding
+        the main placement from main's own glue_delsysEMG_config was refused."""
+        _pid, (u1, u2) = self._submodule_with_two_placements(client)
+        g1, g2 = self._two_glues(client)
+        assert self._input(client, "o1", g1, u1).status_code == 200
+        r = self._input(client, "o2", g2, u2)
+        assert r.status_code == 200, r.text
+
+    def test_a_glue_of_another_function_is_still_refused(self, client, glue_project):
+        _pid, (u1, u2) = self._submodule_with_two_placements(client)
+        g1, g2 = self._two_glues(client, "other")
+        assert self._input(client, "o1", g1, u1).status_code == 200
+        r = self._input(client, "o2", g2, u2)
+        assert r.status_code == 400
+        assert "Duplicate" in r.text
 
     def test_an_unconnected_placement_conflicts_with_nothing(self, client):
         _pid, (u1, _u2) = self._submodule_with_two_placements(client)
