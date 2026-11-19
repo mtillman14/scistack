@@ -100,6 +100,65 @@ def _node_scope(db, node_id: str) -> str:
     return intent_store.scope_of_node(db, node_id)
 
 
+#: ``(edge id, stage)`` already reported by :class:`_DrawnEdgeTracer`.
+_LOST_EDGES_LOGGED: set[tuple[str, str]] = set()
+
+
+class _DrawnEdgeTracer:
+    """Diagnostic: a stored edge with both ends on the canvas being built must
+    reach the response. Where one is lost, say at which stage and why.
+
+    The client reported ``server_omitted`` for a PathInput -> glue edge on a
+    parent canvas (scistack-debug.log 2026-11-18 11:57, GitHub #24), and no
+    log line said which step of the build dropped it. Each stage is checked
+    once per edge (WARN once per edge and stage, then DEBUG).
+    """
+
+    def __init__(self, pipeline_id: str, drawn: list, manual_nodes: dict, positions_by_scope: dict):
+        from scistack_gui.domain.scope_filter import node_scope
+
+        self.pipeline_id = pipeline_id
+        self.manual_nodes = manual_nodes
+        self.scope_of = lambda end: node_scope(end, manual_nodes, positions_by_scope)
+        self.expected = {
+            e["id"]: e
+            for e in drawn
+            if self.scope_of(e.get("source") or "") == pipeline_id
+            and self.scope_of(e.get("target") or "") == pipeline_id
+        }
+        self.lost: set[str] = set()
+
+    def check(self, stage: str, edges: list) -> None:
+        from scistack_gui.domain.graph_builder import edge_connection_id
+
+        present = {e.get("id") for e in edges}
+        by_connection = {edge_connection_id(e, self.manual_nodes): e.get("id") for e in edges}
+        for edge_id, e in self.expected.items():
+            if edge_id in present or edge_id in self.lost:
+                continue
+            self.lost.add(edge_id)
+            connection = edge_connection_id(e, self.manual_nodes)
+            standing_in = by_connection.get(connection)
+            why = (
+                f"merged into {standing_in} (same connection {connection})"
+                if standing_in
+                else f"no edge over its connection {connection} survives; ends resolve to "
+                f"{self.scope_of(e.get('source') or '')!r} / {self.scope_of(e.get('target') or '')!r}"
+            )
+            first = (edge_id, stage) not in _LOST_EDGES_LOGGED
+            _LOST_EDGES_LOGGED.add((edge_id, stage))
+            (logger.warning if first else logger.debug)(
+                "[pipeline] drawn edge %s (%s -> %s, %s) on canvas %s lost at %s: %s",
+                edge_id,
+                e.get("source"),
+                e.get("target"),
+                e.get("targetHandle"),
+                self.pipeline_id,
+                stage,
+                why,
+            )
+
+
 def ensure_node_identities(db):
     """Resolve and persist a node id for every wiring in history, for a
     caller that needs node ids WITHOUT building the whole graph. Returns the
@@ -1578,6 +1637,8 @@ def build_graph(
     # state, counts, variant rows), joined by id; it no longer decides what
     # exists. This also replaces the duplicate-edge cleanup graduation needed
     # (drop_superseded_manual_edges): one edge per connection survives.
+    edge_tracer = _DrawnEdgeTracer(pipeline_id, manual_edges_list, manual_nodes, positions_by_scope)
+    edge_tracer.check("build_edges/filter_hidden/adoption", edges)
     nodes, edges, document_counts = document_view(
         nodes,
         edges,
@@ -1585,6 +1646,7 @@ def build_graph(
         drawn_edges=manual_edges_list,
         pending=deferred_adoption,
     )
+    edge_tracer.check("document_view", edges)
     logger.info("[pipeline] document view scope=%s: %s", pipeline_id, document_counts)
     inputs_changed = gb.document_input_params(
         nodes,
@@ -1606,6 +1668,7 @@ def build_graph(
     nodes, edges = resolve_scope_view(
         nodes, edges, pipeline_id, manual_nodes, positions_by_scope
     )
+    edge_tracer.check("resolve_scope_view", edges)
     # Config saved under a placement-qualified id (``...::scope``) is only
     # findable once the ids have been resolved -- build_function_nodes above
     # ran on bare ids. See gb.apply_placement_configs.
@@ -1659,6 +1722,9 @@ def build_graph(
                 marked,
             )
     nodes += build_pipeline_nodes(db, pipeline_id)
+    from scistack_gui.domain.scope_filter import warn_dangling_edges
+
+    warn_dangling_edges(pipeline_id, nodes, edges)
 
     # --- Input port order ---
     # Last, so every overlay that can add an input (manual edges onto history

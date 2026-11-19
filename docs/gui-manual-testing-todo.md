@@ -11,6 +11,131 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## Removing an input/output node removes its outer lines (stage F, 2026-11-19, unchecked)
+
+What changed: deleting an input or output node inside a submodule also removes
+the lines connected to that port on the parent. Undo brings both back.
+
+1. Inside a submodule, delete an input node that is connected on `main`.
+   Back on `main`, its line into the submodule is gone, and
+   `scistack-debug.log` has `removed port node … hid 1 outer edge(s)`.
+2. Undo: the node and the line both come back.
+3. Your old leftover (`runConfig -> load_filter_emg`, port
+   `in__glue_delsysEMG_config`, removed before this fix) is not cleaned up
+   automatically. Inside `load_filter_emg`, add an input node named exactly
+   `glue_delsysEMG_config`, then delete it again. The `names a port that does
+   not exist` WARN stops.
+
+---
+
+## ⚙ tunables on your own submodules (stage E, 2026-11-19, unchecked)
+
+What changed: ⚙ on a submodule you extracted yourself (not from a library) now
+opens its tunables instead of failing with `is not a library pipeline`. Both
+bundles were rebuilt. Reload the VS Code window.
+
+1. On `main`, click ⚙ on `load_filter_emg`. The panel lists its Parameters,
+   PathInputs and step values (function arguments with a default that nothing
+   feeds).
+2. Change a step value and run the submodule from Python. The run uses the new
+   value. (MATLAB runs still refuse a placement's own values, for both kinds.)
+3. The project-wide tunables list shows your submodules too, without a library
+   name in brackets.
+
+---
+
+## Sources and sinks stay on the parent when you extract (GitHub #22, stage G, 2026-11-19, unchecked)
+
+What changed: when you extract, the selected data nodes that nothing feeds
+(PathInputs, Parameters, raw variables) and the ones that feed nothing (final
+results) stay on the parent. They are wired to new input/output ports for you.
+Steps always move.
+
+1. On a scratch canvas with `PathInput -> glue -> load -> RawEMG -> filter ->
+   FilteredEMG`, plus two Parameters into `filter`, select everything and click
+   Extract to submodule.
+2. The PathInput, both Parameters and `FilteredEMG` stay on the parent, each
+   connected to the new placement. Inside are the input nodes `runConfig` (named
+   after the PathInput, not the glue), the Parameter names, and an output node
+   `FilteredEMG`.
+3. `scistack-debug.log` has `extract_to_submodule: kept outside as sources [...]
+   / sinks [...]`.
+4. Select only a PathInput and try to extract it: you get a message, and nothing
+   moves.
+
+---
+
+## The canvas keeps what you just did (GitHub #23, stage H, 2026-11-18, unchecked)
+
+What changed: a refresh that started before your add or delete was confirmed no
+longer undoes it on screen. The `.duckdb` watcher no longer refreshes again for
+the GUI's own writes (adds, deletes, drags). Both bundles were rebuilt
+2026-11-18. Restart the GUI (reload the VS Code window) to pick them up.
+
+1. Place a node and draw an edge right away, several times quickly. Nothing
+   disappears and comes back.
+2. Delete a node with edges. It stays gone (no brief reappearance).
+3. Drag a node. The VS Code output channel says `own write, skipping the
+   watcher refresh`, and `scistack-debug.log` has no `canvas refresh #…
+   (dag_updated:db_watcher)` right after the drag.
+4. In `scistack-debug.log`, `canvas refresh … kept N on screen, left out N
+   just-deleted` lines may appear. Those are the overlay working. A WARN with
+   `wiped the just-placed … -> server_omitted` or `the deleted … came back` is
+   a real server bug: send it to Claude.
+5. A MATLAB run or a script writing the DB still refreshes the canvas.
+
+---
+
+## PathInput → glue edge on main (GitHub #24, stage D, 2026-11-18, unchecked, needs your log)
+
+What changed: diagnostics only, plus a redrawn identical edge is no longer
+stored twice. The cause is not found yet: the test setup did not reproduce it.
+
+1. Restart the GUI. On `main`, draw `runConfig` → `glue_delsysEMG_config` again
+   (beside `load_filter_emg`). If it says it already exists but isn't drawn,
+   remove the glue node, place a fresh one and draw the edge.
+2. If the edge vanishes, send Claude the `scistack-debug.log` lines containing
+   `lost at` and `identical edge … already stored`. They name the build step
+   that drops it.
+
+---
+
+## Removed lines stay removed after extract (stage B, 2026-11-18, unchecked)
+
+What changed: extract moves a removed line's hide into the submodule when both of
+its ends move.
+
+1. On a canvas whose steps have run, remove a recorded edge between two nodes
+   (e.g. an old `RenamedEMG -> filterDelsys`) and draw the new wiring.
+2. Select both nodes (and what's between them) and click Extract to submodule.
+3. Open the submodule: the removed edge is not there, the steps are not red, and
+   `scistack-debug.log` has `extract_to_submodule: … N removed line(s) kept
+   removed inside` with N ≥ 1 and no `DAG propagation stalled`.
+4. Your existing `load_filter_emg` was extracted before this fix, so its two
+   stale edges are still there: remove them once inside (or Undo the extract and
+   redo it).
+
+---
+
+## Submodule output to a variable on the parent (GitHub #24, part A, 2026-11-18, unchecked)
+
+What changed: put_edge now traces through ports the same way the canvas does, so
+a line removed inside a submodule no longer blocks a connection on the parent.
+
+1. In `load_filter_emg`, the output node `Filtered_EMG` should be fed by the
+   function `filterDelsys` (not by a `FilteredEMG` variable node inside).
+2. On `main`, drag from the submodule's `Filtered_EMG` handle to a `FilteredEMG`
+   variable node: the edge stays. `scistack-debug.log` has no `put_edge rejected
+   … through ports`.
+3. Inside the submodule, connect a variable node to the output node, then on
+   `main` connect that output to a variable: refused, and the message ends with
+   "Connect the step that makes the variable to the output port, or connect the
+   port to the step that uses the variable."
+4. Still expected until stage D is fixed: a PathInput → glue edge on `main` may
+   still vanish (#24).
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Merge node (join variables, name= / how=) — added 2026-11-18
 
 What changed: a **Merge** node joins two or more variables into one table that feeds a function argument (docs/claude/merge-node.md). Reinstall scistack-gui (both bundles are rebuilt) and restart the GUI first.

@@ -177,6 +177,25 @@ class PortError(ActionableError, ValueError):
     """A port can't be created, renamed or moved as asked."""
 
 
+def _selection_owner(selected: set, pipeline_id: str):
+    """``owner_of(edge end)``: the selected node an edge end names, else None.
+    An edge may name a selected node by its bare or its placed spelling; a
+    spelling placed on another canvas is a copy there, not this node."""
+    from scistack_gui import ids
+
+    by_bare = {ids.strip_placement(n): n for n in selected}
+
+    def owner_of(end: str) -> "str | None":
+        if end in selected:
+            return end
+        parsed = ids.parse_placement_id(end)
+        if parsed is not None and parsed[1] != pipeline_id:
+            return None
+        return by_bare.get(ids.strip_placement(end))
+
+    return owner_of
+
+
 def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> dict:
     """Turn nodes selected on ``pipeline_id``'s canvas into a new submodule.
 
@@ -188,6 +207,10 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     gives back the original connection, so nothing about what ran or what is
     current changes.
 
+    The selection's sources and sinks (data nodes nothing feeds, or that feed
+    nothing) stay on this canvas, wired to the new ports
+    (:func:`domain.ports.split_selection`, GitHub #22).
+
     A crossing edge hidden on this canvas is left as it is: it binds nothing,
     and redrawing it restores it. A selection a path leaves and re-enters is
     refused (:func:`domain.ports.find_reentry`).
@@ -195,6 +218,7 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     from scistack_gui import ids
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.stores import intent_store
     from scistack_gui.runtime.db import get_db
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
     from scistack_gui.domain.edge_view import effective_edges
@@ -213,17 +237,6 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
         if scope != pipeline_id:
             raise ValueError(f"node '{nid}' is not on pipeline '{pipeline_id}'")
 
-    bare_selected = {ids.strip_placement(n) for n in node_id_set}
-
-    def is_moved(end: str) -> bool:
-        # An edge may name a selected node by its bare or its placed spelling.
-        if end in node_id_set:
-            return True
-        parsed = ids.parse_placement_id(end)
-        if parsed is not None and parsed[1] != pipeline_id:
-            return False
-        return ids.strip_placement(end) in bare_selected
-
     def is_here(end: str) -> bool:
         return node_scope(end, manual_nodes, positions_by_scope) == pipeline_id
 
@@ -232,12 +245,46 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
         return meta.get("label") or ids.strip_placement(end)
 
     def var_label_of(end: str) -> "str | None":
+        # A glue node's id starts var__, but its port is named after what feeds it.
+        meta = manual_nodes.get(end) or manual_nodes.get(ids.strip_placement(end))
+        if meta is not None and meta.get("type") != "variableNode":
+            return None
         return node_id_to_var_label(end, {}, manual_nodes)
 
     here = [
         e for e in view.drawn_list
         if is_here(e.get("source") or "") and is_here(e.get("target") or "")
     ]
+
+    # Sources and sinks stay on this canvas, wired to new ports (GitHub #22).
+    split = ports.split_selection(
+        node_id_set, here, manual_nodes, _selection_owner(node_id_set, pipeline_id)
+    )
+    if not split.moved:
+        logger.warning(
+            "[scope_service] extract_to_submodule refused: every selected node on "
+            "'%s' is a source or a sink: sources %s, sinks %s",
+            pipeline_id, split.sources, split.sinks,
+        )
+        raise SubmoduleSelectionError(
+            "Can't make a submodule from this selection: it holds only inputs "
+            "(nothing feeds them) and end results (they feed nothing), and those "
+            "stay on this canvas. Select the steps between them too."
+        )
+    if split.sources or split.sinks:
+        logger.info(
+            "[scope_service] extract_to_submodule: kept outside as sources %s / "
+            "sinks %s; %d node(s) move",
+            [label_of(n) for n in split.sources],
+            [label_of(n) for n in split.sinks],
+            len(split.moved),
+        )
+    node_id_set = split.moved
+    owner_of = _selection_owner(node_id_set, pipeline_id)
+
+    def is_moved(end: str) -> bool:
+        return owner_of(end) is not None
+
     crossing = [e for e in here if is_moved(e["source"]) != is_moved(e["target"])]
 
     reentry = ports.find_reentry(crossing, here, is_moved)
@@ -328,6 +375,9 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
 
             for nid in node_id_set:
                 layout_store.move_node_to_canvas(db, nid, pipeline_id, new_pid)
+            # A line the user removed between two moved nodes stays removed
+            # inside (GitHub #22 session log, 2026-11-18).
+            moved_hides = intent_store.move_edge_hides(db, pipeline_id, new_pid, is_moved)
     except Exception as exc:
         logger.warning(
             "[scope_service] extract_to_submodule: rolled back, nothing moved "
@@ -338,9 +388,10 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
 
     logger.info(
         "[scope_service] extract_to_submodule: %d node(s) from '%s' -> new "
-        "pipeline '%s' (%s), %d port(s) %s, %d crossing edge(s) rewritten",
+        "pipeline '%s' (%s), %d port(s) %s, %d crossing edge(s) rewritten, "
+        "%d removed line(s) kept removed inside",
         len(node_id_set), pipeline_id, name, new_pid, len(planned),
-        [(p.direction, p.name) for p in planned], n_rewritten,
+        [(p.direction, p.name) for p in planned], n_rewritten, len(moved_hides),
     )
     return {"ok": True, "pipeline_id": new_pid, "use_id": use_id}
 

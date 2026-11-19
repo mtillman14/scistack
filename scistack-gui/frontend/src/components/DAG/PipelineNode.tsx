@@ -11,7 +11,7 @@
  * a compact badge. Double-click (handled at canvas level) descends into the
  * child scope; the ▶ Run button plan-previews mode=all on the CHILD
  * pipeline (per-step run_until of a child is not available descend-less).
- * ⚙ opens this placement's tunables (TunablesPanel; a library pipeline's
+ * ⚙ opens this placement's tunables (TunablesPanel; any submodule's, library or local:
  * Parameters, PathInputs and step values — the step values are THIS
  * placement's binding, so two placements keep their own).
  */
@@ -42,7 +42,7 @@ export default function PipelineNode({ id, data }: Props) {
   const { bumpGraph } = useScope()
   const updateNodeInternals = useUpdateNodeInternals()
   const [duplicating, setDuplicating] = useState(false)
-  // The placement's tunables (library pipelines; plan-library-fork-chain E1).
+  // The placement's tunables (any submodule, 2026-11-18 parity; plan-library-fork-chain E1).
   const [tuning, setTuning] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [error, setError] = useState('')

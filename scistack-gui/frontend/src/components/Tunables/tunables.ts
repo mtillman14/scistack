@@ -33,7 +33,8 @@ export interface StepValue {
 export interface Tunables {
   use_id: string
   pipeline_id: string
-  library: string
+  /** null for a local (non-library) submodule: same tunables, no library defaults. */
+  library: string | null
   parameters: TunableParameter[]
   path_inputs: TunablePathInput[]
   step_values: StepValue[]

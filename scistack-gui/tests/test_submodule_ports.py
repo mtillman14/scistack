@@ -23,23 +23,23 @@ from scistack_gui.stores import pipeline_store as ps
 A, B, C, D, E = "pathInput__A", "mf_B", "mv_C", "mf_D", "mv_E"
 BY_LETTER = {"A": A, "B": B, "C": C, "D": D, "E": E}
 
-#: selection, input ports, output ports: the framework's table.
+#: selection, input ports, output ports: the framework's table. A (nothing
+#: feeds it) and E (it feeds nothing) stay on the parent wherever they are
+#: selected (GitHub #22), so "A" or "E" alone is refused (TestSourcesAndSinks).
 SPLITS = [
-    ("A", [], ["A"]),
-    ("AB", [], ["VarC"]),
-    ("ABC", [], ["VarC"]),
-    ("ABCD", [], ["VarE"]),
-    ("ABCDE", [], []),
+    ("AB", ["A"], ["VarC"]),
+    ("ABC", ["A"], ["VarC"]),
+    ("ABCD", ["A"], ["VarE"]),
+    ("ABCDE", ["A"], ["VarE"]),
     ("B", ["A"], ["VarC"]),
     ("BC", ["A"], ["VarC"]),
     ("BCD", ["A"], ["VarE"]),
-    ("BCDE", ["A"], []),
+    ("BCDE", ["A"], ["VarE"]),
     ("C", ["VarC"], ["VarC"]),
     ("CD", ["VarC"], ["VarE"]),
-    ("CDE", ["VarC"], []),
+    ("CDE", ["VarC"], ["VarE"]),
     ("D", ["VarC"], ["VarE"]),
-    ("DE", ["VarC"], []),
-    ("E", ["VarE"], []),
+    ("DE", ["VarC"], ["VarE"]),
 ]
 
 
@@ -133,11 +133,110 @@ class TestEverySplit:
             if source and target:
                 assert source["pipeline_id"] == target["pipeline_id"], edge
 
-    def test_a_selection_with_no_crossing_needs_no_ports(self, chain):
+    def test_the_whole_chain_keeps_its_source_and_sink_outside(self, chain):
+        """GitHub #22: selecting everything moves the steps, not A and E."""
         before = _connections()
-        pid = _extract(chain, "ABCDE").json()["pipeline_id"]
-        nodes = ps.get_manual_nodes(get_db(), pid)
-        assert not [n for n in nodes.values() if n["type"] in ports.PORT_NODE_TYPES]
+        r = _extract(chain, "ABCDE")
+        assert r.status_code == 200, r.text
+        db = get_db()
+        assert ps.manual_node_row(db, A)[1] == "main"
+        assert ps.manual_node_row(db, E)[1] == "main"
+        for inside in (B, C, D):
+            assert ps.manual_node_row(db, inside)[1] == r.json()["pipeline_id"]
+        assert _connections() == before
+
+
+class TestSourcesAndSinks:
+    """GitHub #22 (decision 2026-11-18: data nodes only; steps always move)."""
+
+    @pytest.mark.parametrize("letters", ["A", "E", "AE"])
+    def test_a_selection_of_only_sources_and_sinks_is_refused(self, chain, letters):
+        before = sorted(e["id"] for e in ps.get_manual_edges(get_db()))
+        r = _extract(chain, letters)
+        assert r.status_code == 400
+        assert "Select the steps between them too" in r.text
+        assert sorted(e["id"] for e in ps.get_manual_edges(get_db())) == before
+
+    def test_split_selection_rule(self):
+        manual = {
+            "pi": {"type": "pathInputNode", "label": "p"},
+            "f": {"type": "functionNode", "label": "f"},
+            "v": {"type": "variableNode", "label": "V"},
+            "w": {"type": "variableNode", "label": "W"},
+            "end": {"type": "variableNode", "label": "End"},
+            "var__glue_g__1": {"type": "glueNode", "label": "g"},
+        }
+        edges = [
+            _edge("1", "pi", "var__glue_g__1", target_handle="in__value"),
+            _edge("2", "var__glue_g__1", "f", target_handle="in__x"),
+            _edge("3", "f", "v"),
+            _edge("4", "v", "f2", target_handle="in__v"),
+            _edge("5", "f", "end"),
+        ]
+        selected = {"pi", "var__glue_g__1", "f", "v", "w", "end"}
+        split = ports.split_selection(
+            selected, edges, manual, lambda end: end if end in selected else None
+        )
+        # w is unconnected: a source (nothing feeds it). A glue node is a step.
+        assert split.sources == ["pi", "w"]
+        assert split.sinks == ["end"]
+        assert split.moved == {"var__glue_g__1", "f", "v"}
+
+    def test_the_load_filter_emg_shape(self, client, glue_project):
+        """The user's 2026-11-18 extract: two Parameters, a PathInput through a
+        glue node, three steps, a final variable. About 25 actions followed to
+        turn the data nodes back into ports by hand."""
+        glue = client.post("/api/glue", json={"name": "cfg"}).json()["name"]
+        glue_id = "var__glue_cfg__ab12cd34"  # the GUI's glue spelling (var__ prefix)
+        for node_id, kind, label in [
+            ("param__low", "parameterNode", "low"),
+            ("param__high", "parameterNode", "high"),
+            ("pathInput__runConfig", "pathInputNode", "runConfig"),
+            (glue_id, "glueNode", glue),
+            ("mf_load", "functionNode", "load"),
+            ("mv_raw", "variableNode", "RawEMG"),
+            ("mf_filter", "functionNode", "filterDelsys"),
+            ("mv_filtered", "variableNode", "FilteredEMG"),
+            ("mf_rename", "functionNode", "renameFields"),
+            ("mv_renamed", "variableNode", "RenamedEMG"),
+        ]:
+            _place(client, node_id, kind, label)
+        for edge_id, source, target, handle in [
+            ("g1", "pathInput__runConfig", glue_id, "in__value"),
+            ("g2", glue_id, "mf_load", "in__config"),
+            ("l1", "mf_load", "mv_raw", None),
+            ("f1", "mv_raw", "mf_filter", "in__signal"),
+            ("f2", "param__low", "mf_filter", "in__low"),
+            ("f3", "param__high", "mf_filter", "in__high"),
+            ("f4", "mf_filter", "mv_filtered", None),
+            ("r1", "mv_filtered", "mf_rename", "in__data"),
+            ("r2", "mf_rename", "mv_renamed", None),
+        ]:
+            body = {"source": source, "target": target}
+            if handle:
+                body["target_handle"] = handle
+            assert client.put(f"/api/edges/{edge_id}", json=body).status_code == 200
+        before = _connections()
+        selected = [
+            "param__low", "param__high", "pathInput__runConfig", glue_id, "mf_load",
+            "mv_raw", "mf_filter", "mv_filtered", "mf_rename", "mv_renamed",
+        ]
+
+        r = client.post(
+            "/api/pipelines/main/extract", json={"node_ids": selected, "name": "load_filter_emg"}
+        )
+
+        assert r.status_code == 200, r.text
+        pid = r.json()["pipeline_id"]
+        interface = client.get(f"/api/pipelines/{pid}/interface").json()
+        # The PathInput's port is named after it, not after the glue node it feeds.
+        assert sorted(interface["inputs"]) == ["high", "low", "runConfig"]
+        assert interface["outputs"] == ["RenamedEMG"]
+        db = get_db()
+        for kept in ("param__low", "param__high", "pathInput__runConfig", "mv_renamed"):
+            assert ps.manual_node_row(db, kept)[1] == "main", kept
+        for moved in (glue_id, "mf_load", "mv_raw", "mf_filter", "mv_filtered", "mf_rename"):
+            assert ps.manual_node_row(db, moved)[1] == pid, moved
         assert _connections() == before
 
 
@@ -182,6 +281,77 @@ class TestRemovingALine:
             },
         )
         assert _connections() == before
+
+
+class TestRemovedLinesMoveWithExtract:
+    """scistack-debug.log 2026-11-18 11:34: main had 7 hidden edges, the new
+    submodule 0, so recorded edges the user had removed came back inside,
+    beside the drawn ones, and filterDelsys/renameFields stalled as a "cycle"."""
+
+    @staticmethod
+    def _hidden(scope) -> set[str]:
+        return ps.get_hidden_edge_ids(get_db(), scope)
+
+    @staticmethod
+    def _cd() -> str:
+        view = effective_edges(get_db(), None, caller="test")
+        return edge_connection_id(
+            {"source": C, "target": D, "targetHandle": "in__signal"}, view.manual_nodes
+        )
+
+    @staticmethod
+    def _remove_cd_and_redraw_beside(chain):
+        """The log's shape: the old line removed, a new one drawn next to it.
+        The new line keeps C fed into D, so C is not a sink left outside
+        (GitHub #22)."""
+        assert chain.delete("/api/edges/e_cd").status_code == 200
+        r = chain.put(
+            "/api/edges/e_cd2", json={"source": C, "target": D, "target_handle": "in__other"}
+        )
+        assert r.status_code == 200, r.text
+
+    def test_a_line_removed_between_two_moved_nodes_stays_removed(self, chain):
+        self._remove_cd_and_redraw_beside(chain)
+        assert self._cd() in self._hidden("main")
+
+        sub = _extract(chain, "CD").json()["pipeline_id"]
+
+        assert self._cd() in self._hidden(sub)
+        assert self._cd() not in self._hidden("main")
+        inside = effective_edges(get_db(), sub, caller="test")
+        assert "e_cd" not in {e["id"] for e in inside.drawn}
+
+    def test_a_removed_crossing_line_stays_removed_on_both_canvases(self, chain):
+        """One end stays behind. The stored row then spans both canvases, so
+        its hide must apply on both (2026-11-19)."""
+        assert chain.delete("/api/edges/e_bc").status_code == 200
+        # Something else still feeds C, so C is not a source left outside.
+        _place(chain, "mf_X", "functionNode", "fcn_x")
+        assert chain.put("/api/edges/e_xc", json={"source": "mf_X", "target": C}).status_code == 200
+        before = self._hidden("main")
+        bc = next(iter(before))
+
+        sub = _extract(chain, "CD").json()["pipeline_id"]
+
+        assert self._hidden("main") == before
+        assert bc in self._hidden(sub)
+
+    def test_nothing_runs_through_the_removed_line(self, chain):
+        """What the extracted steps are wired to: D no longer reads C."""
+        self._remove_cd_and_redraw_beside(chain)
+        sub = _extract(chain, "CD").json()["pipeline_id"]
+
+        assert self._cd() not in _connections(sub)
+
+    def test_a_removed_line_to_a_sink_left_outside_runs_nothing(self, chain):
+        """C's only line removed: C is a sink and stays on main, so the removed
+        C -> D crosses. Inside, D must not read C."""
+        chain.delete("/api/edges/e_cd")
+        r = _extract(chain, "CD")
+        assert r.status_code == 200, r.text
+        assert ps.manual_node_row(get_db(), C)[1] == "main"
+        assert self._cd() not in _connections(r.json()["pipeline_id"])
+        assert self._cd() not in _connections("main")
 
 
 class TestManualPorts:
@@ -647,6 +817,160 @@ class TestLegality:
         assert "need a variable between them" in r.text
 
 
+class TestIdenticalEdge:
+    def test_redrawing_a_stored_line_writes_nothing(self, chain):
+        """GitHub #24: a PathInput -> glue edge vanished from the screen and
+        the user drew it twice more; all three rows were stored."""
+        r = chain.put(
+            "/api/edges/e_ab_again",
+            json={"source": A, "target": B, "target_handle": "in__path"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("existing_edge_id") == "e_ab"
+        stored = [e["id"] for e in ps.get_manual_edges(get_db())]
+        assert "e_ab_again" not in stored
+        assert stored.count("e_ab") == 1
+
+    def test_a_different_port_is_a_different_line(self, chain):
+        r = chain.put(
+            "/api/edges/e_ab_other",
+            json={"source": A, "target": B, "target_handle": "in__other"},
+        )
+        assert "existing_edge_id" not in r.json()
+
+
+class TestGlueOnTheParent:
+    """GitHub #24 / scistack-debug.log 2026-11-18 11:57: a PathInput -> glue
+    edge drawn on `main` beside a submodule whose own glue node (same glue
+    function) was removed never reached the canvas (client verdict
+    `server_omitted`). The build now says where a drawn edge is lost
+    (`graph_service._DrawnEdgeTracer`); if this fails, its WARN in the
+    captured log names the stage."""
+
+    def _canvas_edges(self, client, scope="main") -> set[str]:
+        graph = client.get("/api/pipeline", params={"pipeline_id": scope}).json()
+        return {e["id"] for e in graph["edges"]}
+
+    def _glue(self, client) -> str:
+        r = client.post("/api/glue", json={"name": "cfg"})
+        assert r.json()["ok"], r.json()
+        return r.json()["name"]  # glue_cfg(value)
+
+    def test_a_pathinput_to_glue_edge_is_drawn(self, client, glue_project):
+        glue = self._glue(client)
+        _place(client, A, "pathInputNode", "A")
+        _place(client, "glue_out", "glueNode", glue)
+        r = client.put(
+            "/api/edges/e_pi_glue",
+            json={"source": A, "target": "glue_out", "target_handle": "in__value"},
+        )
+        assert r.status_code == 200, r.text
+
+        assert "e_pi_glue" in self._canvas_edges(client)
+
+    def test_it_is_drawn_beside_a_submodule_with_a_removed_glue_of_the_same_function(
+        self, client, glue_project, caplog
+    ):
+        glue = self._glue(client)
+        sub = client.post("/api/pipelines", json={"name": "sub"}).json()["pipeline_id"]
+        _place(client, "port_cfg", "inputPortNode", glue, sub)
+        _place(client, "glue_in", "glueNode", glue, sub)
+        client.put(
+            "/api/edges/e_port_glue",
+            json={"source": "port_cfg", "target": "glue_in", "target_handle": "in__value"},
+        )
+        _place(client, A, "pathInputNode", "A")
+        use_id = client.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": sub}
+        ).json()["use_id"]
+        client.put(
+            "/api/edges/e_pi_use",
+            json={"source": A, "target": use_id, "target_handle": f"in__{glue}"},
+        )
+        # The user removes the inner glue and puts one on the parent instead.
+        assert client.delete("/api/layout/glue_in").status_code == 200
+        _place(client, "glue_out", "glueNode", glue)
+        r = client.put(
+            "/api/edges/e_pi_glue",
+            json={"source": A, "target": "glue_out", "target_handle": "in__value"},
+        )
+        assert r.status_code == 200, r.text
+
+        with caplog.at_level("WARNING"):
+            drawn = self._canvas_edges(client)
+
+        lost = [m for m in caplog.messages if "lost at" in m]
+        assert "e_pi_glue" in drawn, lost
+
+
+class TestOutputToAVariable:
+    """GitHub #24 / scistack-debug.log 2026-11-18 11:41: a submodule output
+    connected to a variable on the parent was refused because put_edge traced
+    a segment already removed inside the submodule."""
+
+    def _submodule(self, client):
+        """Inside: ``fn -> VarX -> [output VarX]``. Parent: a placement and a
+        VarX node of its own. Returns the use id."""
+        sub = client.post("/api/pipelines", json={"name": "sub"}).json()["pipeline_id"]
+        _place(client, "fn_in", "functionNode", "make_x", sub)
+        _place(client, "var_in", "variableNode", "VarX", sub)
+        _place(client, "out_x", "outputPortNode", "VarX", sub)
+        client.put("/api/edges/e_fn_var", json={"source": "fn_in", "target": "var_in"})
+        client.put("/api/edges/e_var_port", json={"source": "var_in", "target": "out_x"})
+        _place(client, "var_out", "variableNode", "VarX", "main")
+        return client.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": sub}
+        ).json()["use_id"]
+
+    def _connect(self, client, use_id):
+        return client.put(
+            "/api/edges/e_outer",
+            json={"source": use_id, "target": "var_out", "source_handle": "out__VarX"},
+        )
+
+    def test_a_variable_through_the_port_to_a_variable_is_refused_with_the_fix(self, client):
+        """Decision 3 (2026-11-18): still refused, but the message says how to
+        wire it instead."""
+        r = self._connect(client, self._submodule(client))
+        assert r.status_code == 400
+        assert "two variables need a function between them" in r.text
+        assert "Connect the step that makes the variable to the output port" in r.text
+
+    def test_a_removed_inner_segment_does_not_block_the_connection(self, client):
+        use_id = self._submodule(client)
+        assert client.delete("/api/edges/e_var_port").status_code == 200
+        r = client.put("/api/edges/e_fn_port", json={"source": "fn_in", "target": "out_x"})
+        assert r.status_code == 200, r.text
+
+        r = self._connect(client, use_id)
+
+        assert r.status_code == 200, r.text
+        view = effective_edges(get_db(), "main", caller="test")
+        assert view.port_wiring is not None and view.port_wiring.illegal == ()
+        assert any(
+            e["source"] == "fn_in" and e["target"] == "var_out" for e in view.wiring_list
+        )
+
+    def test_the_trace_owner_drops_a_segment_hidden_on_another_canvas(self, client):
+        """put_edge and the canvas read one trace (edge_view.trace_through_ports):
+        a segment hidden inside the submodule is out of it even when the edge
+        list comes from the parent's view."""
+        from scistack_gui.domain.edge_view import trace_through_ports
+
+        use_id = self._submodule(client)
+        client.delete("/api/edges/e_var_port")
+        view = effective_edges(get_db(), "main", caller="test")
+        assert "e_var_port" in {e["id"] for e in view.drawn}  # hidden on `sub` only
+        outer = {"id": "e_outer", "source": use_id, "target": "var_out",
+                 "sourceHandle": "out__VarX", "targetHandle": None}
+
+        wiring = trace_through_ports(
+            get_db(), list(view.drawn) + [outer], view.manual_nodes, ps.get_pipeline_uses(get_db())
+        )
+
+        assert wiring.illegal == ()
+
+
 class TestNoPorts:
     def test_wiring_is_exactly_what_is_drawn(self, chain):
         """With no input/output node anywhere, tracing doesn't touch anything."""
@@ -767,10 +1091,11 @@ def _extract_folded(client, source="main"):
 
 class TestMovingAFoldedNode:
     def test_it_leaves_the_parent_canvas(self, folded):
-        """Both were drawn on main and in the submodule, main's copy disconnected."""
-        moved = {"data_path", "fcn_b", "VarC"}
+        """Both were drawn on main and in the submodule, main's copy disconnected.
+        The folded PathInput is a source, so it stays on main (GitHub #22)."""
+        moved = {"fcn_b", "VarC"}
         before = _labels_on(folded, "main")  # includes the fixture's seeded run
-        assert moved <= before
+        assert moved | {"data_path"} <= before
 
         pid = _extract_folded(folded)
 
@@ -780,7 +1105,7 @@ class TestMovingAFoldedNode:
     def test_its_row_moves_with_it(self, folded):
         pid = _extract_folded(folded)
         db = get_db()
-        assert ps.manual_node_row(db, PATH_INPUT) == ("pathInputNode", pid)
+        assert ps.manual_node_row(db, PATH_INPUT) == ("pathInputNode", "main")
         assert ps.manual_node_row(db, VARIABLE) == ("variableNode", pid)
 
     def test_the_connection_out_of_the_submodule_survives(self, folded):
@@ -792,7 +1117,7 @@ class TestMovingAFoldedNode:
         """The spelling that always worked."""
         r = _extract(chain, "ABC")
         assert r.status_code == 200, r.text
-        assert ps.manual_node_row(get_db(), A)[1] == r.json()["pipeline_id"]
+        assert ps.manual_node_row(get_db(), C)[1] == r.json()["pipeline_id"]
 
     def test_a_copy_on_another_canvas_keeps_the_original(self, folded):
         """A duplicated hypothesis draws ``var__VarC::hyp`` from main's row, so
@@ -800,6 +1125,14 @@ class TestMovingAFoldedNode:
         hyp = folded.post("/api/pipelines", json={"name": "hyp"}).json()["pipeline_id"]
         placed = ids.placement_id(VARIABLE, hyp)
         layout_store.write_node_position(placed, 5, 6, pipeline_id=hyp)
+        # Wired on hyp, so it is neither a source nor a sink there (GitHub #22).
+        _place(folded, "mf_x", "functionNode", "fcn_x", hyp)
+        _place(folded, "mf_y", "functionNode", "fcn_y", hyp)
+        folded.put("/api/edges/e_hx", json={"source": "mf_x", "target": placed})
+        folded.put(
+            "/api/edges/e_hy",
+            json={"source": placed, "target": "mf_y", "target_handle": "in__signal"},
+        )
         intent_store.set_run_options(get_db(), VARIABLE, {"dry_run": True}, scope="main")
 
         r = folded.post(
@@ -895,21 +1228,153 @@ class TestSettingsFollowTheNode:
 
 class TestAlreadyRunDownstream:
     def test_a_recorded_edge_is_not_drawn_back_onto_the_parent(self, client):
-        """RawSignal -> bandpass_filter has history. Extracting only the variable
-        must leave the recorded edge drawn on neither canvas, through refreshes
-        (adoption runs in each build), with the line coming from the placement."""
+        """RawSignal -> bandpass_filter has history. Extracting the step (and
+        the variable, a source that stays outside, GitHub #22) must leave the
+        recorded edge drawn on neither canvas, through refreshes (adoption runs
+        in each build), with the line going into the placement."""
         _place(client, "mv_box", "variableNode", "RawSignal")
         nodes = client.get("/api/pipeline").json()["nodes"]
         raw = next(n["id"] for n in nodes if n["data"]["label"] == "RawSignal")
+        fn = next(n["id"] for n in nodes if n["type"] == "functionNode")
 
-        r = client.post("/api/pipelines/main/extract", json={"node_ids": [raw], "name": "sub"})
+        r = client.post(
+            "/api/pipelines/main/extract", json={"node_ids": [raw, fn], "name": "sub"}
+        )
         assert r.status_code == 200, r.text
         use_id = r.json()["use_id"]
 
         for _ in range(2):
             graph = client.get("/api/pipeline").json()
-            assert "RawSignal" not in {n["data"]["label"] for n in graph["nodes"]}
+            labels = {n["data"]["label"] for n in graph["nodes"]}
+            assert "RawSignal" in labels and "bandpass_filter" not in labels
             on_canvas = {n["id"] for n in graph["nodes"]}
             for e in graph["edges"]:
                 assert e["source"] in on_canvas and e["target"] in on_canvas
-            assert any(e["source"] == use_id for e in graph["edges"])
+            assert any(e["target"] == use_id for e in graph["edges"])
+
+
+class TestDanglingDiagnostic:
+    """scistack-debug.log 2026-11-18: 126 `point at a node not on this canvas`
+    WARNs, every one an edge into a placement. The check ran before the
+    placement nodes were added (stage C)."""
+
+    def test_a_wired_placement_does_not_warn(self, chain, caplog):
+        assert _extract(chain, "BCD").status_code == 200
+        with caplog.at_level("WARNING", logger="scistack_gui.domain.scope_filter"):
+            graph = chain.get("/api/pipeline").json()
+            chain.get("/api/pipeline")  # a second build runs adoption too
+        assert any(e["target"].startswith("use_") for e in graph["edges"])
+        assert not [m for m in caplog.messages if "point at a node not on this canvas" in m]
+
+    def test_a_real_dangling_edge_still_warns(self, caplog):
+        from scistack_gui.domain.scope_filter import warn_dangling_edges
+
+        nodes = [{"id": "a"}, {"id": "use_1"}]
+        edges = [_edge("ok", "a", "use_1"), _edge("bad", "a", "gone")]
+        with caplog.at_level("WARNING", logger="scistack_gui.domain.scope_filter"):
+            assert warn_dangling_edges("main", nodes, edges) == [("a", "gone")]
+        assert any("1 edge(s) point at a node not on this canvas" in m for m in caplog.messages)
+
+
+class TestLocalSubmoduleTunables:
+    """Stage E (user decision 2026-11-18: parity). ⚙ on a submodule extracted
+    in this project failed with `is not a library pipeline` (scistack-debug.log
+    2026-11-18); a library is only the shareable kind."""
+
+    @pytest.fixture
+    def placed(self, client, monkeypatch):
+        from scistack_gui.project import registry
+
+        def scale_signal(signal, gain=1.0):
+            return signal
+
+        monkeypatch.setitem(registry._functions, "scale_signal", scale_signal)
+        pid = client.post("/api/pipelines", json={"name": "local_sub"}).json()["pipeline_id"]
+        _place(client, "p_sig", "inputPortNode", "signal", pid)
+        _place(client, "param__cutoff", "parameterNode", "cutoff", pid)
+        _place(client, "mf_scale", "functionNode", "scale_signal", pid)
+        client.put(
+            "/api/edges/i",
+            json={"source": "p_sig", "target": "mf_scale", "target_handle": "in__signal"},
+        )
+        use_id = client.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": pid}
+        ).json()["use_id"]
+        return client, use_id
+
+    def test_a_local_placement_lists_its_tunables(self, placed):
+        client, use_id = placed
+        r = client.get(f"/api/pipeline-uses/{use_id}/tunables")
+        assert r.status_code == 200, r.text
+        tun = r.json()
+        assert tun["library"] is None
+        assert tun["parameters"] == [{"name": "cutoff", "value": None, "source": "missing"}]
+        assert tun["step_values"] == [
+            {"key": "scale_signal.gain", "value": 1.0, "default": 1.0, "parameter": None}
+        ]
+
+    def test_setting_a_step_value_writes_this_placement_s_binding(self, placed):
+        client, use_id = placed
+        r = client.put(
+            f"/api/pipeline-uses/{use_id}/tunables",
+            json={"key": "scale_signal.gain", "value": 2.0},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["step_values"][0]["value"] == 2.0
+        use = next(u for u in ps.get_pipeline_uses(get_db()) if u["use_id"] == use_id)
+        assert use["binding"]["params"] == {"scale_signal.gain": 2.0}
+
+    def test_the_project_view_lists_local_placements(self, placed):
+        client, use_id = placed
+        rows = client.get("/api/tunables").json()
+        row = next(r for r in rows if r["use_id"] == use_id)
+        assert row["library"] is None and row["path"][-1] == "local_sub"
+
+
+class TestRemovingAPortNode:
+    """Stage F. scistack-debug.log 2026-11-18: the user removed an input node;
+    its outer edge `runConfig -> use_…` kept naming the gone port forever."""
+
+    @pytest.fixture
+    def wired(self, client):
+        pid = client.post("/api/pipelines", json={"name": "sub"}).json()["pipeline_id"]
+        _place(client, "p_in", "inputPortNode", "x", pid)
+        _place(client, "mf_in", "functionNode", "fcn_in", pid)
+        _place(client, "p_out", "outputPortNode", "Y", pid)
+        client.put("/api/edges/i1", json={"source": "p_in", "target": "mf_in", "target_handle": "in__x"})
+        client.put("/api/edges/i2", json={"source": "mf_in", "target": "p_out"})
+        _place(client, A, "pathInputNode", "A")
+        _place(client, E, "variableNode", "VarE")
+        use_id = client.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": pid}
+        ).json()["use_id"]
+        assert client.put(
+            "/api/edges/o_in", json={"source": A, "target": use_id, "target_handle": "in__x"}
+        ).status_code == 200
+        assert client.put(
+            "/api/edges/o_out", json={"source": use_id, "target": E, "source_handle": "out__Y"}
+        ).status_code == 200
+        return client
+
+    @staticmethod
+    def _drawn_on_main() -> set[str]:
+        return {e["id"] for e in effective_edges(get_db(), "main", caller="test").drawn}
+
+    @pytest.mark.parametrize("port,outer,other", [("p_in", "o_in", "o_out"), ("p_out", "o_out", "o_in")])
+    def test_its_outer_edges_go_with_it(self, wired, port, outer, other):
+        assert {outer, other} <= self._drawn_on_main()
+        assert wired.delete(f"/api/layout/{port}").status_code == 200
+        drawn = self._drawn_on_main()
+        assert outer not in drawn
+        assert other in drawn
+        view = effective_edges(get_db(), None, caller="test")
+        dangling = view.port_wiring.dangling if view.port_wiring else []
+        assert not [e for e in dangling if e.get("id") == outer]
+
+    def test_undo_brings_back_both(self, wired):
+        from tests.test_history import _change, _undo
+
+        assert wired.delete("/api/layout/p_in", headers=_change("rm_port")).status_code == 200
+        assert "o_in" not in self._drawn_on_main()
+        assert _undo(wired, "rm_port")["status"] == "ok"
+        assert "o_in" in self._drawn_on_main()

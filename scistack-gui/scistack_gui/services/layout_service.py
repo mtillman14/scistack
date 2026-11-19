@@ -122,6 +122,19 @@ def _notify_dag_updated(source: str | None = None) -> None:
     push_message({"type": "dag_updated", **({"source": source} if source else {})})
 
 
+def _notify_db_written(source: str) -> None:
+    """Say the server wrote the database WITHOUT asking for a refresh.
+
+    For writes that don't change the graph (a dragged node's position). The
+    canvas ignores it; the extension's ``.duckdb`` watcher counts it, like a
+    ``dag_updated``, as this GUI's own write and skips the refresh it would
+    otherwise start ~2 s after every drag (GitHub #23, extension ownWrites.ts).
+    """
+    from scistack_gui.runtime.ws_hub import push_message
+
+    push_message({"type": "db_written", "source": source})
+
+
 def get_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
     from scistack_gui.stores import layout as layout_store
 
@@ -239,6 +252,7 @@ def put_layout(
         logger.info("[layout_service] Updating node position only (no type/label)")
         layout_store.write_node_position(node_id, x, y, pipeline_id=pipeline_id)
         logger.info("[layout_service] Node position updated successfully")
+        _notify_db_written("put_layout")
     return {"ok": True}
 
 
@@ -304,13 +318,61 @@ def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
 
 
 def delete_layout(node_id: str) -> dict:
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.stores import layout as layout_store
 
     logger.info("[layout_service] delete_layout called (node_id=%r)", node_id)
+    db = get_db()
+    meta = pipeline_store.get_manual_nodes(db).get(node_id)
     layout_store.delete_node(node_id)
     logger.info("[layout_service] Node deleted successfully")
+    if meta is not None and meta.get("type") in ports.PORT_NODE_TYPES:
+        _hide_port_outer_edges(db, node_id, meta)
     _notify_dag_updated()
     return {"ok": True}
+
+
+def _hide_port_outer_edges(db, node_id: str, meta: dict) -> list[str]:
+    """Removing an input/output node removes its port, so remove the outer
+    edges on every placement that name it too, with the same hide as
+    removing an edge by hand (``_hide_edge_in_its_scope``; Undo restores
+    both). Left alone they named a port that no longer exists: never drawn
+    (the canvas has no handle for them), binding nothing, and a WARN every
+    session (scistack-debug.log 2026-11-18: ``runConfig -> use_…, port
+    in__glue_delsysEMG_config``)."""
+    from scistack_gui.domain.edge_view import effective_edges
+    from scistack_gui.ids import in_handle, out_handle
+
+    is_input = meta["type"] == ports.INPUT_PORT_NODE
+    handle = in_handle(meta["label"]) if is_input else out_handle(meta["label"])
+    end, end_handle = ("target", "targetHandle") if is_input else ("source", "sourceHandle")
+    placements = {
+        u["use_id"]
+        for u in pipeline_store.get_pipeline_uses(db)
+        if u["child_pipeline_id"] == meta.get("pipeline_id")
+    }
+    if not placements:
+        return []
+    view = effective_edges(db, None, caller="layout_service.delete_layout")
+    hidden = []
+    for e in view.drawn_list:
+        if e.get(end) in placements and e.get(end_handle) == handle:
+            _hide_edge_in_its_scope(
+                db,
+                e["id"],
+                e.get("source") or "",
+                e.get("target") or "",
+                e.get("sourceHandle"),
+                e.get("targetHandle"),
+                f"its port {handle} was removed with {node_id}",
+            )
+            hidden.append(e["id"])
+    logger.info(
+        "[layout_service] removed port node %s (%s %r): hid %d outer edge(s) on "
+        "%d placement(s): %s",
+        node_id, meta["type"], meta["label"], len(hidden), len(placements), hidden,
+    )
+    return hidden
 
 
 def put_edge(
@@ -398,6 +460,18 @@ def put_edge(
 
     view = effective_edges(db, scope_id, caller="put_edge cycle check")
     existing_edges = [e for e in view.drawn if e["id"] != edge_id]
+    identical = _identical_drawn_edge(existing_edges, source, target, source_handle, target_handle)
+    if identical is not None:
+        # The user redrew a line that is already stored and drawn (it vanished
+        # from their screen: scistack-debug.log 2026-11-18 11:57, the same
+        # PathInput -> glue edge stored three times, GitHub #24). A second row
+        # adds nothing but a "glue node has N incoming edges" warning.
+        logger.info(
+            "[layout_service] put_edge: identical edge %s already stored and drawn "
+            "(%s -> %s, %s -> %s); %s not written",
+            identical, source, target, source_handle, target_handle, edge_id,
+        )
+        return {"ok": True, "existing_edge_id": identical}
     cycle_path = find_cycle(existing_edges, source, target)
     if cycle_path is not None:
         by_ends = {(e["source"], e["target"]): e["id"] for e in existing_edges}
@@ -505,6 +579,32 @@ def _refuse_portless_function_input(
     )
 
 
+def _identical_drawn_edge(
+    drawn, source: str, target: str, source_handle, target_handle
+) -> "str | None":
+    """The id of a drawn edge joining the same two nodes through the same
+    handles, or ``None``. Ends compare by bare id, so ``X`` and ``X::main``
+    are one node."""
+    from scistack_gui.ids import strip_placement
+
+    want = (
+        strip_placement(source),
+        strip_placement(target),
+        source_handle or None,
+        target_handle or None,
+    )
+    for e in drawn:
+        have = (
+            strip_placement(e.get("source") or ""),
+            strip_placement(e.get("target") or ""),
+            e.get("sourceHandle") or None,
+            e.get("targetHandle") or None,
+        )
+        if have == want:
+            return e["id"]
+    return None
+
+
 def _refuse_illegal_port_wire(
     db, view, existing_edges, edge_id, source, target, source_handle, target_handle
 ) -> None:
@@ -545,11 +645,16 @@ def _refuse_illegal_port_wire(
             "and a submodule has one wiring. To connect it differently, click "
             "⎘ Duplicate on this placement first: it gets its own copy."
         )
-    wiring = ports.resolve_wiring(existing_edges + [edge], view.manual_nodes, uses)
+    from scistack_gui.domain.edge_view import trace_through_ports
+
+    # The same trace the canvas draws from (edge_view owns it): a segment the
+    # user removed inside the submodule does not make this connection illegal.
+    wiring = trace_through_ports(db, existing_edges + [edge], view.manual_nodes, uses)
     for from_node, to_node, reason, via in wiring.illegal:
         if edge_id in via:
             logger.warning(
-                "[layout_service] put_edge rejected: %s -> %s through ports (%s), edges %s",
+                "[layout_service] put_edge rejected: %s -> %s through ports (%s), "
+                "edges %s (all live; removed segments are not traced)",
                 from_node,
                 to_node,
                 reason,
@@ -557,7 +662,7 @@ def _refuse_illegal_port_wire(
             )
             raise PortWiringError(
                 f"This connection would join '{from_node}' to '{to_node}' through "
-                f"submodule ports, and {reason}."
+                f"submodule ports, and {reason}.{ports.illegal_remedy(reason)}"
             )
 
 

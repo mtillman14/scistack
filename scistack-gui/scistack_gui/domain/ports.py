@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from scistack_gui.ids import (
     FN_ID_PREFIX,
     IN_HANDLE_PREFIX,
+    NODE_TYPE_PREFIXES,
     OUT_HANDLE_PREFIX,
     VAR_ID_PREFIX,
     handle_name,
@@ -197,8 +198,24 @@ def illegal_reason(source: str, target: str, topology: _Topology) -> "str | None
     if kinds == ("function", "function"):
         return "two functions need a variable between them"
     if kinds == ("variable", "variable"):
-        return "two variables need a function between them"
+        return VARIABLE_TO_VARIABLE
     return None
+
+
+#: :func:`illegal_reason` for a variable traced to a variable.
+VARIABLE_TO_VARIABLE = "two variables need a function between them"
+
+
+def illegal_remedy(reason: str) -> str:
+    """What to do instead, for the message put_edge shows with *reason* (user
+    decision 2026-11-18: keep refusing a variable passed through a port to a
+    variable, but say how to wire it). Empty when there is nothing to add."""
+    if reason == VARIABLE_TO_VARIABLE:
+        return (
+            " Connect the step that makes the variable to the output port, or "
+            "connect the port to the step that uses the variable."
+        )
+    return ""
 
 
 @dataclass
@@ -376,6 +393,64 @@ def params_on_ports(params: "dict | None", fed: set[tuple[str, str]]) -> list[st
         if hit:
             conflicts.append(key)
     return sorted(conflicts)
+
+
+#: Data nodes, which stay on the parent when they start or end the selection
+#: (GitHub #22, user decision 2026-11-18: entity nodes only; steps always move).
+BOUNDARY_ENTITY_TYPES = frozenset({"variableNode", "parameterNode", "pathInputNode"})
+
+
+def entity_type(node_id: str, manual_nodes: dict) -> "str | None":
+    """The node's type if it is a data node (:data:`BOUNDARY_ENTITY_TYPES`),
+    else ``None``. A stored row's type wins over the id's prefix: a glue node's
+    id starts ``var__`` but it is a step."""
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id))
+    if meta is not None:
+        kind = meta.get("type")
+        return kind if kind in BOUNDARY_ENTITY_TYPES else None
+    bare = strip_placement(node_id)
+    for kind, prefix in NODE_TYPE_PREFIXES.items():
+        if kind in BOUNDARY_ENTITY_TYPES and bare.startswith(prefix):
+            return kind
+    return None
+
+
+@dataclass
+class SelectionSplit:
+    """What an extraction moves, and the selected nodes it leaves outside."""
+
+    moved: set
+    #: Data nodes nothing feeds (a PathInput, a Parameter, a root variable).
+    sources: list[str]
+    #: Data nodes that feed nothing (a final result).
+    sinks: list[str]
+
+
+def split_selection(selected, edges, manual_nodes: dict, owner_of) -> SelectionSplit:
+    """Leave the selection's sources and sinks on the parent (GitHub #22).
+
+    A data node with no incoming edge on the canvas is a source; one with no
+    outgoing edge is a sink. They stay where they are, so :func:`plan_boundary`
+    sees their edges as crossing and gives each an input or output port, wired
+    to them on the parent. Steps (functions, glue, merges, placements) always
+    move.
+
+    *edges* are the edges drawn on the canvas; *owner_of(edge end)* is the
+    selected node id an end names (bare or placed spelling), else ``None``.
+    """
+    has_in: set = set()
+    has_out: set = set()
+    for edge in edges:
+        source = owner_of(edge.get("source") or "")
+        target = owner_of(edge.get("target") or "")
+        if source is not None:
+            has_out.add(source)
+        if target is not None:
+            has_in.add(target)
+    entities = {n for n in selected if entity_type(n, manual_nodes) is not None}
+    sources = sorted(n for n in entities if n not in has_in)
+    sinks = sorted(n for n in entities if n in has_in and n not in has_out)
+    return SelectionSplit(set(selected) - set(sources) - set(sinks), sources, sinks)
 
 
 @dataclass

@@ -604,15 +604,23 @@ class TestExtractUndo:
 
     def test_a_folded_node_and_stated_settings_are_restored(self, canvas):
         """Extract moves a folded node's row (under its bare id) and every
-        statement, and undo must put back both."""
+        statement, and undo must put back both. mv_out gets a consumer so it
+        is not a sink, which would stay outside (GitHub #22)."""
         from scistack_gui.stores import intent_store
 
+        canvas.put("/api/layout/mf_next", json={
+            "x": 1, "y": 2, "node_type": "functionNode", "label": "next_step",
+        })
+        canvas.put(
+            "/api/edges/e_next",
+            json={"source": "mv_out", "target": "mf_next", "target_handle": "in__signal"},
+        )
         layout_store.move_node_position(
-            "mv_in", "main", new_node_id=ids.placement_id("mv_in", "main")
+            "mv_out", "main", new_node_id=ids.placement_id("mv_out", "main")
         )
         intent_store.set_run_options(get_db(), "mf_proc", {"dry_run": True})
 
-        self._assert_round_trip(canvas, [ids.placement_id("mv_in", "main"), "mf_proc"])
+        self._assert_round_trip(canvas, [ids.placement_id("mv_out", "main"), "mf_proc"])
 
         assert ps.get_node_config(get_db(), "mf_proc")["runOptions"] == {"dry_run": True}
 

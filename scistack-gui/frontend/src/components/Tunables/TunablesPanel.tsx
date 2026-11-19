@@ -1,5 +1,5 @@
 /**
- * The tunable values of ONE placement of a library pipeline
+ * The tunable values of ONE placement of a submodule (library or local)
  * (.claude/plan-library-fork-chain.md E1, E3, E5): its Parameters and
  * PathInputs (the project's values, read-only here), and its step values
  * (this placement's binding: edit, or make a Parameter).

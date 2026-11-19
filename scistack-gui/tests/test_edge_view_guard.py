@@ -24,9 +24,9 @@ RAW_READS = {"get_manual_edges", "get_hidden_edge_ids"}
 #: (module path relative to scistack_gui/, enclosing function) -> reason.
 ALLOWED: dict[tuple[str, str], str] = {
     ("domain/edge_view.py", "effective_edges"): "the one owner",
-    ("domain/edge_view.py", "_trace_ports"): (
-        "the one owner: a port segment lives on one canvas, so its hide applies "
-        "whichever canvas is asking"
+    ("domain/edge_view.py", "trace_through_ports"): (
+        "the one owner of tracing through ports (the canvas and put_edge): a port "
+        "segment lives on one canvas, so its hide applies whichever canvas is asking"
     ),
     ("services/layout_service.py", "put_edge"): (
         "mutator: unhide-on-redraw checks the scope's hidden ids (cycle "

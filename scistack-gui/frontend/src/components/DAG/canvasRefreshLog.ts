@@ -20,6 +20,18 @@
  *   - "server_omitted": the refresh started after the confirm and the server
  *     still left it out (a build-side bug — document view / scope filter).
  *
+ * Settled 2026-11-18 (scistack-debug.log, GitHub #23): stale snapshots. Each
+ * write starts 2-3 refreshes and each get_pipeline takes 2-3.5 s, so a
+ * snapshot that started before the write keeps landing after it. Deletes were
+ * not tracked at all, so such a snapshot also redrew a node just deleted.
+ * The fix is the same bookkeeping: {@link CanvasRefreshLog.apply} says which
+ * on-screen items a snapshot must not change (`kept`: pending adds it could
+ * not have seen; `suppressed`: pending removals it could not have seen), and
+ * {@link overlayNodes} / {@link overlayEdges} draw the snapshot with them.
+ * An item is let go once a snapshot that started after its confirm arrives:
+ * then the server's answer is the truth, and a missing add stays a
+ * `server_omitted` WARN (a build bug, not hidden by the overlay).
+ *
  * Pure: no React, no DOM, no RPC. PipelineDAG owns the instance and sends
  * the report (report_canvas_refresh -> scistack.log).
  */
@@ -56,6 +68,12 @@ export interface RefreshStart {
   startedAt: number
 }
 
+/** An on-screen item the overlay keeps or leaves out. */
+export interface ItemRef {
+  kind: PendingKind
+  id: string
+}
+
 /** Why a response isn't drawn. See {@link CanvasRefreshLog.whyDiscard}. */
 export type DiscardReason = 'scope_changed' | 'newer_applied'
 
@@ -72,11 +90,21 @@ export interface RefreshReport {
   superseded_by: number | null
   /** Why this refresh was not drawn; null when it was. */
   discarded: DiscardReason | null
+  /** Pending adds missing from a snapshot that started after their confirm
+   *  (verdict `server_omitted`): wiped, a build-side bug. */
   dropped: DroppedItem[]
   /** Optimistic items this snapshot carried (now confirmed on screen). */
   settled: number
   /** Optimistic items it carried under another id (match key): folded. */
   folded: number
+  /** Pending adds this snapshot could not have seen (verdict
+   *  `stale_snapshot`): drawn from the screen instead of wiped. */
+  kept: DroppedItem[]
+  /** Pending removals this snapshot could not have seen: left out. */
+  suppressed: ItemRef[]
+  /** Removals confirmed BEFORE this snapshot started that it still carries:
+   *  the server kept the item, so it is drawn again. */
+  returned: ItemRef[]
 }
 
 /** The connection a drawn edge describes, as both sides can compute it. */
@@ -97,6 +125,9 @@ export const PENDING_TTL_MS = 60_000
 export class CanvasRefreshLog {
   private seq = 0
   private pending = new Map<string, PendingItem>()
+  /** Items the user deleted, until a snapshot shows the delete (same shape:
+   *  addedAt = when it left the screen, confirmedAt = when the RPC resolved). */
+  private removals = new Map<string, PendingItem>()
   private lastAppliedSeq = 0
 
   /** A refresh is starting; returns its handle. */
@@ -151,11 +182,15 @@ export class CanvasRefreshLog {
       dropped: [],
       settled: 0,
       folded: 0,
+      kept: [],
+      suppressed: [],
+      returned: [],
     }
   }
 
   /** An item was drawn before the server confirmed it. */
   addPending(id: string, kind: PendingKind, now: number, matchKey?: string | null): void {
+    this.removals.delete(id)  // re-placed right after a delete (var__X again)
     this.pending.set(id, { kind, addedAt: now, ...(matchKey ? { matchKey } : {}) })
   }
 
@@ -170,8 +205,29 @@ export class CanvasRefreshLog {
     this.pending.delete(id)
   }
 
+  /** The user deleted an item (delete_layout / delete_edge / remove_pipeline_use sent). */
+  addRemoval(id: string, kind: PendingKind, now: number): void {
+    this.pending.delete(id)  // drawn and deleted before any snapshot carried it
+    this.removals.set(id, { kind, addedAt: now })
+  }
+
+  /** The delete RPC resolved. */
+  confirmRemoval(id: string, now: number): void {
+    const item = this.removals.get(id)
+    if (item && item.confirmedAt === undefined) item.confirmedAt = now
+  }
+
+  /** The delete failed: the next snapshot may draw the item again. */
+  forgetRemoval(id: string): void {
+    this.removals.delete(id)
+  }
+
   pendingCount(): number {
     return this.pending.size
+  }
+
+  removalCount(): number {
+    return this.removals.size
   }
 
   /**
@@ -197,6 +253,9 @@ export class CanvasRefreshLog {
     const edgeIds = new Set(snapshot.edgeIds)
     const matchKeys = new Set(snapshot.matchKeys ?? [])
     const dropped: DroppedItem[] = []
+    const kept: DroppedItem[] = []
+    const suppressed: ItemRef[] = []
+    const returned: ItemRef[] = []
     let settled = 0
     let folded = 0
     for (const [id, item] of [...this.pending]) {
@@ -220,16 +279,30 @@ export class CanvasRefreshLog {
       // the snapshot COULD have contained it (write confirmed before start).
       const confirmAfterStart =
         item.confirmedAt === undefined ? null : item.confirmedAt - start.startedAt
-      dropped.push({
+      const stale = confirmAfterStart === null || confirmAfterStart > 0
+      const missing: DroppedItem = {
         kind: item.kind,
         id,
         age_ms: Math.round(now - item.addedAt),
         confirm_after_start_ms: confirmAfterStart === null ? null : Math.round(confirmAfterStart),
-        verdict:
-          confirmAfterStart === null || confirmAfterStart > 0
-            ? 'stale_snapshot'
-            : 'server_omitted',
-      })
+        verdict: stale ? 'stale_snapshot' : 'server_omitted',
+      }
+      // A snapshot that could not have seen the write does not get to wipe it.
+      if (stale) kept.push(missing)
+      else dropped.push(missing)
+    }
+    for (const [id, item] of [...this.removals]) {
+      const present = item.kind === 'node' ? nodeIds.has(id) : edgeIds.has(id)
+      if (!present || now - item.addedAt > PENDING_TTL_MS) {
+        this.removals.delete(id)
+        continue
+      }
+      if (item.confirmedAt === undefined || item.confirmedAt > start.startedAt) {
+        suppressed.push({ kind: item.kind, id })
+        continue
+      }
+      this.removals.delete(id)
+      returned.push({ kind: item.kind, id })
     }
     return {
       seq: start.seq,
@@ -245,6 +318,44 @@ export class CanvasRefreshLog {
       dropped,
       settled,
       folded,
+      kept,
+      suppressed,
+      returned,
     }
   }
+}
+
+type Overlay = { kept: ItemRef[]; suppressed: ItemRef[] }
+
+function idsOf(items: ItemRef[], kind: PendingKind): Set<string> {
+  return new Set(items.filter(i => i.kind === kind).map(i => i.id))
+}
+
+/**
+ * The nodes to draw: the snapshot without suppressed removals, plus the kept
+ * pending nodes as they are on screen (a node not on screen yet is skipped).
+ */
+export function overlayNodes<N extends { id: string }>(snapshot: N[], onScreen: N[], report: Overlay): N[] {
+  const suppressed = idsOf(report.suppressed, 'node')
+  const kept = idsOf(report.kept, 'node')
+  const drawn = snapshot.filter(n => !suppressed.has(n.id))
+  const have = new Set(drawn.map(n => n.id))
+  return [...drawn, ...onScreen.filter(n => kept.has(n.id) && !have.has(n.id))]
+}
+
+/**
+ * The edges to draw: the snapshot without suppressed removals and without
+ * edges touching a suppressed node, plus the kept pending edges from screen.
+ */
+export function overlayEdges<E extends { id: string; source: string; target: string }>(
+  snapshot: E[], onScreen: E[], report: Overlay,
+): E[] {
+  const goneNodes = idsOf(report.suppressed, 'node')
+  const goneEdges = idsOf(report.suppressed, 'edge')
+  const kept = idsOf(report.kept, 'edge')
+  const drawn = snapshot.filter(
+    e => !goneEdges.has(e.id) && !goneNodes.has(e.source) && !goneNodes.has(e.target),
+  )
+  const have = new Set(drawn.map(e => e.id))
+  return [...drawn, ...onScreen.filter(e => kept.has(e.id) && !have.has(e.id))]
 }

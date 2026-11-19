@@ -19,28 +19,38 @@ submodule gets its wiring.*
 ## The rule
 
 An input or output node exists for each connection crossing the boundary, and
-for nothing else. Worked example `pathinputA -> fcnB -> varC -> fcnD -> varE`:
+for nothing else.
+
+**Sources and sinks stay outside** (GitHub #22, 2026-11-18). A selected *data*
+node (variable, Parameter, PathInput) that nothing feeds on the canvas is a
+source; one that feeds nothing is a sink. Extract leaves both on the parent, so
+their edges cross the boundary and get ports, wired automatically. Steps
+(functions, glue, merges, placements) always move. Owner:
+`ports.split_selection`, run before `plan_boundary`, so there is still one port
+rule. A selection of only sources and sinks is refused. To put a PathInput
+inside on purpose (a library that loads its own data), move it in afterwards.
+
+Worked example `pathinputA -> fcnB -> varC -> fcnD -> varE`: A is a source and
+E a sink, so selecting them changes nothing.
 
 | Submodule contains | Input nodes | Output nodes | Parent canvas |
 |---|---|---|---|
-| A | none | A | `[sub] -> B -> C -> D -> E` |
-| A-B | none | C (from B) | `[sub] -> C -> D -> E` |
-| A-C | none | C (from inner C) | `[sub] -> D -> E` |
-| A-D | none | E | `[sub] -> E` |
-| A-E | none | none | `[sub]` |
-| B | A | C | `A -> [sub] -> C -> D -> E` |
-| B-C | A | C | `A -> [sub] -> D -> E` |
-| B-D | A | E | `A -> [sub] -> E` |
-| B-E | A | none | `A -> [sub]` |
+| A, E or A+E only | refused | | |
+| B (or A-B) | A | C | `A -> [sub] -> C -> D -> E` |
+| B-C (or A-C) | A | C | `A -> [sub] -> D -> E` |
+| B-D (or A-D) | A | E | `A -> [sub] -> E` |
+| B-E (or A-E) | A | E | `A -> [sub] -> E` |
 | C | C (from B) | C | `A -> B -> [sub] -> D -> E` |
-| C-D | C (from B) | E | `A -> B -> [sub] -> E` |
-| C-E | C (from B) | none | `A -> B -> [sub]` |
-| D | C | E | `A -> B -> C -> [sub] -> E` |
-| D-E | C | none | `A -> B -> C -> [sub]` |
-| E | E (from D) | none | `A -> B -> C -> D -> [sub]` |
+| C-D (or C-E) | C (from B) | E | `A -> B -> [sub] -> E` |
+| D (or D-E) | C | E | `A -> B -> C -> [sub] -> E` |
 
-`tests/test_submodule_ports.py` runs every row. Selecting B and D without C is
-refused: a path leaves the selection and returns (user decision 2026-11-03).
+`tests/test_submodule_ports.py` runs every row (`SPLITS`, `TestSourcesAndSinks`).
+Selecting B and D without C is refused: a path leaves the selection and
+returns (user decision 2026-11-03).
+
+A port is named after the variable crossing, else the outside node: a
+PathInput feeding a glue node names its port after the PathInput (a glue
+node's id starts `var__`, but it is a step, not a variable).
 
 ## Storage: segments, read as one
 
@@ -97,11 +107,15 @@ cost placement paths, per-placement compiles and display workarounds).
 | What a node is wired to | `EdgeView.wiring_list` |
 | One wiring per submodule | `ports.placement_conflict`, called by `put_edge` |
 | A value has one owner | `execution_service._refuse_params_on_ports`, at compile |
+| What an extract moves (sources and sinks stay) | `ports.split_selection`, before `plan_boundary` |
 | Which ports a selection needs | `ports.plan_boundary`, written by `scope_service.extract_to_submodule` |
 | Moving a node to another canvas | `layout.move_node_to_canvas`: row, position, edges, statements |
+| A removed line between two moved nodes | `intent_store.move_edge_hides`, called once by `extract_to_submodule` after the moves |
 | A step into a submodule | `context/descendInto.ts`, called by `ScopeProvider.descend` |
 | Whether a canvas response is drawn | `CanvasRefreshLog.whyDiscard`, called by `PipelineDAG.fetchPipeline` |
 | A connection's legality through ports | `ports.illegal_reason`; `put_edge` refuses, a stored one binds nothing |
+| Which segments a trace sees (a removed segment is out, whichever canvas asks) | `edge_view.trace_through_ports`, used by the canvas (`_trace_ports`) and `put_edge` |
+| What to do instead of an illegal connection | `ports.illegal_remedy`, shown in `put_edge`'s message |
 
 With no input/output node on any canvas, `port_wiring` is `None` and
 `wiring_list` is exactly `drawn_list`.
@@ -134,6 +148,17 @@ original visible.
 
 Use `layout.move_node_to_canvas`, not the separate row and position calls.
 
+**Removed lines move too.** A hide of an edge is a statement on the canvas it was
+made on. When both ends of a removed line are extracted, the hide moves to the
+submodule (`intent_store.move_edge_hides`); otherwise a recorded edge the user
+removed comes back inside, beside the drawn one, and the EachOf reads as a cycle
+(2026-11-18: filterDelsys and renameFields went red). A hide with one end left
+behind is copied, so it applies on both canvases: the removed line keeps its
+stored row, which now spans the two, and without the copy the submodule's
+wiring read it again (2026-11-19, surfaced by a sink left outside, #22).
+This is a whole-selection step, not part of `move_node_to_canvas`, because "both
+ends moved" is only known once every node has moved.
+
 ## Moving between canvases on screen
 
 The canvas replaces its nodes with each response, and those can come back out of order.
@@ -160,7 +185,19 @@ The canvas replaces its nodes with each response, and those can come back out of
 - **Adoption:** a recorded `B -> C` with ends on two canvases is drawn on none, so
   adoption never stores it. `retire_rewired_edges` compares resolved connections,
   so a named script run can't hide a segment.
-- **Removal of a port:** hide its node. `_pipeline_hidden_ports` is gone.
+- **Removal of a port:** hide its node. `_pipeline_hidden_ports` is gone. Its
+  outer edges on every placement are hidden with it
+  (`layout_service._hide_port_outer_edges`, the edge-removal hide, so Undo
+  restores both; 2026-11-19, stage F).
+
+- **Tunables (⚙):** every placement, library or local (user decision 2026-11-18:
+  parity; a library is only the shareable kind). `library_service.tunables` has
+  `library: None` and no library defaults for a local one. Still library-only,
+  because they compare against a library's own files or schema:
+  `placement_check`, `declare_requirements`, `suggest_key_map`. Step values are
+  the ones on the placement's own canvas (`_own_step_values`): a submodule
+  nested inside it is its own placement and owns its own. A MATLAB run
+  still refuses any placement `binding` (below).
 
 ## Known gaps
 
@@ -203,6 +240,17 @@ by hand. A repair action was considered and not built, under the no-migrations r
   the other. A library placed twice with different inputs needs forking.
 - Removing a line on one placement doesn't disconnect the steps while another
   placement holds that connection.
+
+### A variable through a port to a variable
+
+`VarA` inside -> output node -> placement -> a `VarA` node on the parent is refused
+("two variables need a function between them"), with a message naming the fix:
+connect the step that makes VarA to the output node, or connect the port to the
+step that uses VarA (user decision 2026-11-18; a pass-through was considered and
+not built). Until 2026-11-18 put_edge traced the parent's view, which still held a
+segment removed inside the submodule, so it refused even after the user rewired
+the inside correctly (GitHub #24). Both readers now trace through
+`edge_view.trace_through_ports`.
 
 ### A connection between two functions through ports
 

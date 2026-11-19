@@ -57,7 +57,7 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
-import { CanvasRefreshLog, edgeMatchKey, nodeMatchKey } from './canvasRefreshLog'
+import { CanvasRefreshLog, edgeMatchKey, nodeMatchKey, overlayEdges, overlayNodes } from './canvasRefreshLog'
 import { callBackend, isVSCodeMode, pageUndo, seedUndo } from '../../api'
 import { newChange, type Change } from '../../undo'
 import { useUndoShortcuts } from '../../hooks/useUndo'
@@ -289,6 +289,11 @@ export default function PipelineDAG() {
 
     const scopeChanged = loadedScope.current !== currentScope
     loadedScope.current = currentScope
+    // #23: a snapshot that started before the user's latest add/delete was
+    // confirmed must not undo it on screen (canvasRefreshLog.overlayNodes).
+    // On a scope switch nothing on screen belongs to this canvas.
+    const overlay = scopeChanged ? { kept: [], suppressed: [] } : report
+    const snapshotEdges = overlayEdges(data.edges, [], overlay)
 
     // On refreshes, use current on-screen positions so nodes never jump.
     // Only fall back to saved/dagre positions for nodes not already on screen.
@@ -302,7 +307,7 @@ export default function PipelineDAG() {
         }
       }
       const merged = { ...savedPositions, ...currentPositions }
-      const laidOut = applyDagreLayout(initialised, data.edges, merged)
+      const laidOut = applyDagreLayout(overlayNodes(initialised, prev, overlay), snapshotEdges, merged)
       // Re-apply any not-yet-persisted sidebar edit (see ScopeContext's
       // markNodeDirty doc) on top of the freshly fetched node -- otherwise
       // an unrelated dag_updated broadcast (e.g. another node's put_layout
@@ -314,7 +319,7 @@ export default function PipelineDAG() {
         return patch ? { ...n, data: { ...n.data, ...patch } } : n
       }))
     })
-    setEdges(data.edges)
+    setEdges(prev => overlayEdges(data.edges, prev, overlay))
 
     // Fit the viewport on the very first load and on every scope switch.
     if (isFirstLoad.current || scopeChanged) {
@@ -848,16 +853,23 @@ export default function PipelineDAG() {
 
   const onNodesDelete = useCallback((deleted: Node[]) => {
     for (const node of deleted) {
+      // A refresh that started before this delete must not redraw the node (#23).
+      refreshLog.current.addRemoval(node.id, 'node', performance.now())
+      const removed = () => refreshLog.current.confirmRemoval(node.id, performance.now())
       if (node.type === 'pipelineNode') {
         // Pipeline nodes are use edges — removing one deletes the use row
         // (and its layout positions) but never the child pipeline itself.
         callBackend('remove_pipeline_use', { use_id: node.id })
+          .then(removed)
           .catch(err => {
+            refreshLog.current.forgetRemoval(node.id)
             void showMessage(`Could not remove pipeline node: ${(err as Error).message}`)
             bumpGraph()  // restore the node — the delete did not happen
           })
       } else {
         callBackend('delete_layout', { node_id: node.id })
+          .then(removed)
+          .catch(() => refreshLog.current.forgetRemoval(node.id))
       }
     }
   }, [bumpGraph])
@@ -987,13 +999,18 @@ export default function PipelineDAG() {
       // prefix; the frontend just forwards the removed edge's endpoints so
       // a hidden DB-derived edge keeps a readable record of its endpoints.
       const removed = edges.find(e => e.id === change.id)
+      const edgeId = change.id
+      refreshLog.current.addRemoval(edgeId, 'edge', performance.now())
       callBackend('delete_edge', {
-        edge_id: change.id,
+        edge_id: edgeId,
         source: removed?.source,
         target: removed?.target,
         source_handle: removed?.sourceHandle ?? null,
         target_handle: removed?.targetHandle ?? null,
+      }).then(() => {
+        refreshLog.current.confirmRemoval(edgeId, performance.now())
       }).catch(err => {
+        refreshLog.current.forgetRemoval(edgeId)
         void showMessage(`Could not delete edge: ${(err as Error).message}`)
         bumpGraph()  // restore the edge — the delete did not happen
       })

@@ -154,33 +154,16 @@ def _trace_ports(
     (*severed*), which is what disconnects a node that has recorded history:
     removing the line ``[submodule] -> C`` removes ``B -> C``.
     """
-    from scistack_gui.domain.graph_builder import (
-        edge_connection_id,
-        manual_edge_is_hidden,
-    )
+    from scistack_gui.domain.graph_builder import edge_connection_id
     from scistack_gui.stores import pipeline_store
 
     if not ports.has_port_nodes(manual_nodes):
         return None, frozenset()
     uses = pipeline_store.get_pipeline_uses(db)
-    use_ids = {u["use_id"] for u in uses}
-    all_hidden = pipeline_store.get_hidden_edge_ids(db, None)
-    hidden_nodes = pipeline_store.get_hidden_node_ids(db, None)
-
-    def is_segment(edge: dict) -> bool:
-        return any(
-            end in use_ids or (manual_nodes.get(end) or {}).get("type") in ports.PORT_NODE_TYPES
-            for end in (edge.get("source") or "", edge.get("target") or "")
-        )
-
-    live = [
-        e
-        for e in drawn
-        if not (is_segment(e) and manual_edge_is_hidden(e, all_hidden, manual_nodes))
-    ]
-    wiring = ports.resolve_wiring(live, manual_nodes, uses, hidden_nodes)
+    wiring = trace_through_ports(db, drawn, manual_nodes, uses)
+    is_segment = _segment_test(manual_nodes, uses)
     drawn_ids = {e.get("id") for e in drawn}
-    unhidden = drawn + [
+    unhidden = list(drawn) + [
         e for e in stored if e.get("id") not in drawn_ids and is_segment(e)
     ]
     possible = ports.resolve_wiring(unhidden, manual_nodes, uses)
@@ -228,6 +211,54 @@ def _trace_ports(
         len(wiring.illegal),
     )
     return wiring, severed
+
+
+def _segment_test(manual_nodes: dict, uses: list):
+    """``is_segment(edge)``: whether *edge* touches an input/output node or a
+    placement, i.e. is one half of a connection through a port."""
+    use_ids = {u["use_id"] for u in uses}
+
+    def is_segment(edge: dict) -> bool:
+        return any(
+            end in use_ids or (manual_nodes.get(end) or {}).get("type") in ports.PORT_NODE_TYPES
+            for end in (edge.get("source") or "", edge.get("target") or "")
+        )
+
+    return is_segment
+
+
+def trace_through_ports(db, edges, manual_nodes: dict, uses: list) -> Wiring:
+    """THE trace of *edges* through submodule ports, as every reader must see
+    it: the canvas (via :func:`_trace_ports`) and put_edge's legality check.
+
+    A segment lives on exactly one canvas, so a hide of it applies whichever
+    canvas is asking. *edges* comes from one canvas's view, which only drops
+    that canvas's hides, so segments hidden on ANOTHER canvas (inside a
+    submodule, seen from its parent) are removed here, and nodes hidden on any
+    canvas end the trace. Before this was the one owner, put_edge traced the
+    raw view and refused a connection through a segment the user had already
+    removed (scistack-debug.log 2026-11-18 11:41, GitHub #24).
+    """
+    from scistack_gui.domain.graph_builder import manual_edge_is_hidden
+    from scistack_gui.stores import pipeline_store
+
+    all_hidden = pipeline_store.get_hidden_edge_ids(db, None)
+    hidden_nodes = pipeline_store.get_hidden_node_ids(db, None)
+    is_segment = _segment_test(manual_nodes, uses)
+    live = []
+    removed = []
+    for e in edges:
+        if is_segment(e) and manual_edge_is_hidden(e, all_hidden, manual_nodes):
+            removed.append(e.get("id"))
+        else:
+            live.append(e)
+    if removed:
+        logger.debug(
+            "[edge_view] trace_through_ports: %d removed segment(s) left out: %s",
+            len(removed),
+            removed[:20],
+        )
+    return ports.resolve_wiring(live, manual_nodes, uses, hidden_nodes)
 
 
 #: Messages already logged by :func:`_warn_once`.

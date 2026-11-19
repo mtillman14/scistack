@@ -48,7 +48,10 @@ def logged(caplog):
 
 def test_one_info_line_per_refresh_with_counts_timings_and_supersession(logged):
     result = report_canvas_refresh(WIPED)
-    assert result == {"seq": 7, "trigger": "dag_updated:db_watcher", "wiped": 1}
+    assert result == {
+        "seq": 7, "trigger": "dag_updated:db_watcher", "wiped": 1,
+        "kept": 0, "suppressed": 0, "returned": 0,
+    }
     (info,) = [r.getMessage() for r in logged.records if r.levelno == logging.INFO]
     assert info == (
         "[client] canvas refresh #7 (dag_updated:db_watcher, scope=main): applied "
@@ -165,3 +168,39 @@ def test_a_placement_labels_its_own_dag_updated(monkeypatch):
         {"type": "dag_updated", "source": "put_layout"},
         {"type": "dag_updated"},
     ]
+
+
+def test_a_drag_says_the_server_wrote_without_asking_for_a_refresh(monkeypatch):
+    """GitHub #23: the .duckdb watcher skips a write the server announced.
+    A drag must not rebuild the graph, so it is ``db_written``, not dag_updated."""
+    from scistack_gui.services import layout_service
+
+    pushed = []
+    monkeypatch.setattr("scistack_gui.runtime.ws_hub.push_message", lambda msg: pushed.append(msg))
+    monkeypatch.setattr(
+        "scistack_gui.stores.layout.write_node_position", lambda *a, **k: None
+    )
+    assert layout_service.put_layout("fn__f__1", 10.0, 20.0) == {"ok": True}
+    assert pushed == [{"type": "db_written", "source": "put_layout"}]
+
+
+def test_the_overlay_says_what_it_kept_left_out_and_what_came_back(logged):
+    """GitHub #23: stale snapshots no longer wipe; the log still names them."""
+    result = report_canvas_refresh({
+        "seq": 60,
+        "trigger": "dag_updated:db_watcher",
+        "scope": "main",
+        "kept": [{"kind": "edge", "id": "manual__apy990", "age_ms": 400,
+                  "confirm_after_start_ms": 120, "verdict": "stale_snapshot"}],
+        "suppressed": [{"kind": "node", "id": "var__FilteredEMG"}],
+        "returned": [{"kind": "edge", "id": "e__a__b"}],
+    })
+    assert result["kept"] == 1 and result["suppressed"] == 1 and result["returned"] == 1
+    infos = [r.getMessage() for r in logged.records if r.levelno == logging.INFO]
+    warns = [r.getMessage() for r in logged.records if r.levelno == logging.WARNING]
+    assert "wiped 0, kept 1 on screen, left out 1 just-deleted" in infos[0]
+    assert "kept the just-placed edge manual__apy990 on screen" in infos[1]
+    assert "stale_snapshot" in infos[1]
+    assert "left out 1 just-deleted item(s)" in infos[2] and "var__FilteredEMG" in infos[2]
+    (warn,) = warns
+    assert "the deleted edge e__a__b came back" in warn

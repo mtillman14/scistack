@@ -143,6 +143,31 @@ def _resolve_in_scope(
     return node_id if scope_id == ROOT_SCOPE and default_to_root else None
 
 
+def warn_dangling_edges(scope_id: str, nodes: list[dict], edges: list[dict]) -> list:
+    """Warn about edges the canvas would draw to nothing; returns them.
+
+    React Flow silently drops an edge whose end is not a node on screen. Run on
+    the FINISHED canvas (graph_service, after the placement nodes are added):
+    until 2026-11-19 this ran inside :func:`resolve_scope_view`, before them,
+    so every edge into a submodule placement warned (126 times in
+    scistack-debug.log 2026-11-18), and adoption's per-scope membership calls
+    warned too. A real dangling edge drowned in that.
+    """
+    on_canvas = {n["id"] for n in nodes}
+    dangling = [
+        (e["source"], e["target"]) for e in edges
+        if e["source"] not in on_canvas or e["target"] not in on_canvas
+    ]
+    if dangling:
+        logger.warning(
+            "[scope_filter] %s: %d edge(s) point at a node not on this canvas: %s",
+            scope_id,
+            len(dangling),
+            dangling[:5],
+        )
+    return dangling
+
+
 def resolve_scope_view(
     nodes: list[dict],
     edges: list[dict],
@@ -238,21 +263,6 @@ def resolve_scope_view(
                 if (src, tgt) != (e["source"], e["target"])
                 else e
             )
-
-    # Diagnostic: an edge kept with an endpoint no kept node has is drawn by
-    # nothing (the canvas silently loses it). Say so, naming both ends.
-    kept_ids = {n["id"] for n in kept_nodes}
-    dangling = [
-        (e["source"], e["target"]) for e in kept_edges
-        if e["source"] not in kept_ids or e["target"] not in kept_ids
-    ]
-    if dangling:
-        logger.warning(
-            "[scope_filter] %s: %d edge(s) point at a node not on this canvas: %s",
-            scope_id,
-            len(dangling),
-            dangling[:5],
-        )
 
     # A FUNCTION node missing from a scope's view is what "the canvas lost my
     # nodes" looks like (scistack.log 2026-10-01 22:51, a duplicated hypothesis

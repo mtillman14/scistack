@@ -29,6 +29,14 @@ and reports every applied refresh here:
   server still left the item out (a build-side bug: document view, scope
   filter).
 
+Since 2026-11-18 (GitHub #23) the canvas no longer lets a stale snapshot undo
+the user: it keeps the stale items on screen and leaves out items just deleted
+(``canvasRefreshLog.overlayNodes``). So a ``stale_snapshot`` is now an INFO
+"kept … on screen", not a wipe; ``left out N just-deleted`` names deletes a
+snapshot started too early to see; WARN ``came back`` = a delete the server
+confirmed BEFORE the refresh started, yet still draws (a build-side bug, like
+``server_omitted``).
+
 Reading it: a placement shows ``put_layout``/``put_edge`` lines from
 layout_service, then refresh lines; the WARN names the refresh that wiped
 the item, the next INFO with ``settled`` > 0 is the one that brought it back.
@@ -49,14 +57,31 @@ def _int(value: Any, default: int = -1) -> int:
         return default
 
 
+def _items(params: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    return [d for d in (params.get(key) or []) if isinstance(d, dict)][:50]
+
+
+def _when(confirm: Any) -> str:
+    if confirm is None:
+        return "its write was still unconfirmed"
+    return (
+        f"its write was confirmed {_int(confirm)} ms "
+        + ("AFTER" if _int(confirm) > 0 else "before")
+        + " this refresh started"
+    )
+
+
 def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
     """Log one applied canvas refresh (and any item it wiped).
 
     ``params``: ``seq``, ``trigger``, ``scope``, ``nodes``, ``edges``,
     ``get_pipeline_ms``, ``get_layout_ms``, ``total_ms``, ``superseded_by``,
     ``settled``, ``folded``, ``dropped`` (a list of ``{kind, id, age_ms,
-    confirm_after_start_ms, verdict}``) and ``discarded`` (why this refresh was
-    not drawn, else None). Returns a summary of what was logged.
+    confirm_after_start_ms, verdict}``), ``kept`` (same shape: stale items the
+    overlay drew from the screen), ``suppressed`` and ``returned`` (``{kind,
+    id}``: deletes left out / deletes the server still draws) and
+    ``discarded`` (why this refresh was not drawn, else None). Returns a
+    summary of what was logged.
     """
     seq = _int(params.get("seq"))
     trigger = str(params.get("trigger") or "unknown")[:120]
@@ -64,7 +89,10 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
     superseded_by = params.get("superseded_by")
     settled = _int(params.get("settled"), 0)
     folded = _int(params.get("folded"), 0)
-    dropped = [d for d in (params.get("dropped") or []) if isinstance(d, dict)][:50]
+    dropped = _items(params, "dropped")
+    kept = _items(params, "kept")
+    suppressed = _items(params, "suppressed")
+    returned = _items(params, "returned")
 
     discarded = params.get("discarded")
     if discarded:
@@ -83,7 +111,7 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
     logger.info(
         "[client] canvas refresh #%d (%s, scope=%s): applied %d node(s), %d "
         "edge(s); get_pipeline %d ms + get_layout %d ms = %d ms; pending "
-        "settled %d, folded %d, wiped %d%s",
+        "settled %d, folded %d, wiped %d%s%s",
         seq,
         trigger,
         scope,
@@ -95,19 +123,46 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
         settled,
         folded,
         len(dropped),
+        f", kept {len(kept)} on screen, left out {len(suppressed)} just-deleted"
+        if kept or suppressed
+        else "",
         f"; a newer refresh #{_int(superseded_by)} had started"
         if superseded_by is not None
         else "",
     )
-    for d in dropped:
-        confirm = d.get("confirm_after_start_ms")
-        when = (
-            "its write was still unconfirmed"
-            if confirm is None
-            else f"its write was confirmed {_int(confirm)} ms "
-            + ("AFTER" if _int(confirm) > 0 else "before")
-            + " this refresh started"
+    for d in kept:
+        logger.info(
+            "[client] canvas refresh #%d (%s) kept the just-placed %s %s on screen "
+            "(on screen %d ms; %s) -> %s",
+            seq,
+            trigger,
+            str(d.get("kind") or "?")[:10],
+            str(d.get("id") or "?")[:200],
+            _int(d.get("age_ms")),
+            _when(d.get("confirm_after_start_ms")),
+            str(d.get("verdict") or "?")[:40],
         )
+    if suppressed:
+        logger.info(
+            "[client] canvas refresh #%d (%s) left out %d just-deleted item(s) it "
+            "started too early to see: %s",
+            seq,
+            trigger,
+            len(suppressed),
+            [f"{d.get('kind')} {str(d.get('id'))[:200]}" for d in suppressed],
+        )
+    for d in returned:
+        logger.warning(
+            "[client] canvas refresh #%d (%s): the deleted %s %s came back; its "
+            "delete was confirmed before this refresh started, so the server "
+            "still draws it",
+            seq,
+            trigger,
+            str(d.get("kind") or "?")[:10],
+            str(d.get("id") or "?")[:200],
+        )
+    for d in dropped:
+        when = _when(d.get("confirm_after_start_ms"))
         logger.warning(
             "[client] canvas refresh #%d (%s) wiped the just-placed %s %s "
             "(on screen %d ms; %s) -> %s",
@@ -119,7 +174,14 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
             when,
             str(d.get("verdict") or "?")[:40],
         )
-    return {"seq": seq, "trigger": trigger, "wiped": len(dropped)}
+    return {
+        "seq": seq,
+        "trigger": trigger,
+        "wiped": len(dropped),
+        "kept": len(kept),
+        "suppressed": len(suppressed),
+        "returned": len(returned),
+    }
 
 
 def report_scope_navigation(params: dict[str, Any]) -> dict[str, Any]:

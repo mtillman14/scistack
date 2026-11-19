@@ -194,12 +194,25 @@ def propagate_run_states(
             progress = True
 
         if not progress:
-            # Cycle or unresolvable — mark remaining as red.
+            # Cycle or unresolvable — mark remaining as red. Name what each
+            # stalled step waits on: a stale recorded edge beside a drawn one
+            # (EachOf) reads as a cycle here, and only the inputs tell them
+            # apart (scistack-debug.log 2026-11-18 11:34).
+            waiting = {
+                fkey[0]: {
+                    vtype: sorted(f[0] for f in var_producers[vtype])
+                    for vtype in sorted(fn_input_types.get(fkey, set()))
+                    if vtype not in var_state and vtype in var_producers
+                }
+                for fkey in sorted(remaining)
+            }
             logger.warning(
-                "[run_state] DAG propagation stalled at iteration %d — possible cycle among %d node(s): %s",
+                "[run_state] DAG propagation stalled at iteration %d — possible cycle among %d node(s): %s; "
+                "each waits on {input: [its producers]}: %s",
                 iteration,
                 len(remaining),
                 sorted(remaining),
+                waiting,
             )
             for fkey in remaining:
                 fn_effective_state[fkey] = "red"

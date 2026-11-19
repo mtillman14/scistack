@@ -250,15 +250,17 @@ def suggest_key_map(db, pipeline_id: str) -> dict:
     }
 
 
-def _requirements(db, pipeline_id: str) -> "tuple[dict, set[str], set[str]]":
-    """``(owner, parameter names, PathInput names)`` the library pipeline
-    *pipeline_id* (and the library pipelines it places) refers to. Read from
-    the seeded canvas: the nodes are the requirements."""
+def _requirements(db, pipeline_id: str) -> "tuple[dict | None, set[str], set[str]]":
+    """``(library owner or None, parameter names, PathInput names)`` the
+    pipeline *pipeline_id* (and the pipelines it places) refers to. Read from
+    the canvas: the nodes are the requirements.
+
+    Any submodule, library or local (user decision 2026-11-18: feature
+    parity; a library is only the shareable kind). Callers that compare
+    against a library's own files check the owner themselves."""
     from scistack_gui.stores import pipeline_store as ps
 
     owner = ps.library_owner(db, pipeline_id)
-    if owner is None:
-        raise ValueError(f"{pipeline_id} is not a library pipeline")
     todo, seen = [pipeline_id], set()
     params: set[str] = set()
     pis: set[str] = set()
@@ -288,6 +290,8 @@ def placement_check(db, pipeline_id: str) -> dict:
     from scistack_gui.domain.graph_builder import path_input_display
 
     owner, params, pis = _requirements(db, pipeline_id)
+    if owner is None:
+        raise ValueError(f"{pipeline_id} is not a library pipeline")
     info = read_library(owner["library"])
     have_params = registry.get_parameters_registry()
     have_pis = registry.get_path_inputs_registry()
@@ -432,9 +436,8 @@ def parameter_users(db) -> dict[str, list[str]]:
 
     users: dict[str, set[str]] = {}
     for row in ps.list_library_pipelines(db):
-        try:
-            owner, params, _pis = _requirements(db, row["pipeline_id"])
-        except ValueError:
+        owner, params, _pis = _requirements(db, row["pipeline_id"])
+        if owner is None:
             continue
         for name in params:
             users.setdefault(name, set()).add(owner["library"])
@@ -456,15 +459,28 @@ def _closure(db, pipeline_id: str) -> list[str]:
     return _closure_pipeline_ids(db, pipeline_id)
 
 
+def _own_step_values(db, child_pipeline_id: str) -> list[dict]:
+    """The step values ONE placement owns: those on its submodule's own
+    canvas. A submodule placed inside it is a placement of its own, listed
+    on its own, holding its own values in its own binding: one owner per
+    knob. Until 2026-11-19 this read the whole closure, so once local
+    placements were listed (stage E) the outer ``analysis`` showed
+    ``filter_emg.gain`` of the ``emg`` placed inside it, twice-owned
+    (test_the_project_view_lists_nested_placements)."""
+    return unwired_step_values(db, [child_pipeline_id])
+
+
 def tunables(db, use_id: str) -> dict:
-    """What a recipient can tune on ONE placement of a library pipeline (E1),
-    composed from the owners, storing nothing (O23):
+    """What a recipient can tune on ONE placement of a submodule (E1),
+    composed from the owners, storing nothing (O23). Library or local alike
+    (2026-11-18 parity): a local one has ``library`` None and no library
+    defaults, so a Parameter's source is ``project`` or ``missing``:
 
     * ``parameters``: the project-level Parameters it needs, with the
       project's value and whether that is still the library default;
     * ``path_inputs``: its PathInputs, with whether a root folder is still
       needed (D2);
-    * ``step_values``: function arguments no Parameter feeds (``key`` =
+    * ``step_values``: function arguments on its own canvas no Parameter feeds (``key`` =
       ``"<fn label>.<input>"``), with this placement's value (its binding,
       O21) or a Parameter it was pointed at (E5);
     * ``key_map``: this placement's schema-key mapping."""
@@ -477,7 +493,10 @@ def tunables(db, use_id: str) -> dict:
     use = _use(db, use_id)
     child = use["child_pipeline_id"]
     owner, params, pis = _requirements(db, child)
-    info = read_library(owner["library"])
+    if owner is None:
+        logger.info("[library_service] tunables %s: local submodule %s (no library owner)",
+                    use_id, child)
+    defaults = read_library(owner["library"]).parameter_defaults if owner else {}
     have_params = registry.get_parameters_registry()
     have_pis = registry.get_path_inputs_registry()
     binding = dict(use.get("binding") or {})
@@ -487,7 +506,7 @@ def tunables(db, use_id: str) -> dict:
     for name in sorted(params):
         p = have_params.get(name)
         value = list(p.values) if p is not None else None
-        default = info.parameter_defaults.get(name)
+        default = defaults.get(name)
         source = "missing" if p is None else (
             "library default" if default is not None and value == list(default) else "project"
         )
@@ -500,7 +519,7 @@ def tunables(db, use_id: str) -> dict:
         path_inputs.append({"name": name, "template": d.get("template"), "root_folder": root,
                             "needs_root": root is None})
     step_values = []
-    for sv in unwired_step_values(db, _closure(db, child)):
+    for sv in _own_step_values(db, child):
         key = f"{sv['label']}.{sv['input']}"
         held = overrides.get(key, sv["default"])
         ref = held.get("parameter") if isinstance(held, dict) else None
@@ -515,7 +534,7 @@ def tunables(db, use_id: str) -> dict:
     out = {
         "use_id": use_id,
         "pipeline_id": child,
-        "library": owner["library"],
+        "library": owner["library"] if owner else None,
         "parameters": parameters,
         "path_inputs": path_inputs,
         "step_values": step_values,
@@ -526,8 +545,8 @@ def tunables(db, use_id: str) -> dict:
 
 
 def project_tunables(db) -> list[dict]:
-    """E2: one row per placement of a library pipeline anywhere in the
-    project, nested ones included -- ``{"use_id", "path", ...tunables}``,
+    """E2: one row per placement of a submodule (library or local) anywhere
+    in the project, nested ones included -- ``{"use_id", "path", ...tunables}``,
     ``path`` = pipeline names from the top. View only: edits go through the
     placement (:func:`set_step_value`), the one owner of its values."""
     from scistack_gui.stores import pipeline_store as ps
@@ -548,8 +567,6 @@ def project_tunables(db) -> list[dict]:
             todo.append((u["child_pipeline_id"], child_path))
     rows = []
     for u in uses:
-        if ps.library_owner(db, u["child_pipeline_id"]) is None:
-            continue
         rows.append({**tunables(db, u["use_id"]),
                      "path": path_of.get(u["use_id"], [pipelines.get(u["child_pipeline_id"], "")])})
     rows.sort(key=lambda r: r["path"])
@@ -559,7 +576,7 @@ def project_tunables(db) -> list[dict]:
 
 def _step_value_keys(db, use: dict) -> set[str]:
     return {f"{sv['label']}.{sv['input']}"
-            for sv in unwired_step_values(db, _closure(db, use["child_pipeline_id"]))}
+            for sv in _own_step_values(db, use["child_pipeline_id"])}
 
 
 def set_step_value(db, use_id: str, key: str, value) -> dict:

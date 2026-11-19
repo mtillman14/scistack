@@ -1,5 +1,5 @@
 /**
- * Every placement of a library pipeline in the project, nested ones
+ * Every placement of a submodule (library or local) in the project, nested ones
  * included, with its tunables (.claude/plan-library-fork-chain.md E2).
  *
  * A view over `project_tunables`; each row is a `TunablesPanel` for that
@@ -34,10 +34,10 @@ export default function ProjectTunables() {
       <button style={styles.header} type="button" onClick={() => setOpen(o => !o)}>
         {open ? '▾' : '▸'} Tunables of placed libraries
       </button>
-      {open && rows.length === 0 && !error && <div style={styles.empty}>No library pipeline is placed.</div>}
+      {open && rows.length === 0 && !error && <div style={styles.empty}>No submodule is placed.</div>}
       {open && rows.map(r => (
         <div key={r.use_id} style={styles.item}>
-          <div style={styles.path}>{(r.path ?? []).join(' › ')} <span style={styles.lib}>({r.library})</span></div>
+          <div style={styles.path}>{(r.path ?? []).join(' › ')}{r.library && <span style={styles.lib}> ({r.library})</span>}</div>
           <TunablesPanel useId={r.use_id} initial={r} onChanged={fetchRows} />
         </div>
       ))}

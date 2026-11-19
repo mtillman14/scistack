@@ -473,6 +473,70 @@ def move_subject_scope(db, node_id: str, src_scope: str, dst_scope: str) -> int:
     return len(rows)
 
 
+def move_edge_hides(db, src_scope: str, dst_scope: str, is_moved) -> list[str]:
+    """Make the edge hides made on *src_scope* reach the nodes that moved to
+    *dst_scope* (``is_moved(end id) -> bool``): what extract-to-submodule does
+    with a removed line. Both ends moved: the hide moves. One end moved: it
+    applies on BOTH canvases, so it is copied.
+
+    A hide applies on the canvas it was made on. Left on the parent, it stops
+    reaching the edge, and a recorded edge the user removed comes back inside
+    the submodule (scistack-debug.log 2026-11-18 11:34: RenamedEMG ->
+    filterDelsys returned beside the drawn RawEMG -> filterDelsys, an EachOf
+    that read as a cycle and turned both steps red).
+
+    One end staying behind: a removed line keeps its stored row (a hide, never
+    a delete), so after the extract that row spans the two canvases and the
+    submodule's wiring read it again. Found 2026-11-19 when GitHub #22 left a
+    sink outside: ``VarC -> fcn_d``, removed on main, fed fcn_d inside.
+    A hide saved without endpoints can't be placed and stays.
+    Returns the edge ids whose hide now applies inside (moved or copied).
+    """
+    from dataclasses import replace
+
+    if src_scope == dst_scope:
+        return []
+    rows = [
+        st
+        for st in load_statements(
+            db, aspect=ASPECT_HIDDEN, key=HIDDEN_EDGE_KEY, scopes=[src_scope]
+        )
+        if st.scope == src_scope
+    ]
+    moving, crossing = [], []
+    for st in rows:
+        value = st.value or {}
+        source, target = value.get("source") or "", value.get("target") or ""
+        if not (source and target):
+            continue
+        ends_moved = is_moved(source) + is_moved(target)
+        if ends_moved == 2:
+            moving.append(st)
+        elif ends_moved == 1:
+            crossing.append(st)
+    if not moving and not crossing:
+        logger.debug(
+            "[intent_store] move_edge_hides %s -> %s: none of %d hide(s) touches "
+            "a moved node",
+            src_scope, dst_scope, len(rows),
+        )
+        return []
+    put_statements(db, [replace(st, scope=dst_scope) for st in moving + crossing])
+    for st in moving:
+        where = "subject_ref = ? AND scope = ? AND aspect = ? AND aspect_key = ?"
+        params = [st.subject_ref, src_scope, ASPECT_HIDDEN, HIDDEN_EDGE_KEY]
+        _check_deletion(db, where, params, "moving a removed line")
+        _duck(db).execute(f"DELETE FROM _intent WHERE {where}", params)
+    moved = [st.subject_ref for st in moving]
+    copied = [st.subject_ref for st in crossing]
+    logger.info(
+        "[intent_store] edge hides %s -> %s: moved %d %s; copied %d crossing "
+        "(kept on both canvases) %s",
+        src_scope, dst_scope, len(moved), moved, len(copied), copied,
+    )
+    return moved + copied
+
+
 def copy_scope(db, src_scope: str, dst_scope: str) -> int:
     """Copy a scope's statements to another — what duplicating a hypothesis
     does.

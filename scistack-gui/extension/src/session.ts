@@ -50,6 +50,7 @@ import {
   StartupAction,
   StartupDiagnosis,
 } from './startupDiagnostics';
+import { OwnWrites } from './ownWrites';
 
 /** Debounce for the `.duckdb` file watcher, ms. */
 const DB_WATCH_DEBOUNCE_MS = 2000;
@@ -77,6 +78,8 @@ export class Session {
 
   private watcher: vscode.FileSystemWatcher | undefined;
   private watchDebounce: ReturnType<typeof setTimeout> | undefined;
+  /** The server's own dag_updated pushes, so the watcher can skip their writes (#23). */
+  private readonly ownWrites = new OwnWrites();
   private disposed = false;
 
   private constructor(
@@ -149,6 +152,8 @@ export class Session {
         `[notify] ${method} (job=${params.job_id}) → ${plotPanels} plot panel(s)`,
       );
     }
+    // dag_updated, or db_written (a drag: the server wrote, no refresh needed).
+    if (method === 'dag_updated' || method === 'db_written') this.ownWrites.noteEmit(Date.now());
     if (!this.dagPanel) return;
     this.dagPanel.postMessage({ method, params });
     if (method === 'run_start' && typeof params.run_id === 'string') {
@@ -205,12 +210,13 @@ export class Session {
    *  the .duckdb too, so this watcher also fires ~2 s after every drop/drag;
    *  a suspected cause of placed nodes/edges vanishing briefly (2026-10-22,
    *  see frontend DAG/canvasRefreshLog.ts). */
-  private watchBurst: { count: number; files: Set<string>; firstAt: number } | undefined;
+  private watchBurst: { count: number; files: Set<string>; firstAt: number; times: number[] } | undefined;
 
   private onDbFileChanged(uri?: vscode.Uri): void {
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
-    if (!this.watchBurst) this.watchBurst = { count: 0, files: new Set(), firstAt: Date.now() };
+    if (!this.watchBurst) this.watchBurst = { count: 0, files: new Set(), firstAt: Date.now(), times: [] };
     this.watchBurst.count += 1;
+    if (this.watchBurst.times.length < 200) this.watchBurst.times.push(Date.now());
     if (uri) this.watchBurst.files.add(path.basename(uri.fsPath));
     this.watchDebounce = setTimeout(() => {
       this.watchDebounce = undefined;
@@ -221,6 +227,14 @@ export class Session {
           `${Date.now() - burst.firstAt} ms incl. ${DB_WATCH_DEBOUNCE_MS} ms debounce]`
         : '';
       if (!this.dagPanel) return;
+      // The server already refreshed the canvas for its own write (#23).
+      if (burst && this.ownWrites.explains(burst.times)) {
+        this.log.appendLine(
+          'DuckDB file changed next to the server\'s own dag_updated — own write, ' +
+          'skipping the watcher refresh' + burstText,
+        );
+        return;
+      }
       // MATLAB writes to the WAL throughout a run, not just at the end. A
       // refresh now would fire graph RPCs at a database MATLAB currently
       // holds the file lock on, and every one of them can only fail — so
@@ -240,8 +254,8 @@ export class Session {
         return;
       }
       this.log.appendLine(
-        'DuckDB file changed (an external write OR this GUI\'s own layout write — ' +
-        'the watcher cannot tell) — refreshing DAG' + burstText,
+        'DuckDB file changed with no dag_updated from the server next to it ' +
+        '(an external write, or a server write that pushed nothing) — refreshing DAG' + burstText,
       );
       this.dagPanel.postMessage({ method: 'dag_updated', params: { source: 'db_watcher' } });
     }, DB_WATCH_DEBOUNCE_MS);
