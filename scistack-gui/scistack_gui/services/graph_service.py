@@ -100,6 +100,29 @@ def _node_scope(db, node_id: str) -> str:
     return intent_store.scope_of_node(db, node_id)
 
 
+def _end_on_canvas_test(db, pipeline_id: str, nodes: list, manual_nodes: dict, positions_by_scope: dict):
+    """``end_on_canvas(end)``: will this edge end be a node on *pipeline_id*'s
+    canvas? The same membership ``resolve_scope_view`` applies later
+    (``scope_filter._resolve_in_scope``), plus: the node is built at all, or
+    is a placement drawn here. ``document_view`` uses it to prefer, among
+    stored edges over one connection, the one that will be drawn."""
+    from scistack_gui import ids
+    from scistack_gui.domain.scope_filter import _resolve_in_scope
+    from scistack_gui.stores import pipeline_store as _ps
+
+    built = {str(ids.strip_placement(n["id"])) for n in nodes}
+    uses_here = {u["use_id"] for u in _ps.get_pipeline_uses(db, pipeline_id)}
+
+    def end_on_canvas(end: str) -> bool:
+        if end in uses_here:
+            return True
+        if str(ids.strip_placement(end)) not in built:
+            return False
+        return _resolve_in_scope(end, pipeline_id, manual_nodes, positions_by_scope) is not None
+
+    return end_on_canvas
+
+
 #: ``(edge id, stage)`` already reported by :class:`_DrawnEdgeTracer`.
 _LOST_EDGES_LOGGED: set[tuple[str, str]] = set()
 
@@ -1649,6 +1672,7 @@ def build_graph(
         manual_nodes=manual_nodes,
         drawn_edges=manual_edges_list,
         pending=deferred_adoption,
+        end_on_canvas=_end_on_canvas_test(db, pipeline_id, nodes, manual_nodes, positions_by_scope),
     )
     edge_tracer.check("document_view", edges)
     logger.info("[pipeline] document view scope=%s: %s", pipeline_id, document_counts)

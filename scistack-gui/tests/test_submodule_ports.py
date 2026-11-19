@@ -1615,3 +1615,30 @@ class TestNoTargetReasons:
         chain.delete(f"/api/edges/{outer['id']}")
         reason = no_target_reason(get_db(), B)
         assert reason.startswith("argument(s)") and "nothing is connected" in reason, reason
+
+
+class TestStaleTwinOfAnOuterLine:
+    """scistack-debug.log 2026-11-19: the line out of load_filter_xsens into
+    FilteredXSENS vanished each time it was drawn. An older stored line over
+    the same connection pointed at a hand-placed FilteredXSENS no longer on
+    main, won the one-edge-per-connection merge, and was then dropped as
+    pointing at nothing (domain.adoption.document_view)."""
+
+    def test_the_line_to_the_node_on_the_canvas_is_drawn(self, chain):
+        use_id = _extract(chain, "BCD").json()["use_id"]
+        db = get_db()
+        outer = next(e for e in ps.get_manual_edges(db) if e["source"] == use_id)
+        assert outer["target"] == E
+        # Re-store the outer line AFTER a stale twin to a VarE node on another
+        # canvas, so the stale one is the older of the two.
+        ps.delete_manual_edge(db, outer["id"])
+        ps.write_manual_node(db, "mv_gone", "variableNode", "VarE", "pipe_elsewhere")
+        ps.write_manual_edge(db, {"id": "e_stale", "source": use_id, "target": "mv_gone",
+                                  "sourceHandle": outer.get("sourceHandle")})
+        ps.write_manual_edge(db, {"id": "e_redrawn", "source": use_id, "target": E,
+                                  "sourceHandle": outer.get("sourceHandle")})
+
+        graph = chain.get("/api/pipeline").json()
+
+        drawn = [(e["source"], e["target"]) for e in graph["edges"] if e["source"] == use_id]
+        assert (use_id, E) in drawn, drawn

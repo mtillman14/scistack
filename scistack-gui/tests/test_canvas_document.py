@@ -147,6 +147,44 @@ class TestDocumentView:
         )
         assert len(kept) == 1 and kept[0]["id"] == "manual__1"
 
+    def test_a_line_to_a_node_off_the_canvas_never_stands_in_for_one_on_it(self):
+        """scistack-debug.log 2026-11-19: manual__1yif0d (stored first, to a
+        hand-placed FilteredXSENS no longer on main) shared its connection with
+        the redrawn manual__axd8by, won the merge, and was then dropped as
+        pointing at nothing: the redrawn line never showed."""
+        rows = {
+            "use_1": {"type": "pipelineNode", "label": "sub"},
+            "var__FilteredXSENS": {"type": "variableNode", "label": "FilteredXSENS"},
+            "var__FilteredXSENS__divu3e": {"type": "variableNode", "label": "FilteredXSENS"},
+        }
+        stale = {"id": "manual__1yif0d", "source": "use_1", "target": "var__FilteredXSENS__divu3e",
+                 "sourceHandle": "out__Filtered_XSENS"}
+        redrawn = {"id": "manual__axd8by", "source": "use_1", "target": "var__FilteredXSENS::main",
+                   "sourceHandle": "out__Filtered_XSENS"}
+        drawn = [stale, redrawn]
+        on_main = {"use_1", "var__FilteredXSENS::main"}
+        _, kept, _ = document_view(
+            [_n("var__FilteredXSENS")],
+            [{**e, "data": {"manual": True}} for e in drawn],
+            manual_nodes=rows,
+            drawn_edges=drawn,
+            end_on_canvas=lambda end: end in on_main,
+        )
+        assert [e["id"] for e in kept] == ["manual__axd8by"]
+
+    def test_without_a_canvas_test_the_first_drawn_copy_still_wins(self):
+        """No end_on_canvas: the rule is unchanged."""
+        rows = {"var__A": {"type": "variableNode", "label": "A"}, FN: {"type": "functionNode", "label": "f"}}
+        first = {"id": "manual__1", "source": "var__A", "target": FN, "targetHandle": "in__x"}
+        second = {"id": "manual__2", "source": "var__A", "target": f"{FN}::main", "targetHandle": "in__x"}
+        _, kept, _ = document_view(
+            [_n("var__A"), _n(FN, "functionNode", "f")],
+            [{**e, "data": {"manual": True}} for e in (first, second)],
+            manual_nodes=rows,
+            drawn_edges=[first, second],
+        )
+        assert [e["id"] for e in kept] == ["manual__1"]
+
     def test_a_deferred_plan_is_drawn_without_being_stored(self):
         plan = AdoptionPlan(nodes=[("var__Raw", "variableNode", "Raw", "main")])
         kept, _, _ = document_view([_n("var__Raw")], [], manual_nodes={}, drawn_edges=[], pending=plan)

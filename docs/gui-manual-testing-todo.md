@@ -28,7 +28,11 @@ cuts the parent's lines into its ports.
 4. Remove the outer line into a submodule port and run the submodule. The error
    names the step and says the port has nothing connected; it does not say
    "likely a SciStack bug".
-5. Known follow-up: the EMG submodules' outer lines from `runConfig` point at the old
+5. The line from `load_filter_xsens` to `FilteredXSENS` on main shows (no redraw
+   needed). The log has, once, `[adoption] document view: stored edge manual__1yif0d …
+   passed over for manual__axd8by`, and no `drawn edge manual__axd8by … lost at
+   document_view`. The `xsens_sampling_frequency` line into the placement shows too.
+6. Known follow-up: the EMG submodules' outer lines from `runConfig` point at the old
    port `in__glue_delsysEMG_config` (renamed in v0.4.10), so they bind nothing. Redraw
    them onto the renamed port.
 

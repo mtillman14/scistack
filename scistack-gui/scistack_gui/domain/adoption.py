@@ -209,6 +209,25 @@ def plan_adoption(
     return plan
 
 
+#: Stale edge ids already reported by :func:`_warn_passed_over` (once per process).
+_PASSED_OVER_LOGGED: set[str] = set()
+
+
+def _warn_passed_over(stale: dict, kept: dict, connection: str, off: list[str]) -> None:
+    """WARN once per stale edge: it shares a connection with a drawable one."""
+    level = logging.DEBUG if stale.get("id") in _PASSED_OVER_LOGGED else logging.WARNING
+    _PASSED_OVER_LOGGED.add(stale.get("id"))
+    logger.log(
+        level,
+        "[adoption] document view: stored edge %s (%s -> %s) passed over for %s "
+        "(%s -> %s), same connection %s: its end(s) %s are not on this canvas, so "
+        "it would draw nothing",
+        stale.get("id"), stale.get("source"), stale.get("target"),
+        kept.get("id"), kept.get("source"), kept.get("target"),
+        connection, off,
+    )
+
+
 def document_view(
     nodes: list[dict],
     edges: list[dict],
@@ -216,6 +235,7 @@ def document_view(
     manual_nodes: dict,
     drawn_edges: "list[dict] | tuple",
     pending: "AdoptionPlan | None" = None,
+    end_on_canvas=None,
 ) -> tuple[list[dict], list[dict], dict]:
     """Stage 3: keep only what the document stores.
 
@@ -224,7 +244,15 @@ def document_view(
     edge, or a history edge whose CONNECTION is drawn: ``build_edges`` keeps
     the history copy of a connection both carry, so filtering on
     ``data.manual`` alone would drop the wire entirely. One edge per
-    connection survives, the drawn copy preferred.
+    connection survives: one whose ends are both on the canvas being built
+    first (*end_on_canvas*), then the drawn copy, then the first seen.
+
+    Why the canvas check (scistack-debug.log 2026-11-19, ``manual__1yif0d``):
+    a connection id names WHAT the ends are (``var:FilteredXSENS``), not which
+    node, so a line stored to a hand-placed node that has since left the
+    canvas shares its connection with the line redrawn to the node there now.
+    Kept first-seen, the stale one won, then was dropped as pointing at a node
+    not on the canvas, and the redrawn line never showed.
 
     Returns ``(nodes, edges, counts)``; ``counts`` is for the INFO line.
     """
@@ -249,9 +277,22 @@ def document_view(
     drawn_ids = {e.get("id") for e in drawn_edges}
     if pending is not None:
         drawn |= pending.edge_ids
+    def off_canvas_ends(e: dict) -> list[str]:
+        if end_on_canvas is None:
+            return []
+        return [
+            end
+            for end in (e.get("source") or "", e.get("target") or "")
+            if not end_on_canvas(end)
+        ]
+
+    def rank(e: dict) -> tuple[bool, bool]:
+        return (not off_canvas_ends(e), is_manual_edge(e))
+
     by_connection: dict[str, dict] = {}
     order: list[str] = []
     dropped_edges: list[str] = []
+    passed_over: list[tuple[dict, dict, str]] = []
     for e in edges:
         connection = edge_connection_id(e, manual_nodes)
         if not (connection in drawn or (is_manual_edge(e) and e.get("id") in drawn_ids)):
@@ -260,8 +301,16 @@ def document_view(
         if connection not in by_connection:
             order.append(connection)
             by_connection[connection] = e
-        elif is_manual_edge(e) and not is_manual_edge(by_connection[connection]):
+            continue
+        current = by_connection[connection]
+        if rank(e) > rank(current):
+            if off_canvas_ends(current):
+                passed_over.append((current, e, connection))
             by_connection[connection] = e
+        elif off_canvas_ends(e) and not off_canvas_ends(current):
+            passed_over.append((e, current, connection))
+    for stale, kept, connection in passed_over:
+        _warn_passed_over(stale, kept, connection, off_canvas_ends(stale))
     # Every kept edge IS a stored edge (the history copy only stands in for a
     # drawn one over the same connection), so each is tagged drawn: the
     # `canvas_sources` count and anything else reading `data.manual` see the
