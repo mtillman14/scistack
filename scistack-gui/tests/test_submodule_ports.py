@@ -902,6 +902,60 @@ class TestGlueOnTheParent:
         lost = [m for m in caplog.messages if "lost at" in m]
         assert "e_pi_glue" in drawn, lost
 
+    def test_it_is_drawn_after_the_line_into_the_submodules_glue_was_removed(
+        self, client, glue_project, caplog
+    ):
+        """scistack-debug.log 2026-11-19 10:35: `runConfig -> glue_xsens_
+        columnNames_config` on main was stored, then left out of every build
+        (`lost at build_edges/filter_hidden/adoption`). The user had removed
+        the outer line into a submodule whose own glue ran the same function;
+        that severed `runConfig -> [port] -> its glue`, and glue nodes were
+        keyed by their function, so the severed id was also the new line's."""
+        glue = self._glue(client)
+        # Real glue ids parse like a variable's (`var__glue_x__abc`): the bug.
+        inner, outer = f"var__{glue}__in1", f"var__{glue}__out1"
+        sub = client.post("/api/pipelines", json={"name": "sub"}).json()["pipeline_id"]
+        _place(client, "port_cfg", "inputPortNode", glue, sub)
+        _place(client, inner, "glueNode", glue, sub)
+        client.put(
+            "/api/edges/e_port_glue",
+            json={"source": "port_cfg", "target": inner, "target_handle": "in__value"},
+        )
+        _place(client, A, "pathInputNode", "A")
+        use_id = client.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": sub}
+        ).json()["use_id"]
+        client.put(
+            "/api/edges/e_pi_use",
+            json={"source": A, "target": use_id, "target_handle": f"in__{glue}"},
+        )
+        # The user removes the line into the submodule (its glue stays) ...
+        assert client.delete("/api/edges/e_pi_use").status_code == 200
+        # ... and feeds a same-function glue on main instead.
+        _place(client, outer, "glueNode", glue)
+        r = client.put(
+            "/api/edges/e_pi_glue",
+            json={"source": A, "target": outer, "target_handle": "in__value"},
+        )
+        assert r.status_code == 200, r.text
+
+        with caplog.at_level("INFO"):
+            drawn = self._canvas_edges(client)
+
+        lost = [m for m in caplog.messages if "lost at" in m or "severed at" in m]
+        assert "e_pi_glue" in drawn, lost
+
+    def test_two_glue_nodes_of_one_function_are_two_connections(self, client, glue_project):
+        """A glue node is itself, not its function (graph_builder.endpoint_ref)."""
+        glue = self._glue(client)
+        _place(client, A, "pathInputNode", "A")
+        _place(client, f"var__{glue}__aaa111", "glueNode", glue)
+        _place(client, f"var__{glue}__bbb222", "glueNode", glue)
+        manual_nodes = ps.get_manual_nodes(get_db())
+        one = edge_connection_id(_edge("x", A, f"var__{glue}__aaa111", None, "in__value"), manual_nodes)
+        two = edge_connection_id(_edge("y", A, f"var__{glue}__bbb222", None, "in__value"), manual_nodes)
+        assert one != two
+
 
 class TestOutputToAVariable:
     """GitHub #24 / scistack-debug.log 2026-11-18 11:41: a submodule output

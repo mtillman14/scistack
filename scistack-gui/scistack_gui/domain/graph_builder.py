@@ -2300,13 +2300,16 @@ def build_edges(
     logger.debug("[graph_builder] merging %d manual edge(s)", len(manual_edges))
     db_edge_count = len(edges)
     superseded = 0
+    hidden_manual: list[str] = []
     for me in manual_edges:
         if me["source"] in hidden_ids or me["target"] in hidden_ids:
             continue
-        if manual_edge_is_hidden(me, hidden_edge_ids):
+        if manual_edge_is_hidden(me, hidden_edge_ids, manual_nodes):
             # Own id hidden, or its history twin is (the twin is also caught
             # as "superseded" below; checking here keeps the one rule the
-            # binding index uses, manual_edge_handle_index).
+            # binding index uses, manual_edge_handle_index). manual_nodes is
+            # passed so a glue end resolves to its node, as edge_view's does.
+            hidden_manual.append(f"{me['id']} ({edge_connection_id(me, manual_nodes)})")
             continue
         if any(e["id"] == me["id"] for e in edges):
             continue
@@ -2351,6 +2354,17 @@ def build_edges(
         edges.append(edge)
     manual_edge_count = len(edges) - db_edge_count
     logger.debug("[graph_builder] added %d manual edge(s)", manual_edge_count)
+    if hidden_manual:
+        # A drawn edge reaching here was already let through by edge_view, so
+        # one dropped now was hidden by a connection edge_view added after
+        # drawing (a severed port connection). Name it: 2026-11-19 a fresh
+        # runConfig -> glue line vanished on every refresh with no line saying why.
+        logger.info(
+            "[graph_builder] %d drawn manual edge(s) left out, their connection "
+            "is hidden: %s",
+            len(hidden_manual),
+            _edge_list_summary(hidden_manual),
+        )
 
     total_hidden = (
         hidden_var_to_fn + hidden_fn_to_var + hidden_const_to_fn + hidden_path_to_fn
@@ -2566,6 +2580,13 @@ def endpoint_ref(node_id: str, manual_nodes: "dict[str, dict] | None" = None) ->
         return f"mg:{meta.get('label') or bare[len(MERGE_ID_PREFIX):]}"
     if bare.startswith(PARAM_ID_PREFIX) or kind == "parameterNode":
         return f"param:{meta.get('label') or bare[len(PARAM_ID_PREFIX):]}"
+    if kind == "glueNode":
+        # A glue node is ITSELF, not its function: two glue nodes running one
+        # function are two sources. Its id (`var__glue_x__abc`) parses like a
+        # variable's, so before 2026-11-19 every `glue_x` node shared one
+        # connection, and a hide of a removed port's route into a submodule's
+        # glue also hid a fresh line into a same-function glue on main.
+        return f"node:{bare}"
     var = node_id_to_var_label(node_id or "", {}, manual_nodes)
     if var:
         return f"var:{var}"

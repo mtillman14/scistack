@@ -119,6 +119,24 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     port_wiring, severed = _trace_ports(db, stored, drawn_list, manual_nodes, hidden)
     if severed:
         hidden = hidden | severed
+        from scistack_gui.domain.graph_builder import edge_connection_id
+
+        # A severed connection runs THROUGH a removed port, so no edge drawn
+        # directly on one canvas should share its id. One that does is two
+        # different wires sharing an id (2026-11-19: glue nodes were keyed by
+        # their function, so the fresh line vanished from the build).
+        for e in drawn_list:
+            if edge_connection_id(e, manual_nodes) in severed:
+                _warn_once(
+                    f"severed-drawn:{e.get('id')}",
+                    "[edge_view] drawn edge %s (%s -> %s) shares its connection "
+                    "id %s with a connection severed at a removed port; the "
+                    "graph build will leave it out",
+                    e.get("id"),
+                    e.get("source"),
+                    e.get("target"),
+                    edge_connection_id(e, manual_nodes),
+                )
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
         "%d hidden edge id(s), %d edge(s) on a hidden node, %d on a port that "

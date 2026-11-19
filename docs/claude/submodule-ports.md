@@ -97,6 +97,23 @@ cost placement paths, per-placement compiles and display workarounds).
 | `wiring_id`, computation identity, skip check | Identical; nothing re-runs |
 | `canvas_snapshot.signature`, library `definition_hash` | Differs: they describe the canvas |
 
+**What a connection id is made of.** `connection_id` is
+`e__{source ref}__{target ref}__{port}`, where `graph_builder.endpoint_ref` gives each
+end's ref. The ref says **what** the node is, not which copy of it on the canvas: a
+function is `fn:{name}:{token}`, and a variable is `var:{type}`, the same whether the
+node came from history, was placed by hand, or has a placement suffix. Parameters,
+PathInputs and Merges are keyed by their declared name. Hides, duplicate checks, adoption
+and severed port connections all match on this id, so two edges with the same id are one
+wire. **A glue node is keyed by its own id** (`node:{bare id}`), never by its function.
+Two glue nodes running one function are two different sources. A glue id
+(`var__glue_x__abc`) parses like a variable's, so until 2026-11-19 every `glue_x` shared
+one id. Removing the line into a submodule's `glue_x` severed `runConfig -> [port] ->
+glue_x`, and that id also hid a fresh `runConfig -> glue_x` line drawn on `main`
+(scistack-debug.log 2026-11-19, `TestGlueOnTheParent`). `edge_view` adds severed ids
+to `hidden` after it has built `drawn`, so such a clash shows up as a drawn edge that
+the build leaves out. It now logs a WARN (`shares its connection id … severed at a
+removed port`).
+
 ## Owners
 
 | Concept | Owner |

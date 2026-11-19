@@ -11,6 +11,23 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## A PathInput -> glue line on `main` stays drawn (2026-11-19, unchecked)
+
+What changed: a glue node is identified by its own id, not by its function. Before,
+removing the line into a submodule whose glue ran the same function (for example
+`glue_xsens_columnNames_config`) also hid every `runConfig -> glue_xsens_columnNames_config`
+line on `main`. The line was stored but never drawn.
+
+1. Restart the GUI server (backend only, no frontend rebuild).
+2. On `main`, the `runConfig` lines into `glue_xsens_columnNames_config`,
+   `glue_xsens_filter_config` and `glue_delsysEMG_config` show again, with no need to
+   redraw them. If one is missing, draw it once.
+3. Wait through a few refreshes, for example by dragging a node. The line stays.
+   `scistack-debug.log` has no new `lost at build_edges` or `server_omitted` line for
+   it, and no `shares its connection id … severed at a removed port` line.
+
+---
+
 ## Removing an input/output node removes its outer lines (stage F, 2026-11-19, unchecked)
 
 What changed: deleting an input or output node inside a submodule also removes
