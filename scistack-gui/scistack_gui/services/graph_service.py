@@ -886,6 +886,8 @@ def build_graph(
         fn_parameter_names=agg.fn_parameter_names,
         # Each node by its OWN canvas's hides: one colour from every canvas.
         hidden_edge_ids_of=edge_view.hidden_edge_ids_of_node,
+        # A step fed by an input port is connected on its own canvas (#27).
+        open_arguments=edge_view.open_arguments,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(
         agg.fn_input_params,
@@ -1706,10 +1708,20 @@ def build_graph(
         if with_run_states
         else None
     )
+    # The same, for a placement's two badges (GitHub #27): which steps inside
+    # are disconnected, and what each submodule canvas draws, so the route
+    # trace can say whether anything inside still runs end to end.
+    from scistack_gui.services.scope_service import build_pipeline_nodes, submodule_canvases
+
+    fn_disconnected = {
+        n["id"]: n["data"].get("label") or n["id"]
+        for n in nodes
+        if n.get("type") == "functionNode" and (n.get("data") or {}).get("disconnected")
+    }
+    inner = submodule_canvases(db, nodes, edges) if fn_disconnected else None
 
     logger.info("[pipeline] Filtering graph to scope %s", pipeline_id)
     from scistack_gui.domain.scope_filter import resolve_scope_view
-    from scistack_gui.services.scope_service import build_pipeline_nodes
 
     nodes, edges = resolve_scope_view(
         nodes, edges, pipeline_id, manual_nodes, positions_by_scope
@@ -1767,7 +1779,14 @@ def build_graph(
                 "did not use",
                 marked,
             )
-    nodes += build_pipeline_nodes(db, pipeline_id, fn_states)
+    nodes += build_pipeline_nodes(
+        db,
+        pipeline_id,
+        fn_states,
+        canvas_edges=edges,
+        fn_disconnected=fn_disconnected,
+        inner=inner,
+    )
     from scistack_gui.domain.scope_filter import warn_dangling_edges
 
     warn_dangling_edges(pipeline_id, nodes, edges)

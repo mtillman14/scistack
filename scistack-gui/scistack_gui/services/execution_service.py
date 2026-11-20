@@ -1310,6 +1310,10 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         is_current=identity.is_current,
         fn_parameter_names=agg.fn_parameter_names,
         hidden_edge_ids_of=view.hidden_edge_ids_of_node,
+        # No open_arguments here, on purpose: this report asks "can it run?",
+        # and a step fed by an input port with nothing connected can't. The
+        # canvas passes it, because the step itself is connected (#27); the
+        # reason below names the port instead.
     )
     if not seed:
         return []
@@ -1344,6 +1348,14 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
             continue
         seen_labels.add(fn)
         reason = "required input disconnected"
+        open_args = view.open_arguments(fn_node_id(fn, wid))
+        if open_args:
+            entries.append(_entry(
+                fn,
+                f"input(s) {', '.join(open_args)} come from a submodule input port "
+                "with nothing connected",
+            ))
+            continue
         hidden_for_node = view.hidden_edge_ids_of_node(fn_node_id(fn, wid))
         for fkey, params in fn_input_params.items():
             if fkey[0] != fn:

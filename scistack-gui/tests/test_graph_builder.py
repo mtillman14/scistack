@@ -2098,6 +2098,70 @@ class TestHiddenWirings:
         )
         assert result == set()
 
+    # GitHub #27: a step fed by a submodule input port with nothing connected
+    # outside is connected on its own canvas; the placement is badged instead.
+
+    def test_an_input_fed_by_an_open_port_is_covered(self):
+        wid = wiring_id("f", {"signal": "Raw"}, set(), {})
+        node = fn_node_id("f", wid)
+        common = dict(
+            fn_input_params={self.F_KEY: {"signal": "Raw"}},
+            fn_outputs={},
+            fn_constants={},
+            path_inputs={},
+            hidden_edge_ids={connection_id("var__Raw", node, "in__signal")},
+            token_for=identity_token,
+            is_current=_all_current,
+        )
+        assert hidden_wirings(**common, open_arguments=lambda n: ["signal"] if n == node else []) == set()
+        # Control: without the port, the same hide disconnects it.
+        assert hidden_wirings(**common, open_arguments=lambda n: []) == {("f", wid)}
+
+    def test_an_open_port_on_another_argument_does_not_cover(self):
+        wid = wiring_id("f", {"signal": "Raw"}, set(), {})
+        result = hidden_wirings(
+            fn_input_params={self.F_KEY: {"signal": "Raw"}},
+            fn_outputs={},
+            fn_constants={},
+            path_inputs={},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
+            token_for=identity_token,
+            is_current=_all_current,
+            open_arguments=lambda n: ["other"],
+        )
+        assert result == {("f", wid)}
+
+    def test_a_path_input_fed_by_an_open_port_is_covered(self):
+        wid = wiring_id("f", {}, set(), {"filepath": "mypath"})
+        result = hidden_wirings(
+            fn_input_params={self.F_KEY: {}},
+            fn_outputs={},
+            fn_constants={},
+            path_inputs={"mypath": {"functions": {(self.F_KEY, "filepath")}}},
+            hidden_edge_ids={connection_id("pathInput__mypath", fn_node_id("f", wid), "in__filepath")},
+            token_for=identity_token,
+            is_current=_all_current,
+            open_arguments=lambda n: ["filepath"],
+        )
+        assert result == set()
+
+    def test_a_path_input_is_judged_by_its_own_canvas(self):
+        """The PathInput branch reads hidden_edge_ids_of, like the variable
+        branch: a hide on the asking canvas alone doesn't disconnect a node on
+        another canvas (fa55b45b left this branch on the shared set)."""
+        wid = wiring_id("f", {}, set(), {"filepath": "mypath"})
+        pi_edge = connection_id("pathInput__mypath", fn_node_id("f", wid), "in__filepath")
+        common = dict(
+            fn_input_params={self.F_KEY: {}},
+            fn_outputs={},
+            fn_constants={},
+            path_inputs={"mypath": {"functions": {(self.F_KEY, "filepath")}}},
+            token_for=identity_token,
+            is_current=_all_current,
+        )
+        assert hidden_wirings(**common, hidden_edge_ids={pi_edge}, hidden_edge_ids_of=lambda n: set()) == set()
+        assert hidden_wirings(**common, hidden_edge_ids=set(), hidden_edge_ids_of=lambda n: {pi_edge}) == {("f", wid)}
+
 
 class TestWiringDisconnectedFkeys:
     def test_maps_wirings_back_to_call_sites(self):

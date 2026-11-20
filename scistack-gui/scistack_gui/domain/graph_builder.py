@@ -26,6 +26,7 @@ from scistack_gui.ids import (
     ROOT_SCOPE,
     VAR_ID_PREFIX,
     fn_node_id,
+    handle_name,
     in_handle,
     out_handle,
     merge_node_id,
@@ -3351,9 +3352,19 @@ def hidden_wirings(
     is_current,
     fn_parameter_names: "dict | None" = None,
     hidden_edge_ids_of=None,
+    open_arguments=None,
 ) -> set[tuple[str, str]]:
     """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
+
+    *open_arguments(node_id)*, when given, names the arguments a submodule
+    input port feeds that has nothing connected on the parent
+    (``EdgeView.open_arguments``, owned by ``ports.Wiring.open_inputs``). Such
+    an argument is covered: the step traces back to an input port, so it is
+    connected on its own canvas (GitHub #27, user decision 2026-11-19). The
+    open port is the placement's problem, badged on the parent
+    (``scope_service.build_pipeline_nodes``), and a run still refuses it
+    (``execution_service._wiring_blocker``).
 
     *hidden_edge_ids_of(node_id)*, when given, is the set each node is judged
     by (``EdgeView.hidden_edge_ids_of_node``: its own canvas's hides), in place
@@ -3386,6 +3397,16 @@ def hidden_wirings(
     manual_index = manual_edge_handle_index(manual_edges)
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
     result: set[tuple[str, str]] = set()
+    port_cleared: list[tuple[str, str, str]] = []
+
+    def _port_fed(fn: str, wid: str, handle: str) -> bool:
+        if open_arguments is None:
+            return False
+        fed = handle_name(handle) in open_arguments(fn_node_id(fn, wid))
+        if fed:
+            port_cleared.append((fn, wid, handle))
+        return fed
+
     # Only a node's CURRENT wiring can disconnect it. The result is keyed by
     # node TOKEN and wiring_disconnected_fkeys maps it back to every call site
     # of the node, so a hidden edge that only a rewired-away (history) wiring
@@ -3418,9 +3439,19 @@ def hidden_wirings(
         hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_here}
         if not hidden_handles:
             continue
-        uncovered = [h for h in hidden_handles if (fn, wid, h) not in manual_index]
+        uncovered = [
+            h for h in hidden_handles
+            if (fn, wid, h) not in manual_index and not _port_fed(fn, wid, h)
+        ]
         if uncovered:
             result.add((fn, wid))
+            logger.info(
+                "[graph_builder] wiring (%s, %s) disconnected: %s hidden, no line "
+                "drawn in its place and no input port feeding it",
+                fn,
+                wid,
+                sorted(uncovered),
+            )
         else:
             logger.info(
                 "[graph_builder] wiring (%s, %s) reconnected via manual edge(s) "
@@ -3445,24 +3476,47 @@ def hidden_wirings(
             pi_edge = connection_id(
                 path_input_node_id(pi_name), fn_node_id(fn, wid), in_handle(param_name)
             )
-            if pi_edge not in hidden_edge_ids:
+            # Judged by the node's OWN canvas's hides, as the branch above is
+            # (fa55b45b left this one on the asking canvas's set).
+            hidden_here = (
+                hidden_edge_ids_of(fn_node_id(fn, wid))
+                if hidden_edge_ids_of is not None
+                else hidden_edge_ids
+            )
+            if pi_edge not in hidden_here:
                 continue
-            if (fn, wid, handle) in manual_index:
+            if (fn, wid, handle) in manual_index or _port_fed(fn, wid, handle):
                 logger.info(
                     "[graph_builder] wiring (%s, %s) pathInput '%s' reconnected via "
-                    "manual edge — clearing disconnected state",
+                    "manual edge or input port — clearing disconnected state",
                     fn,
                     wid,
                     param_name,
                 )
                 continue
             result.add((fn, wid))
+            logger.info(
+                "[graph_builder] wiring (%s, %s) disconnected: pathInput '%s' line "
+                "into %s hidden, nothing drawn in its place",
+                fn,
+                wid,
+                pi_name,
+                handle,
+            )
     if skipped_history:
         logger.debug(
             "[graph_builder] hidden_wirings: %d history wiring(s) not checked "
             "(not their node's current shape): %s",
             len(set(skipped_history)),
             sorted(set(skipped_history)),
+        )
+    if port_cleared:
+        logger.info(
+            "[graph_builder] hidden_wirings: %d hidden input(s) count as connected, "
+            "fed by a submodule input port with nothing connected outside "
+            "(the placement is badged instead): %s",
+            len(set(port_cleared)),
+            sorted(set(port_cleared)),
         )
     if result:
         logger.info("[graph_builder] hidden_wirings: %s", sorted(result))

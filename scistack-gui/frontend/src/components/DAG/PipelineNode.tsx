@@ -5,7 +5,8 @@
  * twice is two nodes with different use_ids; the binding lives on the use).
  *
  * data comes from GET /api/pipeline:
- *   { label, child_pipeline_id, binding, inputs, outputs }
+ *   { label, child_pipeline_id, binding, inputs, outputs, run_state,
+ *     open_ports, disconnected_members, disconnected_severity }
  * inputs/outputs are variable-type name lists — the node's connection ports
  * (rendered like a function node's handles). A non-empty binding renders as
  * a compact badge. Double-click (handled at canvas level) descends into the
@@ -24,8 +25,9 @@ import { usePlanRun } from '../../context/PlanRunContext'
 import { useScope, bindingSummary, type BindingSpec } from '../../context/ScopeContext'
 import TunablesPanel from '../Tunables/TunablesPanel'
 import { STATE_STYLES, type RunState } from './runStateStyles'
+import { placementBadges, type PlacementBadgeData } from './placementBadges'
 
-export interface PipelineNodeData {
+export interface PipelineNodeData extends PlacementBadgeData {
   label: string
   child_pipeline_id: string
   binding: BindingSpec | null
@@ -180,6 +182,15 @@ export default function PipelineNode({ id, data }: Props) {
 
       <div style={styles.kind}>⧉ pipeline</div>
       <div style={styles.label}>{data.label}</div>
+      {placementBadges(data).map(b => (
+        <div
+          key={b.kind}
+          style={{ ...styles.statusBadge, ...(b.severity === 'warning' ? styles.statusWarning : styles.statusError) }}
+          title={b.title}
+        >
+          {b.text}
+        </div>
+      ))}
       {badge && (
         <div style={styles.badge} title={badge}>{badge}</div>
       )}
@@ -295,6 +306,28 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     textAlign: 'center',
     width: 'fit-content',
+  },
+  // FunctionNode's disconnectedBadge shape; amber for a warning (#27).
+  statusBadge: {
+    display: 'block',
+    margin: '0 auto 4px',
+    padding: '1px 8px',
+    width: 'fit-content',
+    borderRadius: 10,
+    fontSize: 9,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  statusError: {
+    background: '#fef2f2',
+    color: '#dc2626',
+    border: '1px solid #dc2626',
+  },
+  statusWarning: {
+    background: '#fffbeb',
+    color: '#b45309',
+    border: '1px solid #d97706',
   },
   buttonRow: {
     display: 'flex',

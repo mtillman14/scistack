@@ -6995,6 +6995,17 @@ Setup: a project whose PathInput has a `root_folder` (entities file) and at leas
 3. Add `root_folder="/your/folder"` to a PathInput in a `.py` file and export with the box ticked: the export is refused, the message names the file and the PathInput (not the folder), and no file is written.
 4. Import the hidden bundle: the report flags each PathInput "the exporter hid its folder"; importing with a path root for one fills it in.
 
+## Submodule "disconnected" badges (issue #27)
+
+Setup: a submodule with at least two steps that have run, placed on main with its input and output ports connected.
+
+1. On main, remove the line into one of the submodule's input ports. The submodule node shows a red **🔌 1 port(s) not connected**, and its tooltip names the port. Open the submodule: the step fed by that port has **no** 🔌 disconnected badge.
+2. Run the submodule: the step is refused, and the message says its argument comes from an input port with nothing connected.
+3. Redraw the line on main: the port badge goes away.
+4. Inside the submodule, remove the line from the input port into a step. That step shows 🔌 disconnected. Back on main, the submodule shows **⚠ 1 step(s) disconnected inside** (amber) if another input→output route is still whole, or a red 🔌 badge if none is. The tooltip names the step.
+5. With a submodule nested inside another, break the only route through the inner one: the outer placement's inside badge turns red.
+6. In scistack.log, find `[ports] runnable_routes(...)` and `placement ... badges:`. They list the routes found and the disconnected steps.
+
 ---
 
 ## Done

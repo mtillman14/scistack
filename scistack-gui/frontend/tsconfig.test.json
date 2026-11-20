@@ -108,6 +108,8 @@
     "src/components/DAG/inputPorts.test.ts",
     "src/components/DAG/mergePorts.ts",
     "src/components/DAG/mergePorts.test.ts",
+    "src/components/DAG/placementBadges.ts",
+    "src/components/DAG/placementBadges.test.ts",
     "src/components/DAG/canvasRefreshLog.ts",
     "src/components/DAG/canvasRefreshLog.test.ts",
     "src/components/DAG/runFailures.ts",

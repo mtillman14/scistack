@@ -36,7 +36,11 @@ run BEFORE hidden nodes are filtered out:
    Sub-sites split by Run claims are asked once, over their union.
 2. **GUI overrides** on that own state, each forcing red:
    - `disconnected_fkeys` — a required INBOUND edge is hidden
-     (`graph_builder.hidden_wirings` / `wiring_disconnected_fkeys`);
+     (`graph_builder.hidden_wirings` / `wiring_disconnected_fkeys`). An input
+     fed by a submodule input port with nothing connected outside is NOT
+     hidden for this: the step is connected on its own canvas, and the
+     placement carries the badge (GitHub #27, `submodule-ports.md`, "A
+     placement's badges");
    - `unproduced_outputs` — a drawn OUTBOUND edge goes to a variable no
      call site of the node has recorded
      (`graph_builder.unproduced_output_fkeys`, added 2026-10-17).
@@ -105,7 +109,11 @@ the node (the placement-id lookup trap).
 - `state(<fn> call_id=...): green -> red — drawn output(s) [...] never recorded` and
   `[graph_builder] <node>: drawn output(s) [...] never recorded` — the
   output override fired.
-- `[pipeline] N wiring(s) disconnected: ...` — the input override fired.
+- `[pipeline] N wiring(s) disconnected: ...` — the input override fired;
+  `wiring (<fn>, <token>) disconnected: [in__x] hidden, no line drawn in its
+  place and no input port feeding it` names the handle.
+- `hidden_wirings: N hidden input(s) count as connected, fed by a submodule
+  input port with nothing connected outside` — #27's rule cleared them.
 - `run-state propagation follows N manual edge binding(s)` — the drawn-input overlay.
 - `cascading N never-run producer(s)` and `<node>: green -> red — downstream of a
   never-run node` — the never-run producer pass fired.

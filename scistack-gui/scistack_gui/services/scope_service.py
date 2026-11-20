@@ -758,12 +758,76 @@ def _steps_inside(child_id: str, by_canvas: dict, children_of: dict, seen=()) ->
     return steps
 
 
-def build_pipeline_nodes(db, scope_id: str, fn_states: "dict | None" = None) -> list[dict]:
+def submodule_canvases(db, nodes: list, edges: list) -> "tuple[dict, dict]":
+    """``({submodule id: (nodes, edges)}, {use id: submodule id})``: what every
+    placed submodule's canvas draws, from the build's full graph before it
+    narrows to one canvas. Read by ``ports.runnable_routes``.
+
+    Each canvas is ``scope_filter.resolve_scope_view``, the same narrowing a
+    user gets by opening the submodule, less the nodes hidden on that canvas
+    (a removed port is a hidden input/output node)."""
+    from scistack_gui.domain.scope_filter import resolve_scope_view
+    from scistack_gui.domain.visibility import Visibility
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+
+    all_uses = ps.get_pipeline_uses(db)
+    if not all_uses:
+        return {}, {}
+    manual_nodes = ps.get_manual_nodes(db)
+    vis = Visibility.load(db, manual_nodes)
+    positions_by_scope = layout_store.read_positions_by_scope()
+    child_of_use = {u["use_id"]: u["child_pipeline_id"] for u in all_uses}
+    canvases: dict = {}
+    for child_id in sorted(set(child_of_use.values())):
+        c_nodes, c_edges = resolve_scope_view(
+            nodes, edges, child_id, manual_nodes, positions_by_scope
+        )
+        c_nodes = [n for n in c_nodes if not vis.node_hidden_on(child_id, n["id"])]
+        kept = {n["id"] for n in c_nodes}
+        c_edges = [
+            e for e in c_edges
+            # A line into a nested placement ends on a use id, which is not a
+            # node in the build's graph (placements are added per canvas).
+            if (e["source"] in kept or e["source"] in child_of_use)
+            and (e["target"] in kept or e["target"] in child_of_use)
+        ]
+        canvases[child_id] = (c_nodes, c_edges)
+        logger.debug(
+            "[scope_service] submodule canvas %s: %d node(s), %d edge(s) for the route trace",
+            child_id,
+            len(c_nodes),
+            len(c_edges),
+        )
+    return canvases, child_of_use
+
+
+def build_pipeline_nodes(
+    db,
+    scope_id: str,
+    fn_states: "dict | None" = None,
+    *,
+    canvas_edges=(),
+    fn_disconnected: "dict | None" = None,
+    inner: "tuple[dict, dict] | None" = None,
+) -> list[dict]:
     """The pipelineNode entries for one canvas: one per use row on
     ``scope_id``, carrying the child's name, binding, ports and, given the
     build's step states (*fn_states*: ``{function node id: run_state}``), the
     placement's own state rolled up from every step inside
-    (``run_state.placement_state``)."""
+    (``run_state.placement_state``).
+
+    The two badges (GitHub #27):
+
+    - ``open_ports``: this placement's ports with no line in *canvas_edges*
+      (what ``scope_id``'s canvas draws), ``ports.open_ports_of_placement``;
+    - ``disconnected_members``: the labels of the steps inside, nested
+      placements included, that *fn_disconnected* (``{function node id:
+      label}``, every canvas) names, with ``disconnected_severity``
+      ``"warning"`` while ``ports.runnable_routes`` over *inner*
+      (:func:`submodule_canvases`) finds a route from a start to an output
+      port, else ``"error"``.
+    """
     from scistack_gui.domain.run_state import placement_state
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
@@ -778,11 +842,17 @@ def build_pipeline_nodes(db, scope_id: str, fn_states: "dict | None" = None) -> 
     positions_by_scope = layout_store.read_positions_by_scope()
     names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
     by_canvas: dict = {}
+    off_by_canvas: dict = {}
     children_of: dict[str, list[str]] = {}
-    if fn_states is not None:
-        by_canvas = _steps_by_canvas(fn_states, vis)
+    if fn_states is not None or fn_disconnected:
         for u in ps.get_pipeline_uses(db):
             children_of.setdefault(u["parent_pipeline_id"], []).append(u["child_pipeline_id"])
+    if fn_states is not None:
+        by_canvas = _steps_by_canvas(fn_states, vis)
+    if fn_disconnected:
+        off_by_canvas = _steps_by_canvas(fn_disconnected, vis)
+    canvases, child_of_use = inner if inner is not None else ({}, {})
+    route_memo: dict = {}
 
     nodes = []
     for use in uses:
@@ -817,6 +887,25 @@ def build_pipeline_nodes(db, scope_id: str, fn_states: "dict | None" = None) -> 
                 state or "no state",
                 len(steps),
                 f"; {state}: {deciding}" if deciding else "",
+            )
+        open_ports = ports.open_ports_of_placement(use["use_id"], iface, canvas_edges)
+        if open_ports["inputs"] or open_ports["outputs"]:
+            data["open_ports"] = open_ports
+        off_inside = _steps_inside(child_id, off_by_canvas, children_of) if off_by_canvas else {}
+        if off_inside:
+            routes = ports.runnable_routes(child_id, canvases, child_of_use, _memo=route_memo)
+            data["disconnected_members"] = sorted(set(off_inside.values()))
+            data["disconnected_severity"] = "warning" if routes else "error"
+        if open_ports["inputs"] or open_ports["outputs"] or off_inside:
+            logger.info(
+                "[scope_service] placement %s (%s) badges: open input port(s) %s, "
+                "open output port(s) %s; disconnected inside %s (%s)",
+                use["use_id"],
+                data["label"],
+                open_ports["inputs"],
+                open_ports["outputs"],
+                data.get("disconnected_members", []),
+                data.get("disconnected_severity", "-"),
             )
         nodes.append(
             {

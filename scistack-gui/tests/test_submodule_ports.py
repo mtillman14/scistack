@@ -1702,3 +1702,102 @@ class TestPlacementRunState:
         assert node["data"].get("run_state") == "red", node["data"]
         members = set(node["data"]["run_state_members"])
         assert members and members <= {"fcn_b", "fcn_d"}, members
+
+
+class TestPortFedStepIsConnected:
+    """GitHub #27 (user decisions 2026-11-19). A step inside a submodule that
+    traces back to an input port is connected, even when nothing is connected
+    to that port on the parent. Before, removing the outer line severed the
+    traced connection, the step's recorded input read as hidden with nothing
+    covering it, and the step inside showed 🔌 disconnected. The open port is
+    the placement's problem: it carries ``open_ports``. A step really
+    disconnected inside shows on the placement as ``disconnected_members``,
+    an error when nothing inside runs from a start to an output port
+    (``ports.runnable_routes``).
+
+    Uses the seeded ``bandpass_filter``, which has run: ``hidden_wirings``
+    judges only steps with history, so the never-run ``chain`` can't show it.
+    """
+
+    def _extract_bp(self, client, bp_node_id):
+        client.get("/api/pipeline")  # first build: the history node is stored
+        r = client.post(
+            "/api/pipelines/main/extract", json={"node_ids": [bp_node_id], "name": "filt"}
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["pipeline_id"], r.json()["use_id"]
+
+    def _bp_inside(self, client, sub):
+        graph = client.get("/api/pipeline", params={"pipeline_id": sub}).json()
+        return next(
+            n for n in graph["nodes"]
+            if n["type"] == "functionNode" and n["data"]["label"] == "bandpass_filter"
+        )
+
+    def _placement(self, client, use_id):
+        graph = client.get("/api/pipeline").json()
+        return next(n for n in graph["nodes"] if n["id"] == use_id)
+
+    def _outer_signal_line(self, use_id):
+        return next(
+            e for e in ps.get_manual_edges(get_db())
+            if e["target"] == use_id and ids.strip_placement(e["source"]) == "var__RawSignal"
+        )
+
+    def test_an_open_input_port_leaves_the_step_inside_connected(self, client, bp_node_id):
+        from scistack_gui.services.execution_service import no_target_reason
+
+        sub, use_id = self._extract_bp(client, bp_node_id)
+        outer = self._outer_signal_line(use_id)
+        port = ids.handle_name(outer["targetHandle"])
+        before = self._placement(client, use_id)["data"]
+        assert port not in (before.get("open_ports") or {}).get("inputs", []), before
+
+        assert client.delete(f"/api/edges/{outer['id']}").status_code == 200
+
+        bp = self._bp_inside(client, sub)
+        assert not bp["data"].get("disconnected"), bp["data"]
+        placed = self._placement(client, use_id)["data"]
+        assert port in placed["open_ports"]["inputs"], placed
+        assert not placed.get("disconnected_members"), placed
+        # The run still refuses, naming the port: unchanged.
+        reason = no_target_reason(get_db(), ids.strip_placement(bp["id"]))
+        assert reason and "nothing is connected" in reason, reason
+
+    def test_redrawing_the_outer_line_clears_the_open_port(self, client, bp_node_id):
+        sub, use_id = self._extract_bp(client, bp_node_id)
+        outer = self._outer_signal_line(use_id)
+        port = ids.handle_name(outer["targetHandle"])
+        client.delete(f"/api/edges/{outer['id']}")
+        client.put(
+            f"/api/edges/{outer['id']}",
+            json={
+                "source": outer["source"],
+                "target": outer["target"],
+                "target_handle": outer.get("targetHandle"),
+            },
+        )
+        placed = self._placement(client, use_id)["data"]
+        assert port not in (placed.get("open_ports") or {}).get("inputs", []), placed
+
+    def test_a_line_removed_inside_still_disconnects_and_badges_the_placement(
+        self, client, bp_node_id
+    ):
+        sub, use_id = self._extract_bp(client, bp_node_id)
+        db = get_db()
+        manual = ps.get_manual_nodes(db)
+        inner = next(
+            e for e in ps.get_manual_edges(db)
+            if (manual.get(e["source"]) or {}).get("type") == ports.INPUT_PORT_NODE
+            and (manual.get(e["source"]) or {}).get("pipeline_id") == sub
+            and e.get("targetHandle") == "in__signal"
+        )
+
+        assert client.delete(f"/api/edges/{inner['id']}").status_code == 200
+
+        bp = self._bp_inside(client, sub)
+        assert bp["data"].get("disconnected") is True, bp["data"]
+        placed = self._placement(client, use_id)["data"]
+        assert placed["disconnected_members"] == ["bandpass_filter"], placed
+        # The only step: nothing inside runs from an input to an output port.
+        assert placed["disconnected_severity"] == "error", placed

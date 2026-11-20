@@ -151,6 +151,9 @@ own copy of the glue, and that copy feeds its placement just as well.
 | A connection's legality through ports | `ports.illegal_reason`; `put_edge` refuses, a stored one binds nothing |
 | Which segments a trace sees (a removed segment is out, whichever canvas asks) | `edge_view.trace_through_ports`, used by the canvas (`_trace_ports`) and `put_edge` |
 | What to do instead of an illegal connection | `ports.illegal_remedy`, shown in `put_edge`'s message |
+| A placement's open ports (badge) | `ports.open_ports_of_placement`, called by `scope_service.build_pipeline_nodes` |
+| Whether anything inside runs end to end | `ports.runnable_routes`, over `scope_service.submodule_canvases` |
+| An argument fed by an open input port | `ports.Wiring.open_inputs`, read through `EdgeView.open_arguments` by `hidden_wirings` (connected) and `_wiring_blocker` (can't run) |
 
 With no input/output node on any canvas, `port_wiring` is `None` and
 `wiring_list` is exactly `drawn_list`.
@@ -213,7 +216,13 @@ The canvas replaces its nodes with each response, and those can come back out of
   whichever canvas is asking. Its traced connection joins `hidden_edge_ids`, so a
   node with recorded history really disconnects. Redrawing the line restores it.
 - **Open input:** steps fed by it have no targets (log: "fed by a submodule port
-  with nothing connected").
+  with nothing connected"), but they are **not** disconnected: a step that
+  traces back to an input port is connected on its own canvas (GitHub #27, user
+  decision 2026-11-19). `hidden_wirings(open_arguments=EdgeView.open_arguments)`
+  counts such an argument as covered. The open port is badged on the placement
+  instead (below). The pipeline run's skip report still lists the step, naming
+  the port (`disconnected_report_entries` doesn't pass `open_arguments`: it asks
+  "can it run?", not "is it disconnected?").
 - **`binding.params` on a port-fed argument:** compiling refuses it, so every run,
   plan preview and Python export reports it, however the binding was written.
 - **Open output from a bare function:** no output variable, so no targets.
@@ -233,6 +242,36 @@ The canvas replaces its nodes with each response, and those can come back out of
   the ones on the placement's own canvas (`_own_step_values`): a submodule
   nested inside it is its own placement and owns its own. A MATLAB run
   still refuses any placement `binding` (below).
+
+## A placement's badges
+
+GitHub #27 (user decisions 2026-11-19). The submodule node on a parent canvas
+carries two badges. A step inside can't carry either one:
+
+| Badge | Data on the pipelineNode | Severity | Owner |
+|---|---|---|---|
+| 🔌 N port(s) not connected | `open_ports: {inputs, outputs}`: this placement's ports with no line on this canvas | error | `ports.open_ports_of_placement` |
+| ⚠ / 🔌 N step(s) disconnected inside | `disconnected_members` (labels, nested placements included), `disconnected_severity` | `warning` while something inside runs end to end, else `error` | `ports.runnable_routes` |
+
+**Open ports are per placement**, by what the parent canvas draws. Under one
+wiring a second placement's lines still feed the steps, but they don't fill
+this placement's ports on screen.
+
+**"Something runs end to end"** is a real trace (`ports.runnable_routes`), from
+a start (an input node, or a PathInput on the submodule's canvas, for a library
+that loads its own data) to an output node, through steps that are not
+disconnected. Variables, Parameters, glue and Merge nodes pass a route on. A
+nested placement is traced through: a line into its `in__a` continues out of
+each `out__b` that its own submodule routes `a` (or an inner PathInput) to.
+Each submodule canvas is `scope_filter.resolve_scope_view` of the build's full
+graph, less the nodes hidden there (`scope_service.submodule_canvases`), which
+is what a user sees by opening it. A submodule with no output node has no route,
+so any disconnected step in it makes the badge an error.
+
+Logs: `[ports] runnable_routes(<sub>): N route(s) … stopped at disconnected
+step(s) […]` and `[scope_service] placement <use> (<name>) badges: …`.
+Frontend: `placementBadges.ts` turns the data into badge text;
+`PipelineNode.tsx` draws it.
 
 ## Known gaps
 

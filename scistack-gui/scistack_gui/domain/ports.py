@@ -591,3 +591,150 @@ def find_reentry(crossing: list[dict], edges: list[dict], is_moved) -> "list[str
             seen.add(node)
             stack.extend(path + [next_node] for next_node in outgoing.get(node, []))
     return None
+
+
+# --- A placement's badges (GitHub #27, user decisions 2026-11-19) -----------
+#
+# The submodule node on a parent canvas says two things a step inside can't:
+#
+# - a port of THIS placement with no line on the parent (an error: what the
+#   port's steps take or make goes nowhere), :func:`open_ports_of_placement`;
+# - steps inside that are disconnected (a warning while something inside can
+#   still run end to end, an error when nothing can),
+#   :func:`runnable_routes`.
+
+PATH_INPUT_NODE = "pathInputNode"
+FUNCTION_NODE = "functionNode"
+
+
+def open_ports_of_placement(use_id: str, interface: dict, edges) -> dict:
+    """``{"inputs": [...], "outputs": [...]}``: the ports of placement *use_id*
+    with no line on the canvas that places it.
+
+    *interface* is :func:`ports_of_scope` for the placement's submodule (its
+    order is kept); *edges* is what that parent canvas draws. Per placement, by
+    what the parent canvas shows: a second placement's lines don't fill this
+    one's ports on screen, even though one wiring is shared."""
+    fed_in: set[str] = set()
+    fed_out: set[str] = set()
+    for edge in edges:
+        if edge.get("target") == use_id:
+            name = handle_name(edge.get("targetHandle"), IN_HANDLE_PREFIX)
+            if name:
+                fed_in.add(name)
+        if edge.get("source") == use_id:
+            name = handle_name(edge.get("sourceHandle"), OUT_HANDLE_PREFIX)
+            if name:
+                fed_out.add(name)
+    return {
+        "inputs": [p for p in interface.get("inputs", []) if p not in fed_in],
+        "outputs": [p for p in interface.get("outputs", []) if p not in fed_out],
+    }
+
+
+def runnable_routes(
+    canvas_id: str,
+    canvases: dict,
+    child_of_use: dict,
+    *,
+    _memo: "dict | None" = None,
+    _seen: tuple = (),
+) -> frozenset:
+    """THE answer to "can anything inside this submodule run end to end?".
+
+    ``{(start, output port name)}``: every output node of *canvas_id* reached
+    from a start through steps that are not disconnected. A start is an input
+    node (its port name) or a PathInput on the canvas (``None``: a library that
+    loads its own data). Empty: nothing inside runs from start to finish.
+
+    *canvases* is ``{canvas id: (nodes, edges)}``, what each submodule canvas
+    draws (``scope_filter.resolve_scope_view``; a function node carries
+    ``data.disconnected``). *child_of_use* is ``{use id: submodule id}`` for
+    every placement. A nested placement is passed through: a line into its
+    ``in__a`` continues out of each ``out__b`` that its own submodule routes
+    ``a`` (or an inner PathInput) to, so nesting is traced, not assumed.
+
+    Variables, Parameters, glue and Merge nodes pass a route on; only a
+    disconnected function stops it (user decision 2026-11-19).
+    """
+    from collections import deque
+
+    from scistack_gui.ids import out_handle
+
+    memo = {} if _memo is None else _memo
+    if canvas_id in memo:
+        return memo[canvas_id]
+    if canvas_id in _seen:
+        logger.warning("[ports] runnable_routes: placement cycle through %s; stopped", canvas_id)
+        return frozenset()
+    seen = (*_seen, canvas_id)
+    nodes, edges = canvases.get(canvas_id, ((), ()))
+    by_id = {n["id"]: n for n in nodes}
+    out_edges: dict[str, list[dict]] = {}
+    for edge in edges:
+        out_edges.setdefault(edge.get("source") or "", []).append(edge)
+
+    def nested(use_id: str) -> frozenset:
+        return runnable_routes(
+            child_of_use[use_id], canvases, child_of_use, _memo=memo, _seen=seen
+        )
+
+    queue: deque = deque()
+
+    def push_from(node_id: str, start, only_handle: "str | None" = None) -> None:
+        for edge in out_edges.get(node_id, ()):
+            if only_handle is None or edge.get("sourceHandle") == only_handle:
+                queue.append((edge.get("target") or "", start, edge.get("targetHandle")))
+
+    for node in nodes:
+        node_type = node.get("type")
+        if node_type == INPUT_PORT_NODE:
+            push_from(node["id"], (node.get("data") or {}).get("label"))
+        elif node_type == PATH_INPUT_NODE:
+            push_from(node["id"], None)
+    # A nested placement that loads its own data starts a route too.
+    for use_id in out_edges:
+        if use_id in child_of_use:
+            for start, out_name in nested(use_id):
+                if start is None:
+                    push_from(use_id, None, out_handle(out_name))
+
+    routes: set = set()
+    blocked: set[str] = set()
+    visited: set = set()
+    while queue:
+        node_id, start, handle = queue.popleft()
+        is_use = node_id in child_of_use
+        key = (node_id, start, handle if is_use else None)
+        if key in visited:
+            continue
+        visited.add(key)
+        if is_use:
+            argument = handle_name(handle, IN_HANDLE_PREFIX)
+            for inner_start, out_name in nested(node_id):
+                if inner_start == argument:
+                    push_from(node_id, start, out_handle(out_name))
+            continue
+        node = by_id.get(node_id)
+        if node is None:
+            continue
+        data = node.get("data") or {}
+        if node.get("type") == OUTPUT_PORT_NODE:
+            routes.add((start, data.get("label")))
+            continue
+        if node.get("type") == FUNCTION_NODE and data.get("disconnected"):
+            blocked.add(data.get("label") or node_id)
+            continue
+        push_from(node_id, start)
+
+    result = frozenset(routes)
+    memo[canvas_id] = result
+    logger.info(
+        "[ports] runnable_routes(%s): %d route(s) start -> output port %s; "
+        "stopped at disconnected step(s) %s",
+        canvas_id,
+        len(result),
+        sorted(result, key=lambda r: (r[0] or "", r[1] or "")),
+        sorted(blocked),
+    )
+    return result
