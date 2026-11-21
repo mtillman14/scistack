@@ -71,6 +71,18 @@ SEED = textwrap.dedent(
     '''
 )
 
+#: GitHub #28 hid these entry points behind frontend switches (hide, don't
+#: delete); the data view replaces them. The tests stay for when a switch
+#: flips back on.
+HIDDEN_EXPECTED = pytest.mark.skip(
+    reason="Expected locations is hidden: SHOW_EXPECTED_LOCATIONS = false "
+    "(frontend/src/components/Expectation/expectationTypes.ts, GitHub #28)"
+)
+HIDDEN_LEGACY = pytest.mark.skip(
+    reason="Coverage is hidden: SHOW_LEGACY_DATA_ENTRIES = false "
+    "(frontend/src/components/DataView/openDataView.ts, GitHub #28)"
+)
+
 STATUSES = {"present", "missing_unexpected", "present_unexpected", "missing_expected", "excluded"}
 
 
@@ -126,6 +138,7 @@ def test_palette_delete_then_undo_restores_the_file(page, server):
     assert entities.read_text() == before
 
 
+@HIDDEN_EXPECTED
 def test_expected_locations_lists_every_location(page, server):
     """Item 0zzzzzzzzzzzzzzzzzzzzzzz step 1: right-click a variable →
     Expected locations… shows one row per location, each with a known status.
@@ -142,6 +155,7 @@ def test_expected_locations_lists_every_location(page, server):
     assert page.smoke_errors == [], page.smoke_errors
 
 
+@HIDDEN_EXPECTED
 def test_unmark_takes_the_mark_back(page, server):
     """Mark a location Not expected, then Unmark it. Unmark used
     window.confirm, which a VS Code webview answers False (and Playwright
@@ -173,6 +187,7 @@ def test_unmark_takes_the_mark_back(page, server):
     assert page.smoke_errors == [], page.smoke_errors
 
 
+@HIDDEN_LEGACY
 def test_coverage_has_a_row_per_subject(page, server):
     """Item 0zzzzzzzzzzzzzzzzzzzzzzz step 6: header ✅ Coverage by subject has
     one row per subject value."""
@@ -183,6 +198,21 @@ def test_coverage_has_a_row_per_subject(page, server):
     rows = popup.get_by_test_id("coverage-row")
     rows.first.wait_for()
     assert rows.count() == 2, rows.count()
+    assert page.smoke_errors == [], page.smoke_errors
+
+
+def test_data_view_lists_every_location(page, server):
+    """GitHub #28: right-click a variable → ▦ Data view replaces Expected
+    locations and Coverage (both hidden). The popup has that variable's
+    column and one row per seeded subject."""
+    open_canvas(page, server)
+    node(page, "variable", "BacklogOut").click(button="right")
+    click(page, server, page.get_by_test_id("menu-data-view"), "menu-data-view")
+    view = page.get_by_test_id("data-view")
+    rows = view.locator("tbody tr")
+    rows.first.wait_for()
+    assert rows.count() == 2, rows.count()
+    assert view.locator("thead th", has_text="BacklogOut").count() == 1
     assert page.smoke_errors == [], page.smoke_errors
 
 
