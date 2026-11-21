@@ -439,7 +439,7 @@ Here's what happens:
 
 ![After the first run](../images/example_best-popcorn/after_first_run.png)
 
-Check the result: right-click `Rating` and choose **View Schema Locations**. The dialog should say **300/300 locations green**: all 100 participants × 3 brands have a rating.
+Check the result: right-click `Rating` and choose **▦ Data view**. Every cell should be ✓, and the footer should count 300: all 100 participants × 3 brands have a rating.
 
 ![Rating right-click menu](../images/example_best-popcorn/right_click_menu.png)
 
@@ -640,7 +640,7 @@ The root folder, `popcorn-store2/`, was set during the import, so the template i
 Remove the old value rather than keeping both: a Parameter with two values runs its step once for each, and the `,` run would read this file wrongly. Their values are theirs alone: nothing they change reaches your project, and nothing you change later reaches theirs.
 
 
-**Run it.** Click **▶ Run** on `read_csv`. Right-click `Rating` and choose **View Schema Locations** to check that every shopper has a rating for every brand.
+**Run it.** Click **▶ Run** on `read_csv`. Right-click `Rating` and choose **▦ Data view** to check that every shopper has a rating for every brand.
 
 **Check the figure and the table.** Click `Rating`, then **Open Plot Studio →**. Pick `Ratings by brand` from the **Saved plots** rail: it's drawn from their ratings, with `shopper` collapsed where you had `participant`. Open **StatStudio** from the toolbar and click `Popcorn statistics` under the saved tables. Step through the screens once: the answers came from your study, so confirm they still hold for theirs (each shopper rated every brand, nothing is missing) before reading the results.
 

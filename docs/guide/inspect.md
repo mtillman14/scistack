@@ -36,6 +36,11 @@ database file on every invocation.
 | Command | Question it answers |
 |---|---|
 | `scidb status` | What is in this database? (counts, size, last activity) |
+| `scidb status <fn> [--run ID] [--call-id ID]` | Did that step work? Its verdict and reasons (see [Did It Work?](../getting-started/checking-your-pipeline.md)) |
+| `scidb coverage --by KEY[,KEY] [--vars A,B] [--funnel]` | Which variables have which values of a key, in pipeline order, and where data drops out |
+| `scidb follow key=val … [--vars A,B]` | One location through every variable in pipeline order, and where it is first missing |
+| `scidb expected <Type> [--problems] [--status S,…] [--by KEY] [--csv PATH]` | Which locations a variable should have, and whether each matches |
+| `scidb nans <Type> [key=val …] [--columns A,B] [--kind K,…] [--by KEY]` | NaN, blank, empty and constant cells, per column and location |
 | `scidb vars [Type]` | Which variable types exist / detail for one |
 | `scidb schema [--tree]` | How is the experiment structured? |
 | `scidb pipeline [--variants] [--values] [--type X] [--format tree\|mermaid\|dot\|json] [-o FILE]` | The whole pipeline DAG |

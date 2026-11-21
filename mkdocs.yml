@@ -52,6 +52,7 @@ nav:
     - What's a Schema?: getting-started/whats-a-schema.md
     - Create New Project: getting-started/create-new-project.md
     - Writing Functions: getting-started/writing-functions.md
+    - Did It Work?: getting-started/checking-your-pipeline.md
     - Project Files: getting-started/project-files.md
     - Architecture: concepts/architecture.md
     - Current State of the Art: getting-started/state-of-the-art.md
@@ -196,6 +197,7 @@ plugins:
               - Create New Project: getting-started/create-new-project.md
               - Open Existing Project: getting-started/open-existing-project.md
               - Writing Functions: getting-started/writing-functions.md
+              - Did It Work?: getting-started/checking-your-pipeline.md
               - Project Files: getting-started/project-files.md
               - Architecture: concepts/architecture.md
             - Example Projects:

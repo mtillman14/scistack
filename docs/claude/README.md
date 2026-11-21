@@ -191,6 +191,7 @@ Rules:
 - [Synthetic factors in scistackplot](synthetic-factors.md) — `synthetic-factors.md`
 - [Table/DataFrame Concatenation Optimization](table-concat-optimization.md) — `table-concat-optimization.md`
 - [The input binding, and its round trip](input-binding-round-trip.md) — `input-binding-round-trip.md`
+- [User-docs gaps: tested features the user docs don't cover](user-docs-gaps.md) — `user-docs-gaps.md`
 - [Variable Groups](variable-groups.md) — `variable-groups.md`
 - [`where=` Filter System](where-filter-system.md) — `where-filter-system.md`
 

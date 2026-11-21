@@ -12,7 +12,7 @@ The canvas shows the steps but doesn't hold your science. Your functions are ord
 
 | Area | What it's for |
 |---|---|
-| **Header** (top) | The database name, and buttons for the whole project: **🔄 Refresh Code**, **Restart**, **📄 Report**, **📁 Paths** and **📋 Inventory**. Your schema keys are listed on the right. |
+| **Header** (top) | The database name, and buttons for the whole project: **🔄 Refresh Code**, **📄 Report**, **▦ Data**, **Schema keys…** and **⋯** (more: **⟳ Restart Python**, **📁 Paths…**, **Clear data…**, **🐞 Report bug…**). Your schema keys are listed on the right. |
 | **Hypothesis tabs** (under the header) | One tab per research question. Each tab is its own canvas, with a **Research Question** line so you never lose track of what you're trying to answer. |
 | **Canvas** (centre) | Your pipeline. Drag to move around, scroll to zoom. |
 | **Sidebar** (right) | When nothing is selected, the **palette**: everything you can add to the canvas. When you click a node, that node's **settings**. Drag its left edge to make it wider. |
@@ -22,7 +22,7 @@ The canvas shows the steps but doesn't hold your science. Your functions are ord
 **Show:** the full window with each of the five areas labelled.
 ///
 
-**🔄 Refresh Code** re-reads your Python and MATLAB files. Click it after you edit a function or add a new file, so the canvas sees the change. **Restart** restarts SciStack's Python process; you rarely need it, but it's there if something gets stuck.
+**🔄 Refresh Code** re-reads your Python and MATLAB files. Click it after you edit a function or add a new file, so the canvas sees the change. **⋯ → ⟳ Restart Python** restarts SciStack's Python process; you rarely need it, but it's there if something gets stuck.
 
 ## The building blocks
 
@@ -176,7 +176,7 @@ Right-click a variable for more:
 
 - **📈 Plot** opens it in Plot Studio.
 - **📊 Statistics** opens it in Stat Studio.
-- **🗂 View Schema Locations** shows every location in your schema and whether this variable has data there. Click a location to plot it.
+- **▦ Data view** shows every location and whether this variable (and every step before it) has data there, and why not. See [Did It Work?](../getting-started/checking-your-pipeline.md).
 - **🧬 Variants…** lists each version of this variable as a card: which settings and code produced it, and how many locations it covers. **Make current** picks which version plots and later steps use by default. **Delete** removes a version you're sure you don't need.
 
 /// info | 📷 Screenshot
@@ -185,11 +185,7 @@ Right-click a variable for more:
 
 ## Finding missing data
 
-Real datasets have gaps: a participant who skipped a session, a file that never got copied. Click **📋 Inventory** in the header to see every combination of your schema keys, each marked **present**, **missing** or **excluded**. Choose which keys to check, and whether any key (a study arm, a site) should be checked separately for each of its values. Long runs of complete data are folded into one "(all)" row, so the gaps stand out.
-
-/// info | 📷 Screenshot
-**Show:** the Inventory popup with a few missing rows.
-///
+Real datasets have gaps: a participant who skipped a session, a file that never got copied. Click **▦ Data** in the header to see every location against every variable in pipeline order, why each gap is there, and where subjects drop out. Each function node's chip (**✕ 3 failed**, **↓ 2 missing input**) opens the same view on just those locations. [Did It Work?](../getting-started/checking-your-pipeline.md) explains every state, the run report, and **🧪 Try on…**.
 
 ## Undo, copy and paste
 

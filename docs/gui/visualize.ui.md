@@ -17,7 +17,7 @@ Three things make it different from a plotting script:
 | From | How |
 |---|---|
 | A variable on the canvas | Click it, then **Open Plot Studio →** in the sidebar. Or right-click it and choose **📈 Plot**. |
-| One location | Right-click a variable, choose **🗂 View Schema Locations**, and click the location you want. |
+| One location | Open Plot Studio on the variable, then choose the location under **Schema keys**. |
 | A `plot_` function | Right-click the node and choose **📈 Open in Plot Studio**, to adjust a figure your own function draws. |
 | The Command Palette | **SciStack: Plot Variable…**, or **SciStack: Plot CSV File** to plot a CSV file with no database at all. |
 

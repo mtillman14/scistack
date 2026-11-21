@@ -6,7 +6,7 @@ That sounds like a lookup, but it isn't. One player averaged 26 points a game, m
 
 **What you'll learn**
 
-- How to find **missing data** with the Inventory before you analyse anything.
+- How to find **missing data** with the data view before you analyse anything.
 - How to **leave a player out** of a figure and its statistics, without deleting their data.
 - How to plot **one column** of a variable that holds several.
 - How a **confidence interval** shows how much a small sample can tell you.
@@ -202,7 +202,7 @@ Each row has its own `player` and `game`, so each one is saved as a separate `Ga
 
 Before computing anything, check how complete the data is. 9 players × 20 games could be 180 box score lines, but there are only 123.
 
-Click **📋 Inventory** in the header and check `player` and `game`. The Inventory lists every combination of the two keys, each marked **present**, **missing** or **excluded**: 123 present and 57 missing. Players who played every game are folded into one row, so the gaps stand out:
+Click **▦ Data** in the header. The data view has one row per `player` and `game`, and a column for `GameStats`. The footer counts what's there: 123 of the 180 combinations have a box score line, and 57 are missing. Click any cell that isn't ✓ to see why it's empty. The missing games are:
 
 | player  | games missed |
 |---------|--------------|
@@ -213,7 +213,7 @@ Click **📋 Inventory** in the header and check `player` and `game`. The Invent
 | Morgan  | 16           |
 
 /// info | 📷 Screenshot
-**Show:** the Inventory popup for `player` and `game`, with the missing games of Harper, Jordan and Morgan.
+**Show:** the data view for `GameStats`, scrolled to the missing games of Harper, Jordan and Morgan, with the footer count.
 ///
 
 Each gap is a question to put to the coach, who explains:
@@ -292,7 +292,7 @@ Use **Copy sentences** under the table for a results section. Then name the tabl
 
 | Question | Where it was answered |
 |---|---|
-| Who missed games? | **📋 Inventory**: 57 missing combinations, mostly Harper, Jordan and Morgan |
+| Who missed games? | **▦ Data**: 57 missing combinations, mostly Harper, Jordan and Morgan |
 | How to leave out Morgan? | Plot Studio **Schema keys**, a setting of the figure, carried into Stat Studio |
 | Which column to plot? | Plot Studio **Filters** on `ColName`: only `points` |
 | How sure is each average? | 95% CI error bars, and the mean [95% CI] table |
