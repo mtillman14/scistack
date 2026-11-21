@@ -119,6 +119,7 @@ Rules:
 - [Run report](run-report.md) — `run-report.md`
 - [How `scifor.for_each()` Works — A Detailed Walkthrough](scifor-for-each-internals.md) — `scifor-for-each-internals.md`
 - [Multi-Column Save: Schema Inference, Skip-on-Mismatch, and the Length-1 Unwrap](multi-column-save-schema.md) — `multi-column-save-schema.md`
+- [PathInput: the directory listing cache and its timestamp limit](pathinput-listing-cache.md) — `pathinput-listing-cache.md`
 - [PathInput spelling aliases](pathinput-folder-aliases.md) — `pathinput-folder-aliases.md`
 - [PathInput: disambiguating adjacent placeholders with `key_regex`](pathinput-key-regex.md) — `pathinput-key-regex.md`
 - [PathInput: zero-padded numeric filename matching](pathinput-zero-padded-matching.md) — `pathinput-zero-padded-matching.md`
