@@ -4,7 +4,7 @@
  * Layout:
  *   ┌───────────────────────────────┬─────────────┐
  *   │  header: SciStack + db name   │             │
- *   │  + Restart/Report/📁 Paths/📋 │             │
+ *   │  + Refresh/Report/Data/Keys/⋯ │             │
  *   ├────────────────────────────────┤  sidebar    │
  *   │  HypothesisTabs: tab strip +  │  (right 1/4,│
  *   │  Research Question row        │  full       │
@@ -19,7 +19,7 @@
  * header's buttons end up left-aligned over the (now narrower) canvas
  * column as a natural consequence, not via extra positioning.
  *
- * The 📁 Paths button opens PathsPopup (formerly the sidebar's permanent
+ * ⋯ → 📁 Paths… opens PathsPopup (formerly the sidebar's permanent
  * "Project" tab); RunsDock (formerly the sidebar's "Runs" tab) is now a
  * React Flow Panel inside PipelineDAG so run status stays visible without a
  * tab switch — see components/RunsDock.tsx and components/PathsPopup.tsx.
@@ -47,10 +47,9 @@ import {
   openDataView,
   type DataViewRequest,
 } from "./components/DataView/openDataView";
-import ClearDataButton from "./components/DAG/ClearDataButton";
+import HeaderMoreMenu from "./components/HeaderMoreMenu";
 import SchemaKeysButton from "./components/DAG/SchemaKeysButton";
 import { SCHEMA_KEYS_CHANGED_EVENT } from "./components/SchemaKeysDialog";
-import BugReportButton from "./components/BugReportButton";
 import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
 import PipelineRunController from "./components/PipelineRunController";
@@ -120,16 +119,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   refreshCodeBtn: {
     marginLeft: "auto",
-    padding: "4px 12px",
-    background: "#2a2a4a",
-    color: "#ccc",
-    border: "1px solid #3a3a5a",
-    borderRadius: 4,
-    cursor: "pointer",
-    fontSize: 12,
-    fontFamily: "inherit",
-  },
-  refreshBtn: {
     padding: "4px 12px",
     background: "#2a2a4a",
     color: "#ccc",
@@ -406,18 +395,10 @@ export default function App() {
                       <button
                         style={styles.refreshCodeBtn}
                         onClick={handleRefreshCode}
-                        disabled={refreshingCode}
-                        title="Re-import your Python/MATLAB files to pick up edits, without restarting the whole process"
+                        disabled={refreshingCode || restarting}
+                        title="Re-import your Python/MATLAB files to pick up edits. If that is not enough, ⋯ → Restart Python"
                       >
                         {refreshingCode ? "Refreshing…" : "🔄 Refresh Code"}
-                      </button>
-                      <button
-                        style={styles.refreshBtn}
-                        onClick={handleRestart}
-                        disabled={restarting}
-                        title="Restart the Python process to pick up edits to server or pipeline code"
-                      >
-                        {restarting ? "Restarting..." : "Restart"}
                       </button>
                       <button
                         style={styles.reportBtn}
@@ -426,13 +407,6 @@ export default function App() {
                         title="Write the endpoint report (figures + stats with provenance) and open it"
                       >
                         {reporting ? "Writing…" : "📄 Report"}
-                      </button>
-                      <button
-                        style={styles.pathsBtn}
-                        onClick={() => setPathsOpen(true)}
-                        title="Configured code paths (Python + MATLAB) and discovered exports"
-                      >
-                        📁 Paths
                       </button>
                       <button
                         style={styles.pathsBtn}
@@ -465,8 +439,12 @@ export default function App() {
                         </>
                       )}
                       <SchemaKeysButton />
-                      <ClearDataButton />
-                      <BugReportButton />
+                      <HeaderMoreMenu
+                        buttonStyle={styles.pathsBtn}
+                        restarting={restarting}
+                        onRestart={handleRestart}
+                        onOpenPaths={() => setPathsOpen(true)}
+                      />
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
                           schema: [{schema.keys.join(", ")}]

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRows, cellFor, dropOffText, filterRows, locationKey, parseKey, type Column } from './dataView.js'
+import { buildRows, cellFor, dropOffText, filterRows, legendEntries, locationKey, parseKey, type Column } from './dataView.js'
 
 const KEYS = ['subject', 'trial']
 
@@ -50,4 +50,22 @@ test('the drop-off line', () => {
     { variable: 'A', key: 'subject', count: 40, lost: [], lost_count: 0 },
     { variable: 'B', key: 'subject', count: 38, lost: [], lost_count: 2 },
   ]), 'subjects: 40 → 38')
+})
+
+test('the legend is every state in the reply order, with its meaning', () => {
+  const reply = {
+    states: ['present', 'failed'] as const,
+    glyphs: { present: '✓', failed: '✕' },
+    labels: { present: 'present', failed: 'failed' },
+    meanings: { present: 'Saved.', failed: 'Raised an error.' },
+  }
+  const legend = legendEntries(reply as never)
+  assert.deepEqual(legend.map(e => e.state), ['present', 'failed'])
+  assert.deepEqual(legend[1], { state: 'failed', glyph: '✕', label: 'failed', meaning: 'Raised an error.' })
+})
+
+test('the legend falls back to the glyph order without states/meanings (older backend)', () => {
+  const legend = legendEntries({ glyphs: { present: '✓', new: '＋' }, labels: { present: 'present', new: 'new' } } as never)
+  assert.deepEqual(legend.map(e => e.state), ['present', 'new'])
+  assert.equal(legend[0].meaning, '')
 })

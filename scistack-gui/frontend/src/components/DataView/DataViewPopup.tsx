@@ -25,6 +25,7 @@ import {
   cellFor,
   dropOffText,
   filterRows,
+  legendEntries,
   type Cell,
   type CellState,
   type Column,
@@ -33,9 +34,7 @@ import {
   type Step,
 } from './dataView'
 import type { DataViewRequest } from './openDataView'
-
-const MARKED_MISSING_REASON = 'marked missing as expected'
-const MARKED_PRESENT_REASON = 'marked present as expected'
+import DataPreviewPopup from '../DataPreview/DataPreviewPopup'
 
 const STATE_COLOR: Record<CellState, string> = {
   present: '#16a34a',
@@ -48,15 +47,6 @@ const STATE_COLOR: Record<CellState, string> = {
   excluded: '#9ca3af',
 }
 
-const FILTERS: { label: string; states: CellState[] }[] = [
-  { label: '✕ failed', states: ['failed'] },
-  { label: '↓ missing input', states: ['missing_input'] },
-  { label: '○ not run', states: ['not_run'] },
-  { label: '＋ new', states: ['new'] },
-  { label: '↻ outdated', states: ['outdated'] },
-  { label: '⚠ warning', states: ['warning'] },
-  { label: '⊘ excluded', states: ['excluded'] },
-]
 
 interface Selected {
   column: Column
@@ -161,13 +151,15 @@ export default function DataViewPopup({ request, onClose }: { request: DataViewR
         <div style={styles.header}>
           <span style={styles.title}>▦ {title}</span>
           <div style={styles.filters}>
-            {FILTERS.map(f => (
+            {/* The legend is the filter row: every state, its meaning on hover. */}
+            {reply && legendEntries(reply).map(e => (
               <button
-                key={f.label}
+                key={e.state}
                 type="button"
-                style={{ ...styles.filter, ...(f.states.every(s => states.includes(s)) ? styles.filterOn : {}) }}
-                onClick={() => toggleFilter(f.states)}
-              >{f.label}</button>
+                style={{ ...styles.filter, ...(states.includes(e.state) ? styles.filterOn : {}) }}
+                onClick={() => toggleFilter([e.state])}
+                title={`${e.meaning} Click to show only these.`}
+              ><span style={{ color: STATE_COLOR[e.state] }}>{e.glyph}</span> {e.label}</button>
             ))}
           </div>
           <button type="button" style={styles.action} onClick={() => setExpanded(new Set(allRowIds(shown)))}>Expand all</button>
@@ -238,7 +230,7 @@ function CellPane({ selected, onChanged, onClose }: {
 }) {
   const { column, row, cell } = selected
   const [records, setRecords] = useState<CellRecord[] | null>(null)
-  const [preview, setPreview] = useState<Record<string, unknown>[] | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const keys = column.keys.filter(k => row.path.some(([rk]) => rk === k))
   const loc: Step[] = row.path.filter(([k]) => keys.includes(k))
   const locText = loc.map(([k, v]) => `${k}=${v}`).join(', ') || '(whole dataset)'
@@ -246,20 +238,19 @@ function CellPane({ selected, onChanged, onClose }: {
 
   useEffect(() => {
     setRecords(null)
-    setPreview(null)
+    setPreviewOpen(false)
     if (ids.length === 0) return
     callBackend('data_view', { part: 'cell', variable: column.variable, record_ids: ids })
       .then(r => setRecords((r as { records: CellRecord[] }).records))
       .catch(err => console.debug('[DataView] cell detail unavailable', err))
-    callBackend('get_data_preview', { variable: column.variable, columns: null, location: Object.fromEntries(loc) })
-      .then(r => setPreview(((r as { rows?: Record<string, unknown>[] }).rows ?? []).slice(0, 3)))
-      .catch(err => console.debug('[DataView] preview unavailable', err))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [column.variable, row.id])
 
-  const change = async (method: 'exclude_schema_combo' | 'include_schema_combo', variable: string | null, preset?: string) => {
+  const change = async (method: 'exclude_schema_combo' | 'include_schema_combo', variable: string | null) => {
     if (loc.length === 0) { await showMessage('Pick a cell at a location (not the whole dataset).'); return }
-    const reason = preset ?? await askText(`Why? (${locText}${variable ? `, ${variable} only` : ', everything'})`)
+    const scope = variable ? `, ${variable} only` : ', every variable'
+    const suggestion = method === 'exclude_schema_combo' && variable ? 'missing on purpose' : ''
+    const reason = await askText(`Why? (${locText}${scope})`, suggestion)
     if (!reason) return
     try {
       await callBackend(method, {
@@ -305,9 +296,6 @@ function CellPane({ selected, onChanged, onClose }: {
       ) : (
         <div style={styles.muted}>{column.variable} is not at this level.</div>
       )}
-      {preview && preview.length > 0 && (
-        <pre style={styles.preview}>{preview.map(r => JSON.stringify(r)).join('\n')}</pre>
-      )}
       {records?.map(r => (
         <div key={r.record_id} style={styles.record}>
           <div>{r.made_by}</div>
@@ -317,17 +305,37 @@ function CellPane({ selected, onChanged, onClose }: {
         </div>
       ))}
       <div style={styles.paneActions}>
-        <button type="button" style={styles.action} onClick={() => change('exclude_schema_combo', null)}>Exclude here (everything)</button>
-        <button type="button" style={styles.action} onClick={() => change('exclude_schema_combo', column.variable)}>Exclude for {column.variable}</button>
-        <button type="button" style={styles.action} onClick={() => change('exclude_schema_combo', column.variable, MARKED_MISSING_REASON)}>Mark missing as expected</button>
-        <button type="button" style={styles.action} onClick={() => change('include_schema_combo', column.variable, MARKED_PRESENT_REASON)}>Mark present as expected</button>
-        {cell?.state === 'excluded' && (
-          <button type="button" style={styles.action} onClick={() => change('include_schema_combo', null)}>Include again…</button>
+        {ids.length > 0 && (
+          <button type="button" style={styles.action} onClick={() => setPreviewOpen(true)}
+            title="The values here, column by column, as a function receives them">Preview…</button>
+        )}
+        {/* One word, exclude / include: "missing on purpose" is an exclusion
+            scoped to this variable (scidb.store.exclusions). */}
+        {cell?.state === 'excluded' ? (
+          <>
+            <button type="button" style={styles.action} onClick={() => change('include_schema_combo', null)}
+              title="Remove an exclusion that covers every variable here">Include again…</button>
+            <button type="button" style={styles.action} onClick={() => change('include_schema_combo', column.variable)}
+              title={`Remove an exclusion of ${column.variable} only`}>Include {column.variable} again…</button>
+          </>
+        ) : (
+          <>
+            <button type="button" style={styles.action} onClick={() => change('exclude_schema_combo', null)}
+              title="Skip this location in every step (e.g. a subject who withdrew)">Exclude here…</button>
+            <button type="button" style={styles.action} onClick={() => change('exclude_schema_combo', column.variable)}
+              title={`Only ${column.variable} is bad or missing on purpose here; steps reading it skip this location, other steps still run`}>Exclude {column.variable} only…</button>
+          </>
         )}
         {ids.length > 0 && (
           <button type="button" style={{ ...styles.action, ...styles.danger }} onClick={deleteHere}>Delete this variant here…</button>
         )}
       </div>
+      {previewOpen && (
+        <DataPreviewPopup
+          target={{ variable: column.variable, location: Object.fromEntries(loc) }}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -447,7 +455,6 @@ const styles: Record<string, React.CSSProperties> = {
   pane: { width: 340, borderLeft: '1px solid #e2e8f0', padding: 10, overflow: 'auto' },
   paneHead: { display: 'flex', alignItems: 'center', gap: 6 },
   paneActions: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 10 },
-  preview: { background: '#f8fafc', padding: 6, fontSize: 10, maxHeight: 120, overflow: 'auto', whiteSpace: 'pre-wrap' },
   record: { borderTop: '1px solid #f1f5f9', padding: '6px 0' },
   dropoff: { borderTop: '1px solid #e2e8f0', padding: '6px 12px', background: '#f8fafc' },
   loss: { color: '#6b7280', fontSize: 11 },

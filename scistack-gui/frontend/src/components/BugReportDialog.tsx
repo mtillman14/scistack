@@ -1,5 +1,6 @@
 /**
- * "🐞 Report bug" header button + popup (issue #20).
+ * "🐞 Report bug…" popup (issue #20), opened from the header's ⋯ menu
+ * (HeaderMoreMenu).
  *
  * Step "write": title, description, and "Save my project to attach" (on by
  * default) with the export checkboxes — the SAME choices and defaults as
@@ -66,24 +67,7 @@ const primary: React.CSSProperties = {
 
 const note: React.CSSProperties = { fontSize: 12, opacity: 0.75, marginBottom: 12, lineHeight: 1.5 };
 
-export default function BugReportButton() {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        style={button}
-        onClick={() => setOpen(true)}
-        data-testid="bug-report-button"
-        title="Report a bug: saves your project to attach and opens a prefilled issue on GitHub"
-      >
-        🐞 Report bug
-      </button>
-      {open && <BugReportDialog onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-function BugReportDialog({ onClose }: { onClose: () => void }) {
+export default function BugReportDialog({ onClose }: { onClose: () => void }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [attach, setAttach] = useState(true);

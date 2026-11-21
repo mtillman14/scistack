@@ -92,6 +92,19 @@ LABELS = {
     EXCLUDED: "excluded",
 }
 
+#: THE one-line meaning of each state: the data view's legend (its filter
+#: buttons' tooltips). Plain words, what the user can do where it helps.
+MEANINGS = {
+    PRESENT: "Saved by this step's current code.",
+    WARNING: "Saved, but something looks odd (empty, all NaN, NaN added, an unusual shape or an outlier).",
+    OUTDATED: "Saved by older code, or from inputs saved again since. Run again to update.",
+    FAILED: "The step raised an error here on its last run.",
+    MISSING_INPUT: "An input this step needs is not there.",
+    NEW: "Inputs arrived since the step last ran. Run to include.",
+    NOT_RUN: "Inputs are there, but the step has not run here yet.",
+    EXCLUDED: "Excluded on purpose, for every variable or for this one.",
+}
+
 #: Why a location is outdated.
 CODE_CHANGED = "code_changed"
 INPUTS_CHANGED = "inputs_changed"
@@ -289,7 +302,10 @@ class StepVerdict:
         return ""
 
     def new_chip(self) -> str:
-        return f"＋{self.new} new" if self.new else ""
+        """The second chip. It says what to do, because a finished step with
+        new data reads ✅ on a red ("needs running") node, which looks
+        contradictory without it."""
+        return f"＋{self.new} new · run to include" if self.new else ""
 
     def status_line(self) -> str:
         """``✅ Succeeded · 40 of 40 present · ＋4 new to process``: THE line."""

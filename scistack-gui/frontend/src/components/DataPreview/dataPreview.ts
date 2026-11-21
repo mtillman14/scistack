@@ -41,6 +41,9 @@ export interface DataPreviewTarget {
   columns?: string[]
   /** The input port it was opened from, for the title. */
   param?: string
+  /** Open already narrowed to this location (a data view cell); the user can
+   *  still widen it with the key pickers. */
+  location?: Record<string, string>
 }
 
 export function openDataPreview(target: DataPreviewTarget): void {

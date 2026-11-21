@@ -44,6 +44,15 @@ def test_view_part_has_one_column_per_variable(client):
     assert view["dropoff"][0]["count"] == 2
 
 
+def test_view_part_carries_the_legend(client):
+    """The data view's legend (its filter buttons) is built from the reply:
+    every state, in scidb's order, each with a glyph, a label and a meaning."""
+    view = post(client, "/api/data-view", {"part": "view"})
+    assert view["states"][0] == "present" and len(view["states"]) == 8
+    for s in view["states"]:
+        assert view["glyphs"][s] and view["labels"][s] and view["meanings"][s], s
+
+
 def test_step_and_cell_parts(client):
     step = post(client, "/api/data-view", {"part": "step", "function_name": "bandpass_filter"})
     assert step["word"] == "succeeded" and len(step["outputs"][0]["locations"]) == 4

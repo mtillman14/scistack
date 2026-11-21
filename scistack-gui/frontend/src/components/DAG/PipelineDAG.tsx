@@ -1178,19 +1178,14 @@ export default function PipelineDAG() {
       )}
       {contextMenu && contextMenu.nodeType === 'functionNode' && (
         <div style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
-          <button style={styles.contextMenuItem} onClick={handleRunUntilHere} type="button">
-            ▶ Run until here
-          </button>
+          {/* Run and Try side by side: the same step, with or without saving. */}
           <button
             style={styles.contextMenuItem}
-            title="What this node's last run did: counts, settings, each input and output, NaNs"
-            onClick={() => {
-              openRunReport(contextMenu.fnLabel!, contextMenu.fnNodeId ?? null, contextMenu.fnOutputs)
-              setContextMenu(null)
-            }}
+            onClick={handleRunUntilHere}
             type="button"
+            title="Run this step and everything it needs, saving the results"
           >
-            📋 Run report…
+            ▶ Run until here
           </button>
           <button
             style={styles.contextMenuItem}
@@ -1212,7 +1207,19 @@ export default function PipelineDAG() {
             }}
             type="button"
           >
-            ▶ Try on…
+            🧪 Try on… (saves nothing)
+          </button>
+          <div style={styles.contextMenuDivider} />
+          <button
+            style={styles.contextMenuItem}
+            title="What this node's last run did: counts, settings, each input and output, NaNs"
+            onClick={() => {
+              openRunReport(contextMenu.fnLabel!, contextMenu.fnNodeId ?? null, contextMenu.fnOutputs)
+              setContextMenu(null)
+            }}
+            type="button"
+          >
+            📋 Run report…
           </button>
           <button
             style={styles.contextMenuItem}
@@ -1310,14 +1317,6 @@ export default function PipelineDAG() {
               title="Every variant of this variable: what defines each (the whole upstream pipeline and its locations), which is current, and Make current / Delete (`scidb variants <name> --cards`)"
             >
               🧬 Variants…
-            </button>
-            <button
-              style={styles.contextMenuItem}
-              onClick={() => { setPreviewTarget({ variable: varType }); setContextMenu(null) }}
-              type="button"
-              title="Each column's types and sample values, and the first rows, as a function receives them"
-            >
-              🔎 Preview data…
             </button>
           </div>
         )
@@ -1558,5 +1557,11 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'left',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
+  },
+  // Separates the actions (Run / Try) from the read-only entries.
+  contextMenuDivider: {
+    height: 1,
+    margin: '3px 0',
+    background: '#3a3a5a',
   },
 }

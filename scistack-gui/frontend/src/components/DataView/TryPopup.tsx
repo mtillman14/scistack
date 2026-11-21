@@ -1,5 +1,5 @@
 /**
- * TryPopup — "▶ Try on…": run ONE function at some locations, save nothing
+ * TryPopup — "🧪 Try on…": run ONE function at some locations, save nothing
  * (GitHub #28).
  *
  * Pick locations with the node's own location picker (selection mode), then

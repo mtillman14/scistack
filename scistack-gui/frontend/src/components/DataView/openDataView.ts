@@ -39,7 +39,7 @@ export interface TryRequest {
 
 export const OPEN_TRY_EVENT = 'scistack:open-try'
 
-/** "▶ Try on…" from a function node's right-click. */
+/** "🧪 Try on…" from a function node's right-click. */
 export function openTry(req: TryRequest): void {
   console.info('[Try] open', req)
   window.dispatchEvent(new CustomEvent(OPEN_TRY_EVENT, { detail: req }))

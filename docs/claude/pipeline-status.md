@@ -25,7 +25,7 @@ here sits on top of it.
 | Does anything look wrong? | ⚠ warning state, run report "What looks odd?" | `scidb.provenance.findings` |
 | What is left out, why, since when? | ⊘ cells, tree "Exclusions (N)" | `scidb.store.exclusions` |
 | Is any of my data from old code? | variable chip "N outdated variants", Clean up outdated… | `inspect.variant_cards.variant_outdated` / `outdated_cleanup` |
-| Will my in-progress function work? | ▶ Try on… | `scidb.run.try_step` |
+| Will my in-progress function work? | 🧪 Try on… (saves nothing) | `scidb.run.try_step` |
 | Where did my subjects go? | data view footer drop-off `40 → 38 → 31` | `data_view._dropoff` |
 
 ## Vocabulary (one owner each)
@@ -63,7 +63,7 @@ state per location across outputs. ✅ succeeded (every counted location ✓),
 with reasons in the fixed order ⏸ cancelled > ⏸ stopped > ✕ failed > ↓
 missing input > ○ not run > ✎ code changed > ↑ inputs changed. Counted =
 planned − excluded − new. **＋ new is never part of the word**: it is the
-second chip (`＋4 new`). A step with no level reads "○ not run" with no count,
+second chip (`＋4 new · run to include`: it says what to do, because a ✅ on a red node otherwise looks contradictory). A step with no level reads "○ not run" with no count,
 never "0 of 0". `needs_running` is true for any ✕ ○ ＋ ↻ or a step that never
 ran; parity with `check_node_state` is pinned by tests.
 
@@ -155,6 +155,22 @@ call (`cleanup_outdated` handler): one tombstone, one Ctrl Z.
   `Expectation/expectationTypes.ts`.
 - The data view is its own component (`DataView/DataViewPopup.tsx`), not a
   third mode of `SchemaLocationPicker`; its row/cell rules are `dataView.ts`.
+- UI simplification (2026-11-21, `.claude/plan-ui-simplification.md`):
+  - The filter row IS the legend: every state from the reply's `states`,
+    tooltip `meanings` (`status.MEANINGS`, the one owner;
+    `dataView.legendEntries`). ＋ new stays its own state (the node chip and
+    its click-through use it).
+  - One word in the cell pane: Exclude here… / Exclude V only… (Include
+    again… / Include V again… on ⊘). "Mark missing / present as expected"
+    are API presets (Python, MATLAB), not GUI buttons.
+  - One preview: the cell pane's Preview… opens `DataPreviewPopup` at that
+    location (`DataPreviewTarget.location`), mounted inside the data view so
+    it stacks on top; the variable menu's "Preview data…" is gone.
+  - Function menu: ▶ Run until here and 🧪 Try on… (saves nothing)
+    together, a divider, then the read-only entries.
+  - Header: 🔄 Refresh Code, Report, ▦ Data, Schema keys, ⋯ (Restart
+    Python, Paths, Clear data, Report bug: `HeaderMoreMenu.tsx`, which owns
+    those dialogs' open state).
 - Activity Bar: `extension/src/pipelineTree.ts`, fed by every root-canvas
   `get_pipeline` reply the host forwards (`dagPanel.ts`), so no endpoint.
 

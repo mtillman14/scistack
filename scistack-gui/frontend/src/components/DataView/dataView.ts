@@ -54,9 +54,33 @@ export interface DataViewReply {
   schema_keys: string[]
   glyphs: Record<CellState, string>
   labels: Record<CellState, string>
+  /** Every state in scidb's order (`status.STATES`). Absent from an older backend. */
+  states?: CellState[]
+  /** One line per state (`status.MEANINGS`): the legend's tooltips. */
+  meanings?: Record<CellState, string>
   any_data: string[]
   columns: Column[]
   dropoff: DropOff[]
+}
+
+export interface LegendEntry {
+  state: CellState
+  glyph: string
+  label: string
+  meaning: string
+}
+
+/** The data view's legend, which is also its filter row: every state the
+ *  reply names, in its order. The words are the backend's; an older backend
+ *  without `states` falls back to the order of `glyphs`. */
+export function legendEntries(reply: Pick<DataViewReply, 'glyphs' | 'labels' | 'states' | 'meanings'>): LegendEntry[] {
+  const order = reply.states ?? (Object.keys(reply.glyphs) as CellState[])
+  return order.map(state => ({
+    state,
+    glyph: reply.glyphs[state] ?? '',
+    label: reply.labels[state] ?? state,
+    meaning: reply.meanings?.[state] ?? '',
+  }))
 }
 
 export type Step = [string, string]

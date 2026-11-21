@@ -184,7 +184,7 @@ def ensure_project_files(
             message = (
                 f"This project already declares its entities in {configured}; "
                 f"keeping it rather than switching to the requested "
-                f"{entities_file}. Change it in 📁 Paths if that is really "
+                f"{entities_file}. Change it in ⋯ → 📁 Paths if that is really "
                 f"what you want."
             )
             logger.warning("[project_init] %s", message)
@@ -286,7 +286,7 @@ def ensure_language_stubs(config) -> InitResult:
             message = (
                 f"{path} was created but is not on this project's discovery "
                 f"path, so declarations added to it will not be picked up. Add "
-                f"its folder in 📁 Paths."
+                f"its folder in ⋯ → 📁 Paths."
             )
             logger.warning("[project_init] %s", message)
             result.warnings.append(message)

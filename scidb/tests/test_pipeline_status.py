@@ -284,7 +284,7 @@ class TestLocationStates:
         assert [r.kind for r in v.reasons] == [st.MISSING_INPUT, st.INPUTS_CHANGED]
         assert v.new == 1 and v.excluded == 1
         assert v.chip() == "↓ 1 missing input"
-        assert v.new_chip() == "＋1 new"
+        assert v.new_chip() == "＋1 new · run to include"
         assert "＋1 new to process" in v.status_line()
 
 

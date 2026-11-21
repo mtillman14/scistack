@@ -1,8 +1,10 @@
 /**
  * DataPreviewPopup: what a variable or an input port's column selection holds.
  *
- * Opened from a Variable node's right-click and from the preview button on an
- * input in the function settings panel. Everything shown comes from
+ * Opened from a data view cell's Preview… (narrowed to that location), the
+ * preview button on an input in the function settings panel, and the run
+ * report. (A Variable node's right-click "Preview data…" was folded into the
+ * data view, 2026-11-21.) Everything shown comes from
  * `scidb.inspect.preview` through `get_data_preview`, which reads with the
  * loader `for_each` uses, so this is what a function receives.
  */
@@ -25,7 +27,7 @@ export default function DataPreviewPopup({
   target: DataPreviewTarget
   onClose: () => void
 }) {
-  const [location, setLocation] = useState<Record<string, string>>({})
+  const [location, setLocation] = useState<Record<string, string>>(target.location ?? {})
   const [result, setResult] = useState<DataPreviewResult | null>(null)
   const columnsKey = JSON.stringify(target.columns ?? null)
   const locationKey = JSON.stringify(location)

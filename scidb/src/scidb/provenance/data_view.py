@@ -81,6 +81,9 @@ def data_view(
         "schema_keys": schema_keys,
         "glyphs": dict(st.GLYPHS),
         "labels": dict(st.LABELS),
+        # The legend: every state in THE order, with its one-line meaning.
+        "states": list(st.STATES),
+        "meanings": dict(st.MEANINGS),
         "any_data": any_data,
         "columns": columns,
         "dropoff": dropoff,
