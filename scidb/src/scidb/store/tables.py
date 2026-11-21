@@ -644,6 +644,31 @@ VARIANT_TOMBSTONE = _core(
     bundle=BUNDLE_HISTORY, kept="the audit trail of every real delete, this clear included",
 )
 
+# The undo trash of a variant delete (GitHub #26): one row per tombstone whose
+# deleted rows were saved as Parquet files beside the database
+# (``scidb.store.trash``), so the delete can be undone. Its own table rather
+# than tombstone columns: an existing database gains it on open, with no
+# migration (beta rule). No bundle carries it (the files stay on this machine),
+# and a clear empties it: restoring a delete onto a cleared database would
+# bring back records whose locations are gone.
+TRASH = _core(
+    "_trash",
+    """
+    CREATE TABLE IF NOT EXISTS _trash (
+        tombstone_id  VARCHAR PRIMARY KEY,
+        state         VARCHAR NOT NULL,
+        trash_dir     VARCHAR NOT NULL,
+        files_json    VARCHAR NOT NULL,
+        ids_json      VARCHAR NOT NULL,
+        pins_json     VARCHAR NOT NULL,
+        fingerprint   VARCHAR NOT NULL,
+        bytes         BIGINT NOT NULL,
+        updated_at    VARCHAR NOT NULL
+    )
+    """,
+    cleared=True,
+)
+
 # Schema key types are dataset INTENT (user decision 2026-11-01): the type
 # defines stored identity ("1" vs "001"), so an imported project needs them
 # live even when the history is only kept as files. They ride in the history

@@ -145,6 +145,8 @@
     "src/components/Sidebar/libraryReport.ts",
     "src/components/Sidebar/libraryReport.test.ts",
     "src/components/Sidebar/palette.ts",
+    "src/components/Sidebar/deletePlan.ts",
+    "src/components/Sidebar/deletePlan.test.ts",
     "src/components/Sidebar/palette.test.ts",
     "src/components/Sidebar/sidebarBadges.ts",
     "src/components/Sidebar/sidebarBadges.test.ts",

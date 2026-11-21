@@ -166,7 +166,8 @@ export interface ApiParams {
   declare_library_requirements: DeclareRequirements
   deep_copy_path_input: NodeRef
   delete_edge: EdgeDelete
-  delete_entity: EntityRef
+  delete_entity: EntityDeleteRequest
+  delete_entity_plan: EntityDeleteRequest
   delete_glue: GlueName
   delete_hypothesis: PipelineRef
   delete_layout: NodeRef
@@ -256,7 +257,6 @@ export interface ApiParams {
   plot_saved_save: SavedSaveRequest
   plot_variant_graph: VariantGraphRequest
   plot_variant_sets_save: VariantSetsRequest
-  preview_delete_entity: EntityRef
   promote_step_value: StepValuePromote
   put_edge: EdgeCreate
   put_layout: PositionUpdate
@@ -470,12 +470,19 @@ export interface EdgeDelete {
   target_handle?: string | null
 }
 /**
+ * The sidebar's Delete (``entity_delete_service``). ``name`` is a
+ * pipeline id for a submodule. ``values``: a Parameter's chosen values;
+ * None = the whole entity.
+ *
  * This interface was referenced by `ApiParams`'s JSON-Schema
- * via the `definition` "EntityRef".
+ * via the `definition` "EntityDeleteRequest".
  */
-export interface EntityRef {
-  kind: 'parameter' | 'path_input' | 'variable'
+export interface EntityDeleteRequest {
+  fingerprint?: string | null
+  kind: 'variable' | 'parameter' | 'path_input' | 'function' | 'submodule'
   name: string
+  reason?: string | null
+  values?: unknown[] | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -649,6 +656,14 @@ export interface DataPreviewQuery {
  */
 export interface FunctionName {
   fn_name: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "EntityRef".
+ */
+export interface EntityRef {
+  kind: 'parameter' | 'path_input' | 'variable'
+  name: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

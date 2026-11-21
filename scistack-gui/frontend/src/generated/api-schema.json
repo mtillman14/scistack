@@ -1630,6 +1630,64 @@
       "title": "EdgeInScope",
       "type": "object"
     },
+    "EntityDeleteRequest": {
+      "description": "The sidebar's Delete (``entity_delete_service``). ``name`` is a\npipeline id for a submodule. ``values``: a Parameter's chosen values;\nNone = the whole entity.",
+      "properties": {
+        "fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "enum": [
+            "variable",
+            "parameter",
+            "path_input",
+            "function",
+            "submodule"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "EntityDeleteRequest",
+      "type": "object"
+    },
     "EntityRef": {
       "properties": {
         "kind": {
@@ -6697,7 +6755,10 @@
       "$ref": "#/$defs/EdgeDelete"
     },
     "delete_entity": {
-      "$ref": "#/$defs/EntityRef"
+      "$ref": "#/$defs/EntityDeleteRequest"
+    },
+    "delete_entity_plan": {
+      "$ref": "#/$defs/EntityDeleteRequest"
     },
     "delete_glue": {
       "$ref": "#/$defs/GlueName"
@@ -6966,9 +7027,6 @@
     "plot_variant_sets_save": {
       "$ref": "#/$defs/VariantSetsRequest"
     },
-    "preview_delete_entity": {
-      "$ref": "#/$defs/EntityRef"
-    },
     "promote_step_value": {
       "$ref": "#/$defs/StepValuePromote"
     },
@@ -7217,6 +7275,7 @@
     "deep_copy_path_input",
     "delete_edge",
     "delete_entity",
+    "delete_entity_plan",
     "delete_glue",
     "delete_hypothesis",
     "delete_layout",
@@ -7306,7 +7365,6 @@
     "plot_saved_save",
     "plot_variant_graph",
     "plot_variant_sets_save",
-    "preview_delete_entity",
     "promote_step_value",
     "put_edge",
     "put_layout",

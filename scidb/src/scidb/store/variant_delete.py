@@ -17,6 +17,15 @@ Two steps, always:
    exactly that, writes a tombstone and releases any pin left pointing at
    nothing. Any failure rolls the whole thing back.
 
+**Undo (GitHub #26, 2026-11-19).** Every deleted row is first saved to the
+trash (``scidb.store.trash``: Parquet files beside the database), inside the
+same transaction. :func:`restore_deleted` puts them back and re-activates the
+released pins; :func:`delete_again` redoes it. Both are all or nothing and
+refuse (``trash.TrashConflict``) rather than corrupt: a restore when a re-run
+wrote the same records, a redo when the plan is no longer the same. The trash
+lasts until ``trash.purge_trash``. See
+``docs/claude/deleting-entries-with-data.md``.
+
 What is removed, for the planned records:
 
 * ``<Type>_data`` rows, ``_record_save`` and ``_record``;
@@ -43,6 +52,20 @@ Target kinds (a list of dicts, combined as a union):
   belongs to Parameter N by ``parameter.parameter_node_name`` (its recorded
   ``declared_name``, else its argument name). This is the canvas Parameter
   node's identity, so "remove 10 from this Parameter" needs no canvas wiring.
+
+Whole-entity targets (the sidebar's Delete, GitHub #26):
+
+* ``{"variable": V}``: every record of V, ``exclude_variant``-hidden ones too;
+* ``{"parameter": N}`` (no ``value``): every value of Parameter N;
+  ``{"function": F, "param": P}`` (no ``value``) likewise;
+* ``{"function": F}``: every output of every invocation of F;
+* ``{"path_input": N}``: everything computed from PathInput N's
+  ``__pathinput__`` record(s). It is keyed by name, so unlike a constant it
+  is never shared, and the downstream walk is exact.
+
+Known gap: a Parameter target matches only plain constant edges; a value that
+reaches its function through constant-fed glue binds a ``__constant_glue__``
+record and is not seen.
 
 Card and selection targets use whole cards, not ``records_for_variant``,
 because a ``latest`` load returns one record per location. Deleting only that
@@ -105,6 +128,10 @@ class Tombstone:
     targets: list[dict]
     by_variable: dict[str, int]
     record_ids: list[str]
+    #: ``scidb.store.trash`` state: ``"trashed"`` (undoable), ``"restored"``,
+    #: ``"purged"``, or None (a hard delete: a clear, a database with no file,
+    #: or one made before the trash existed).
+    trash_state: str | None = None
 
 
 @dataclass
@@ -114,6 +141,20 @@ class DeleteResult:
     deleted_rows: dict[str, int]
     released_pins: list[str]
     plan: DeletePlan
+    #: True when the rows were saved to the trash, so ``restore_deleted`` can
+    #: undo this delete.
+    undoable: bool = False
+
+
+@dataclass
+class RestoreResult:
+    tombstone_id: str
+    #: ``{table: rows put back}``.
+    restored_rows: dict[str, int]
+    #: Variables whose released pin was made active again.
+    repinned: list[str]
+    #: Pins that could not be restored, and why. The data is restored anyway.
+    warnings: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +163,20 @@ class DeleteResult:
 
 
 def write_tombstone(
-    duck, reason: str, targets: list[dict], by_variable: dict, record_ids: list[str]
+    duck,
+    reason: str,
+    targets: list[dict],
+    by_variable: dict,
+    record_ids: list[str],
+    *,
+    tombstone_id: str | None = None,
 ) -> Tombstone:
     """Write one tombstone row: the audit trail of every real delete (this
     module's variant delete and ``scidb.store.clear_data``'s clear). The caller
-    holds the transaction."""
+    holds the transaction. ``tombstone_id`` is passed when the trash folder
+    was named before the tombstone was written."""
     tomb = Tombstone(
-        tombstone_id=uuid.uuid4().hex[:16],
+        tombstone_id=tombstone_id or uuid.uuid4().hex[:16],
         deleted_at=datetime.now().isoformat(),
         reason=str(reason),
         targets=list(targets),
@@ -161,6 +209,9 @@ def tombstones(db: "DatabaseManager", variable: str | None = None) -> list[Tombs
         "SELECT tombstone_id, deleted_at, reason, targets_json, "
         f"counts_json, record_ids_json FROM {TOMBSTONE_TABLE} ORDER BY deleted_at"
     )
+    from scidb.store import trash
+
+    trash_states = trash.states(db)
     out = []
     for tid, at, reason, targets, counts, rids in rows:
         t = Tombstone(
@@ -170,6 +221,7 @@ def tombstones(db: "DatabaseManager", variable: str | None = None) -> list[Tombs
             targets=json.loads(targets),
             by_variable=json.loads(counts),
             record_ids=json.loads(rids),
+            trash_state=trash_states.get(tid),
         )
         if variable is None or variable in t.by_variable:
             out.append(t)
@@ -187,11 +239,62 @@ def _same_value(a, b) -> bool:
     return variant_signature({"v": a}) == variant_signature({"v": b})
 
 
+def _parameter_edges(duck, name: str) -> list[tuple[str, str]]:
+    """``[(invocation_id, value_repr)]``: every constant edge that belongs to
+    Parameter ``name``. Which Parameter an edge belongs to is
+    ``parameter.parameter_node_name``'s rule (the recorded declared name, else
+    the argument it filled), the same identity the canvas keys Parameter nodes
+    by. SQL narrows the candidates; the owner decides."""
+    from scidb.model.parameter import parameter_node_name
+    from scidb.provenance.graph import CONSTANT_TYPE
+
+    candidates = duck.fetchall(
+        "SELECT ii.invocation_id, c.value_repr, ii.param_name, "
+        "ii.declared_name FROM _invocation_input ii "
+        "JOIN _constant c ON c.record_id = ii.input_record_id "
+        "JOIN _record r ON r.record_id = ii.input_record_id "
+        "WHERE r.type = ? AND (ii.declared_name = ? OR "
+        "(ii.declared_name IS NULL AND ii.param_name = ?))",
+        [CONSTANT_TYPE, name, name],
+    )
+    return [
+        (inv, value_repr)
+        for inv, value_repr, param, declared in candidates
+        if parameter_node_name(param, {param: declared} if declared else None) == name
+    ]
+
+
+def parameter_values(db: "DatabaseManager", name: str) -> list:
+    """The distinct values Parameter ``name`` has run with (what a
+    ``{"parameter": name, "value": v}`` target can delete), in first-seen
+    order. For the sidebar Delete's value checkboxes."""
+    from scidb.provenance import query as pq
+
+    out: list = []
+    for _inv, value_repr in _parameter_edges(db._duck, name):
+        value = pq._safe_literal(value_repr)
+        if not any(_same_value(value, seen) for seen in out):
+            out.append(value)
+    return out
+
+
+def _outputs_of(duck, invs) -> set:
+    from scidb.provenance.query import _chunked_in
+
+    return {
+        out_rid
+        for (out_rid,) in _chunked_in(
+            duck,
+            "SELECT output_record_id FROM _invocation_output WHERE invocation_id IN ({ph})",
+            sorted(invs),
+        )
+    }
+
+
 def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
     """Resolve the targets to record ids. Returns ``(rids, warnings)``."""
     from scidb.provenance import query as pq
     from scidb.inspect.variant_cards import build_variant_cards, selection_matches
-    from scidb.provenance.graph import CONSTANT_TYPE
     from scidb.model.variant import normalize_selection
 
     duck = db._duck
@@ -247,6 +350,55 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
                 )
             for card in hit:
                 seeds.update(card.record_ids)
+        elif "function" in target and "param" not in target:
+            # A whole function (the sidebar's Delete): every output it made.
+            invs = [
+                inv
+                for (inv,) in duck.fetchall(
+                    "SELECT invocation_id FROM _invocation WHERE function_name = ?",
+                    [target["function"]],
+                )
+            ]
+            if not invs:
+                warnings.append(f"function {target['function']}: it never ran")
+                continue
+            seeds.update(_outputs_of(duck, invs))
+        elif "path_input" in target:
+            # A whole PathInput. Its `__pathinput__` record is keyed by NAME
+            # (`provenance.save._pathinput_bindings`), so unlike a constant it
+            # is never shared: everything computed from it, glue hops
+            # included, is exactly what it fed. The spec record itself stays,
+            # like every `__constant__` / `__pathinput__` record.
+            from scidb.provenance.graph import PATHINPUT_TYPE, parse_path_input_spec
+
+            name = target["path_input"]
+            heads = {
+                rid
+                for rid, value_repr in duck.fetchall(
+                    "SELECT r.record_id, c.value_repr FROM _record r "
+                    "JOIN _constant c ON c.record_id = r.record_id WHERE r.type = ?",
+                    [PATHINPUT_TYPE],
+                )
+                if (parse_path_input_spec(value_repr) or {}).get("name") == name
+            }
+            fed = _downstream(duck, heads) if heads else set()
+            if not fed:
+                warnings.append(f"PathInput {name}: nothing was computed from it")
+                continue
+            seeds.update(fed)
+        elif "variable" in target:
+            # A whole variable: every record of the type, records hidden with
+            # `exclude_variant` included (they are on no card).
+            rids = [
+                rid
+                for (rid,) in duck.fetchall(
+                    "SELECT record_id FROM _record WHERE type = ?", [target["variable"]]
+                )
+            ]
+            if not rids:
+                warnings.append(f"{target['variable']}: no records")
+                continue
+            seeds.update(rids)
         elif "function" in target or "parameter" in target:
             if "function" in target:
                 rows = duck.fetchall(
@@ -258,47 +410,23 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
                 )
                 label = f"{target['function']}.{target['param']}"
             else:
-                # Which Parameter an edge belongs to is
-                # `parameter.parameter_node_name`'s rule (the recorded declared
-                # name, else the argument it filled), the same identity the
-                # canvas keys Parameter nodes by. SQL narrows the candidates;
-                # the owner decides.
-                from scidb.model.parameter import parameter_node_name
-
                 name = target["parameter"]
-                candidates = duck.fetchall(
-                    "SELECT ii.invocation_id, c.value_repr, ii.param_name, "
-                    "ii.declared_name FROM _invocation_input ii "
-                    "JOIN _constant c ON c.record_id = ii.input_record_id "
-                    "JOIN _record r ON r.record_id = ii.input_record_id "
-                    "WHERE r.type = ? AND (ii.declared_name = ? OR "
-                    "(ii.declared_name IS NULL AND ii.param_name = ?))",
-                    [CONSTANT_TYPE, name, name],
-                )
-                rows = [
-                    (inv, value_repr)
-                    for inv, value_repr, param, declared in candidates
-                    if parameter_node_name(param, {param: declared} if declared else None)
-                    == name
-                ]
+                rows = _parameter_edges(duck, name)
                 label = f"Parameter {name}"
+            # No "value": every value (a whole Parameter).
+            every = "value" not in target
             invs = sorted(
                 {
                     inv
                     for inv, value_repr in rows
-                    if _same_value(pq._safe_literal(value_repr), target["value"])
+                    if every or _same_value(pq._safe_literal(value_repr), target["value"])
                 }
             )
             if not invs:
-                warnings.append(f"{label}={target['value']!r}: no invocation used it")
+                what = label if every else f"{label}={target['value']!r}"
+                warnings.append(f"{what}: no invocation used it")
                 continue
-            for _inv, _num, out_rid in pq._chunked_in(
-                duck,
-                "SELECT invocation_id, output_num, output_record_id "
-                "FROM _invocation_output WHERE invocation_id IN ({ph})",
-                invs,
-            ):
-                seeds.add(out_rid)
+            seeds.update(_outputs_of(duck, invs))
         else:
             raise ValueError(f"delete: unknown target shape {target!r}")
     return seeds, warnings
@@ -490,6 +618,51 @@ def _delete_in(duck, table: str, column: str, ids) -> int:
     return int(n)
 
 
+def _remove_rows(duck, plan: DeletePlan, writer) -> dict:
+    """Delete the plan's rows, table by table, each saved to the trash first
+    (``writer.save``; a no-op writer makes it a hard delete). Returns
+    ``{table: rows deleted}``. The caller holds the transaction.
+
+    The order matters for the trash: each step's rows are saved AFTER the
+    earlier steps deleted theirs, so every row lands in exactly one file."""
+    from scidb.provenance.graph import GLUE_RECORD_TYPES
+    from scidb.provenance.query import _chunked_in
+
+    def move(table, column, ids):
+        writer.save(table, column, ids)
+        return _delete_in(duck, table, column, ids)
+
+    types = {
+        t
+        for (t,) in _chunked_in(
+            duck,
+            "SELECT DISTINCT type FROM _record WHERE record_id IN ({ph})",
+            plan.record_ids,
+        )
+    }
+
+    deleted: dict = {}
+    deleted["_invocation_output"] = move("_invocation_output", "output_record_id", plan.record_ids)
+    deleted["_invocation_input"] = move(
+        "_invocation_input", "input_record_id", plan.record_ids
+    ) + move("_invocation_input", "invocation_id", plan.invocation_ids)
+    deleted["_invocation_output"] += move("_invocation_output", "invocation_id", plan.invocation_ids)
+    deleted["_run_invocation"] = move("_run_invocation", "invocation_id", plan.invocation_ids)
+    deleted["_invocation_pooled"] = move("_invocation_pooled", "invocation_id", plan.invocation_ids)
+    deleted["_invocation"] = move("_invocation", "invocation_id", plan.invocation_ids)
+    deleted["_run_outputs"] = move("_run_outputs", "run_id", plan.run_ids)
+    deleted["_run"] = move("_run", "run_id", plan.run_ids)
+    for t in sorted(types):
+        if t in GLUE_RECORD_TYPES:
+            continue
+        table = f"{t}_data"
+        if duck.table_exists(table):
+            deleted[table] = move(table, "record_id", plan.record_ids)
+    deleted["_record_save"] = move("_record_save", "record_id", plan.record_ids)
+    deleted["_record"] = move("_record", "record_id", plan.record_ids)
+    return deleted
+
+
 def delete_variant(
     db: "DatabaseManager",
     targets: list[dict],
@@ -497,84 +670,284 @@ def delete_variant(
     *,
     expect_fingerprint: str | None = None,
 ) -> DeleteResult:
-    """Delete what :func:`delete_plan` names, in one transaction. Cannot be
-    undone; leaves a tombstone."""
-    from scidb.provenance.graph import GLUE_RECORD_TYPES
-    from scidb.store.variant_pins import release_pin
-
+    """Delete what :func:`delete_plan` names, in one transaction; leaves a
+    tombstone. The rows are saved to the trash first (``scidb.store.trash``),
+    so :func:`restore_deleted` can undo it until the trash is purged. A
+    database with no file has no trash, and its delete cannot be undone."""
     if not reason or not str(reason).strip():
         raise ValueError("delete_variant needs a reason; it goes on the tombstone")
+    return _execute(db, targets, str(reason), expect_fingerprint=expect_fingerprint)
+
+
+def _execute(
+    db: "DatabaseManager",
+    targets: list[dict],
+    reason: str,
+    *,
+    expect_fingerprint: str | None,
+    redo_of: str | None = None,
+) -> DeleteResult:
+    """The one delete path: a first delete, or (``redo_of``) the redo of a
+    restored one, which reuses its tombstone instead of writing another."""
+    from scidb.store import trash
+    from scidb.store.variant_pins import forget_type_graph, release_pin
+
     duck = db._duck
     t0 = time.perf_counter()
+    tombstone_id = redo_of or uuid.uuid4().hex[:16]
+    root = trash.trash_root(db)
+    writer = trash.TrashWriter(duck, root / tombstone_id if root is not None else None)
+    if root is None:
+        Log.warn(
+            "delete_variant: this database has no file, so it has no trash; "
+            "this delete cannot be undone"
+        )
+    label = "delete_again" if redo_of else "delete_variant"
     try:
-        with duck.transaction("delete_variant"):
+        with duck.transaction(label):
             plan = delete_plan(db, targets)
             if expect_fingerprint is not None and plan.fingerprint != expect_fingerprint:
                 raise ValueError(
-                    f"delete_variant: the database changed since the plan was shown "
+                    f"{label}: the database changed since the plan was shown "
                     f"(fingerprint {expect_fingerprint} → {plan.fingerprint}); "
                     f"nothing was deleted. Re-plan and confirm again."
                 )
             if not plan.record_ids:
-                raise ValueError("delete_variant: the targets match no records")
+                raise ValueError(f"{label}: the targets match no records")
 
-            from scidb.provenance.query import _chunked_in
+            deleted = _remove_rows(duck, plan, writer)
 
-            types = {
-                t
-                for (t,) in _chunked_in(
-                    duck,
-                    "SELECT DISTINCT type FROM _record WHERE record_id IN ({ph})",
-                    plan.record_ids,
+            if redo_of is None:
+                tomb = write_tombstone(
+                    duck, reason, targets, plan.by_variable, plan.record_ids,
+                    tombstone_id=tombstone_id,
                 )
-            }
-
-            deleted: dict = {}
-            deleted["_invocation_output"] = _delete_in(
-                duck, "_invocation_output", "output_record_id", plan.record_ids
-            )
-            deleted["_invocation_input"] = _delete_in(
-                duck, "_invocation_input", "input_record_id", plan.record_ids
-            ) + _delete_in(duck, "_invocation_input", "invocation_id", plan.invocation_ids)
-            deleted["_invocation_output"] += _delete_in(
-                duck, "_invocation_output", "invocation_id", plan.invocation_ids
-            )
-            deleted["_run_invocation"] = _delete_in(
-                duck, "_run_invocation", "invocation_id", plan.invocation_ids
-            )
-            deleted["_invocation_pooled"] = _delete_in(
-                duck, "_invocation_pooled", "invocation_id", plan.invocation_ids
-            )
-            deleted["_invocation"] = _delete_in(
-                duck, "_invocation", "invocation_id", plan.invocation_ids
-            )
-            deleted["_run_outputs"] = _delete_in(duck, "_run_outputs", "run_id", plan.run_ids)
-            deleted["_run"] = _delete_in(duck, "_run", "run_id", plan.run_ids)
-            for t in sorted(types):
-                if t in GLUE_RECORD_TYPES:
-                    continue
-                table = f"{t}_data"
-                if duck.table_exists(table):
-                    deleted[table] = _delete_in(duck, table, "record_id", plan.record_ids)
-            deleted["_record_save"] = _delete_in(
-                duck, "_record_save", "record_id", plan.record_ids
-            )
-            deleted["_record"] = _delete_in(duck, "_record", "record_id", plan.record_ids)
-
-            tomb = write_tombstone(duck, reason, targets, plan.by_variable, plan.record_ids)
-            released = []
+            else:
+                tomb = next(t for t in tombstones(db) if t.tombstone_id == redo_of)
+            released: list[str] = []
+            released_pins: list[dict] = []
             for variable in plan.pins_to_release:
-                if release_pin(db, variable, f"variant deleted (tombstone {tomb.tombstone_id})"):
+                pin = release_pin(db, variable, f"variant deleted (tombstone {tomb.tombstone_id})")
+                if pin:
                     released.append(variable)
+                    released_pins.append({"variable": variable, "selection": pin.selection})
+            if writer.directory is not None:
+                trash.write_state(
+                    duck,
+                    tombstone_id,
+                    writer,
+                    record_ids=plan.record_ids,
+                    invocation_ids=plan.invocation_ids,
+                    run_ids=plan.run_ids,
+                    released_pins=released_pins,
+                    fingerprint=plan.fingerprint,
+                )
+                tomb.trash_state = trash.STATE_TRASHED
     except Exception:
-        Log.warn("delete_variant: failed; rolled back, nothing was deleted")
+        writer.discard()
+        Log.warn(f"{label}: failed; rolled back, nothing was deleted")
         raise
-    from scidb.store.variant_pins import forget_type_graph
-
     forget_type_graph(duck)
     Log.info(
-        f"delete_variant: tombstone {tomb.tombstone_id}: deleted rows={deleted}; "
-        f"released pins={released}; reason={reason!r} "
+        f"{label}: tombstone {tomb.tombstone_id}: deleted rows={deleted}; "
+        f"released pins={released}; trash={writer.directory} "
+        f"({len(writer.files)} file(s), {writer.bytes} bytes); reason={reason!r} "
         f"({(time.perf_counter() - t0) * 1000:.1f} ms)"
     )
-    return DeleteResult(tombstone=tomb, deleted_rows=deleted, released_pins=released, plan=plan)
+    return DeleteResult(
+        tombstone=tomb,
+        deleted_rows=deleted,
+        released_pins=released,
+        plan=plan,
+        undoable=writer.directory is not None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Undo / redo
+# ---------------------------------------------------------------------------
+
+
+def _live(duck, table: str, column: str, ids) -> set:
+    from scidb.provenance.query import _chunked_in
+
+    ids = sorted({str(i) for i in ids if i is not None})
+    if not ids:
+        return set()
+    return {
+        v
+        for (v,) in _chunked_in(
+            duck, f'SELECT DISTINCT {column} FROM "{table}" WHERE {column} IN ({{ph}})', ids
+        )
+    }
+
+
+def _restore_conflicts(db, e) -> list[str]:
+    """Why restoring trash entry ``e`` would corrupt the live database; empty
+    when it is safe. Reads only."""
+    from scidb.store import trash
+
+    duck = db._duck
+    missing = trash.missing_files(e)
+    if missing:
+        return [f"{len(missing)} trash file(s) are missing, e.g. {missing[:3]}"]
+    conflicts: list[str] = []
+    for table in sorted({f["table"] for f in e.files}):
+        if not duck.table_exists(table):
+            conflicts.append(f"table {table} no longer exists")
+    for table, column, ids, what in (
+        ("_record", "record_id", e.record_ids, "record"),
+        ("_invocation", "invocation_id", e.invocation_ids, "invocation"),
+        ("_run", "run_id", e.run_ids, "run"),
+    ):
+        back = _live(duck, table, column, ids)
+        if back:
+            conflicts.append(
+                f"{len(back)} {what}(s) exist again (re-run since the delete?), "
+                f"e.g. {sorted(back)[:3]}"
+            )
+    # Edges must point at something: a restored row or a live one.
+    restored_invs = set(e.invocation_ids)
+    for table in ("_invocation_input", "_invocation_output", "_run_invocation", "_invocation_pooled"):
+        wanted = trash.distinct_in_files(duck, e, table, "invocation_id") - restored_invs
+        gone = wanted - _live(duck, "_invocation", "invocation_id", wanted)
+        if gone:
+            conflicts.append(
+                f"{len(gone)} {table} row(s) belong to invocation(s) deleted since, "
+                f"e.g. {sorted(gone)[:3]}"
+            )
+    wanted = trash.distinct_in_files(duck, e, "_invocation_input", "input_record_id") - set(e.record_ids)
+    gone = wanted - _live(duck, "_record", "record_id", wanted)
+    if gone:
+        conflicts.append(
+            f"{len(gone)} input record(s) of restored invocations were deleted since, "
+            f"e.g. {sorted(gone)[:3]}"
+        )
+    restored_runs = set(e.run_ids)
+    wanted = (
+        trash.distinct_in_files(duck, e, "_run_invocation", "run_id")
+        | trash.distinct_in_files(duck, e, "_run_outputs", "run_id")
+    ) - restored_runs
+    gone = wanted - _live(duck, "_run", "run_id", wanted)
+    if gone:
+        conflicts.append(f"{len(gone)} run(s) were deleted since, e.g. {sorted(gone)[:3]}")
+    return conflicts
+
+
+def restore_conflicts(db: "DatabaseManager", tombstone_id: str) -> list[str]:
+    """Why :func:`restore_deleted` would refuse; empty when it would succeed.
+    Read-only, for a caller that must check every precondition before writing
+    anything (the GUI's undo)."""
+    from scidb.store import trash
+
+    e = trash.entry(db, tombstone_id)
+    if e is None:
+        return [f"delete {tombstone_id} has no trash (a hard delete, or the database was cleared)"]
+    if e.state != trash.STATE_TRASHED:
+        return [f"delete {tombstone_id}: its trash is {e.state}"]
+    return _restore_conflicts(db, e)
+
+
+def redo_conflicts(db: "DatabaseManager", tombstone_id: str) -> list[str]:
+    """Why :func:`delete_again` would refuse; empty when it would succeed.
+    Read-only."""
+    from scidb.store import trash
+
+    e = trash.entry(db, tombstone_id)
+    if e is None or e.state != trash.STATE_RESTORED:
+        return [f"delete {tombstone_id}: its trash is {e.state if e else 'absent'}, not restored"]
+    try:
+        plan = delete_plan(db, [{"record_ids": e.record_ids}])
+    except ValueError as exc:
+        return [f"delete {tombstone_id}: {exc}"]
+    if plan.fingerprint != e.fingerprint:
+        return [
+            f"delete {tombstone_id}: the data changed since it was restored "
+            f"(something was computed from it); redoing would delete more than was planned"
+        ]
+    return []
+
+
+def restore_deleted(db: "DatabaseManager", tombstone_id: str) -> RestoreResult:
+    """Undo a delete: put every trashed row back, re-activate the pins it
+    released, and mark it ``restored``. All or nothing: any conflict (a re-run
+    wrote the same records, something it pointed at was deleted since, a file
+    is missing) raises ``trash.TrashConflict`` and writes nothing."""
+    from scidb.store import trash
+    from scidb.store.variant_pins import active_pins, forget_type_graph, pin_variant
+
+    duck = db._duck
+    t0 = time.perf_counter()
+    e = trash.entry(db, tombstone_id)
+    if e is None:
+        raise trash.TrashConflict(
+            f"restore {tombstone_id}: not undoable",
+            ["no trash for this delete (a hard delete, a cleared database, or an unknown id)"],
+        )
+    if e.state != trash.STATE_TRASHED:
+        raise trash.TrashConflict(
+            f"restore {tombstone_id}: not undoable", [f"its trash is {e.state}"]
+        )
+    with duck.transaction("restore_deleted"):
+        conflicts = _restore_conflicts(db, e)
+        if conflicts:
+            Log.warn(f"restore_deleted {tombstone_id}: refused: {conflicts}")
+            raise trash.TrashConflict(
+                f"restore {tombstone_id}: refused, nothing was restored", conflicts
+            )
+        restored = trash.insert_files(duck, e)
+        forget_type_graph(duck)
+        repinned: list[str] = []
+        warnings: list[str] = []
+        active = active_pins(db)
+        for p in e.released_pins:
+            variable = p["variable"]
+            if variable in active:
+                warnings.append(f"{variable}: another pin is active now; the released pin stays released")
+                continue
+            try:
+                pin_variant(
+                    db, variable, p["selection"], f"restored: undo of delete (tombstone {tombstone_id})"
+                )
+                repinned.append(variable)
+            except ValueError as exc:
+                warnings.append(f"{variable}: pin not restored: {exc}")
+        trash.set_state(duck, tombstone_id, trash.STATE_RESTORED)
+    trash.remove_dir(e)
+    Log.info(
+        f"restore_deleted {tombstone_id}: restored rows={restored}; repinned={repinned}; "
+        f"warnings={warnings} ({(time.perf_counter() - t0) * 1000:.1f} ms)"
+    )
+    for w in warnings:
+        Log.warn(f"restore_deleted {tombstone_id}: {w}")
+    return RestoreResult(
+        tombstone_id=tombstone_id, restored_rows=restored, repinned=repinned, warnings=warnings
+    )
+
+
+def delete_again(db: "DatabaseManager", tombstone_id: str) -> DeleteResult:
+    """Redo a restored delete: the same rows, trashed again under the same
+    tombstone. Refused (``trash.TrashConflict``, nothing written) unless the
+    plan is exactly what it was, so a record computed from the restored data
+    since is never deleted by a redo the user did not see planned."""
+    from scidb.store import trash
+
+    e = trash.entry(db, tombstone_id)
+    if e is None or e.state != trash.STATE_RESTORED:
+        raise trash.TrashConflict(
+            f"redo {tombstone_id}: not redoable",
+            [f"its trash is {e.state if e else 'absent'}; only a restored delete can be redone"],
+        )
+    reason = next(t.reason for t in tombstones(db) if t.tombstone_id == tombstone_id)
+    try:
+        return _execute(
+            db,
+            [{"record_ids": e.record_ids}],
+            reason,
+            expect_fingerprint=e.fingerprint,
+            redo_of=tombstone_id,
+        )
+    except trash.TrashConflict:
+        raise
+    except ValueError as exc:
+        raise trash.TrashConflict(f"redo {tombstone_id}: refused, nothing was deleted", [str(exc)]) from exc

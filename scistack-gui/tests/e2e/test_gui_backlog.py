@@ -103,18 +103,18 @@ def test_palette_search_narrows_the_list(page, server):
 
 
 def test_palette_delete_then_undo_restores_the_file(page, server):
-    """Item 0zzzzzzzzzzzzzzzz steps 4-5: 🗑 on a declaration-only variable
-    removes exactly that entry from the entities file; Ctrl/Cmd+Z puts the
-    file back byte for byte."""
+    """Item 0zzzzzzzzzzzzzzzz steps 4-5, as the sidebar Delete (GitHub #26):
+    right-click → Delete… on a declaration-only variable removes exactly that
+    entry from the entities file; Ctrl/Cmd+Z puts the file back byte for byte."""
     entities = server["project"] / "scistack_entities.toml"
     before = entities.read_text()
     open_canvas(page, server)
     click(page, server, page.get_by_test_id("palette-tab-variable"), "palette Variables tab")
     page.get_by_test_id("palette-search").fill("SpareVar")
     row = page.locator('[data-testid="palette-item"][data-label="SpareVar"]').first
-    row.hover()
-    row.get_by_test_id("palette-delete").click()
-    page.get_by_test_id("delete-declaration-confirm").click()
+    row.click(button="right")
+    page.get_by_test_id("palette-context-delete").click()
+    page.get_by_test_id("delete-confirm").click()
     row.wait_for(state="detached")
     assert "SpareVar" not in entities.read_text(), entities.read_text()
 

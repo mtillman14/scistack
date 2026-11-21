@@ -290,6 +290,11 @@ def delete_variant(
 
     targets = _delete_targets(variable, card_id, remove_parameter_values, record_ids)
     result = Mutator(db).delete_variant(targets, reason, expect_fingerprint=fingerprint)
+    # One Ctrl Z restores the data too (scidb trash; GitHub #26).
+    from scistack_gui.stores import history
+
+    if result.extra.get("undoable"):
+        history.note_trash(result.extra["tombstone_id"])
 
     edits: list[dict] = []
     params = registry.get_parameters_registry()

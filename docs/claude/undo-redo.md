@@ -35,7 +35,7 @@ back; redo writes its *after* side.
 | Saved plots | DuckDB `_saved_plot` | `scistackplotdb.saved` | **not undoable** (decision 2026-10-03: saving is an explicit act, like saving a file) |
 | Plot Studio panel spec | React state in `PlotStudio.tsx` | the panel | local history entries (frontend only) |
 | Selection, viewport, open tab, clipboard, preview mode, figure index | frontend | — | not undoable (view state, not document) |
-| Data, runs, variant deletion | DuckDB data tables | scidb | **never undoable** (facts; real Delete is behind its own confirmation) |
+| Data, runs, variant deletion | DuckDB data tables | scidb | **undoable only through scidb's trash** (2026-11-19, GitHub #26): a delete inside an undoable handler calls `history.note_trash(tombstone_id)`; undo calls `variant_delete.restore_deleted`, redo `delete_again`, with scidb's own preconditions checked beside the row/file ones. A run is still never undoable. See `deleting-entries-with-data.md` |
 
 Two guard tests keep this table honest:
 `test_every_gui_table_is_tracked` (any `CREATE TABLE` in `scistack_gui`

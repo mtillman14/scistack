@@ -145,6 +145,7 @@ _CLEARED = {
     "_record", "_constant", "_invocation", "_function_source",
     "_invocation_input", "_invocation_output", "_invocation_pooled", "_run_invocation",
     "_function_rename", "_record_save", "_run_outcome", "_run_summary",
+    "_trash",  # undo trash of variant deletes; meaningless after a clear (2026-11-19)
 }
 
 

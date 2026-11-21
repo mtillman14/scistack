@@ -268,6 +268,11 @@ def clear_data(
         Log.warn("clear_data: failed; rolled back, nothing was deleted")
         raise
     forget_type_graph(duck)
+    # The clear emptied `_trash`, so no earlier delete can be undone now; its
+    # files would only take disk space.
+    from scidb.store.trash import sweep_orphans
+
+    sweep_orphans(db)
     forget = getattr(db, "_forget_schema_key_kinds", None)
     if forget is not None:
         forget()

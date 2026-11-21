@@ -16,6 +16,8 @@ Problems with the right sidebar (`scistack-gui/frontend/src/components/Sidebar/`
 
 ## Decisions (user, 2026-11-03)
 
+> **Superseded 2026-11-19 (GitHub #26, `.claude/plan-delete-entries-with-data.md`).** Delete now lives in the palette's right-click menu for EVERY kind (functions and submodules too), deletes the data and everything downstream, removes the canvas nodes, and is never refused because of a placement. The hover 🗑 is gone. The rules below are kept for the history of the decision.
+
 - **Delete is real, scoped to the declaration.** It removes the entry from `src/scistack_entities.toml` and keeps every DB record. This is a deliberate exception to "never delete, mark hidden", and it applies to entities-file declarations only.
 - **Delete applies to Variables, Parameters and Path Inputs only.** Functions get no delete.
 - **Delete is refused while the entity is placed on any canvas.** The refusal lists each placement as a clickable link that opens that pipeline tab.

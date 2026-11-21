@@ -38,7 +38,8 @@ import {
   sortByLastSaved,
   type FunctionSource,
 } from './palette'
-import DeleteEntityDialog, { type DeleteTarget } from './DeleteEntityDialog'
+import DeleteEntityDialog, { type DeleteResult, type DeleteTarget } from './DeleteEntityDialog'
+import type { DeleteKind } from './deletePlan'
 
 interface LoadError {
   source: string
@@ -86,12 +87,26 @@ type VariableSort = 'az' | 'last_saved'
 const FN_SORT_NOTE_KEY = 'ui:palette_sort:function'
 const VAR_SORT_NOTE_KEY = 'ui:palette_sort:variable'
 
-/** Palette kind -> the backend's entity kind for delete. */
-type DeletableKind = 'variable' | 'parameter' | 'pathInput'
-const BACKEND_KIND: Record<DeletableKind, 'variable' | 'parameter' | 'path_input'> = {
+/** Palette kind -> the backend's entity kind for the sidebar Delete. Every
+ *  palette kind is deletable (GitHub #26). */
+type DeletableKind = 'submodule' | 'function' | 'variable' | 'parameter' | 'pathInput'
+const BACKEND_KIND: Record<DeletableKind, DeleteKind> = {
+  submodule: 'submodule',
+  function: 'function',
   variable: 'variable',
   parameter: 'parameter',
   pathInput: 'path_input',
+}
+
+/** The right-click menu on a palette row: which item, and (for a Parameter)
+ *  the list item its source actions need. */
+interface PaletteMenu {
+  x: number
+  y: number
+  kind: DeletableKind
+  name: string
+  label?: string
+  param?: ParameterListItem
 }
 
 type FunctionRole = 'process' | 'plot' | 'stat' | 'glue'
@@ -213,7 +228,7 @@ export default function EditTab() {
   // (components/Sidebar/ProjectConfigPanel.tsx) for when it's worth digging into.
   const [discoveryError, setDiscoveryError] = useState('')
   const [parameters, setParameters] = useState<ParameterListItem[]>([])
-  const [paramContextMenu, setParamContextMenu] = useState<{ x: number; y: number; item: ParameterListItem } | null>(null)
+  const [paletteMenu, setPaletteMenu] = useState<PaletteMenu | null>(null)
   const [paramSourceLoc, setParamSourceLoc] = useState<SourceLocation | null>(null)
   const [addingConst, setAddingConst] = useState(false)
   const [constDraft, setConstDraft] = useState('')
@@ -588,22 +603,19 @@ export default function EditTab() {
       .catch(err => setPipeError((err as Error).message))
   }
 
-  const handleDeletePipeline = (pid: string) => {
-    callBackend('delete_pipeline', { pipeline_id: pid })
-      .then(() => {
-        setPipeError('')
-        fetchPipelines()
-        fetchHiddenPipelines()
-        if (pid === currentScope) {
-          // Land on whatever pipeline is left, not a hardcoded 'main' —
-          // 'main' itself may now be hidden.
-          const remaining = pipelines.find(p => p.pipeline_id !== pid)
-          if (remaining) jumpTo(remaining.pipeline_id, remaining.name)
-        } else {
-          bumpGraph()
-        }
-      })
-      .catch(err => setPipeError((err as Error).message))
+  /** After a submodule's Delete: refresh the lists and, when it was the open
+   *  canvas, land on whatever pipeline is left (not a hardcoded 'main' —
+   *  'main' itself may be hidden). */
+  const afterPipelineGone = (pid: string) => {
+    setPipeError('')
+    fetchPipelines()
+    fetchHiddenPipelines()
+    if (pid === currentScope) {
+      const remaining = pipelines.find(p => p.pipeline_id !== pid)
+      if (remaining) jumpTo(remaining.pipeline_id, remaining.name)
+    } else {
+      bumpGraph()
+    }
   }
 
   const onPipelineDragStart = (e: React.DragEvent, p: PipelineInfo) => {
@@ -627,19 +639,24 @@ export default function EditTab() {
     setSelectedItem({ kind, name, displayLabel })
   }
 
-  // Right-click a Parameter row → "Refresh from file" / "Open source",
-  // mirroring PipelineDAG.tsx's canvas context menu for the same node type
-  // (see docs/claude/entity-editability-model.md — same actions, second
-  // surface). Positioned viewport-fixed rather than canvas-relative, since
-  // this list has no bounding-box math to do.
-  const openParamContextMenu = (e: React.MouseEvent, item: ParameterListItem) => {
+  // Right-click ANY palette row → a menu ending in a red "Delete…" (GitHub
+  // #26: the one Delete, for every kind, placed or not). A Parameter row also
+  // gets "Refresh from file" / "Open source", mirroring PipelineDAG.tsx's
+  // canvas context menu for the same node type (see
+  // docs/claude/entity-editability-model.md — same actions, second surface).
+  // Positioned viewport-fixed rather than canvas-relative, since this list
+  // has no bounding-box math to do.
+  const openPaletteMenu = (
+    e: React.MouseEvent, kind: DeletableKind, name: string, label?: string, param?: ParameterListItem,
+  ) => {
     e.preventDefault()
-    setParamContextMenu({ x: e.clientX, y: e.clientY, item })
+    e.stopPropagation()
+    setPaletteMenu({ x: e.clientX, y: e.clientY, kind, name, label, param })
   }
 
   const handleRefreshParamFromSidebar = () => {
-    const name = paramContextMenu?.item.name
-    setParamContextMenu(null)
+    const name = paletteMenu?.param?.name
+    setPaletteMenu(null)
     if (!name) return
     callBackend('refresh_parameter_source', { name })
       .then(res => {
@@ -650,8 +667,8 @@ export default function EditTab() {
   }
 
   const handleOpenParamSourceFromSidebar = () => {
-    const item = paramContextMenu?.item
-    setParamContextMenu(null)
+    const item = paletteMenu?.param
+    setPaletteMenu(null)
     if (!item?.source_file) return
     if (isVSCodeMode) {
       callBackend('reveal_in_editor', { file: item.source_file, line: item.source_line })
@@ -681,20 +698,22 @@ export default function EditTab() {
     pathInput: shownPathInputs.length,
   }
 
-  const askDelete = (kind: DeletableKind, name: string) => {
+  const askDelete = () => {
+    const menu = paletteMenu
+    setPaletteMenu(null)
+    if (!menu) return
     setDeleteNotice('')
-    setDeleteTarget({ kind: BACKEND_KIND[kind], name })
+    setDeleteTarget({ kind: BACKEND_KIND[menu.kind], name: menu.name, label: menu.label })
   }
 
-  const onDeleted = (kind: DeletableKind, name: string, result: { still_declared_in?: string | null }) => {
+  const onDeleted = (target: DeleteTarget, result: DeleteResult) => {
     setDeleteTarget(null)
-    if (selectedItem?.kind === kind && selectedItem.name === name) setSelectedItem(null)
-    if (result.still_declared_in) {
-      setDeleteNotice(
-        `'${name}' was removed from the entities file, but it is still declared in `
-        + `${result.still_declared_in.split(/[\\/]/).pop()} — remove it there to remove it entirely.`,
-      )
-    }
+    const kind = kindOfTarget(target)
+    if (selectedItem?.kind === kind && selectedItem.name === target.name) setSelectedItem(null)
+    // Anything that did not go to plan is said, never swallowed.
+    if (result.warnings?.length) setDeleteNotice(result.warnings.join(' '))
+    if (target.kind === 'submodule') afterPipelineGone(target.name)
+    else bumpGraph()
     fetchRegistry()
     fetchParameters()
     fetchPathInputs()
@@ -789,6 +808,11 @@ export default function EditTab() {
                     jumpTo(p.pipeline_id, p.name)
                     selectListItem('submodule', p.pipeline_id, p.name)
                   }}
+                  onContextMenu={p.pipeline_id !== 'main'
+                    ? e => openPaletteMenu(e, 'submodule', p.pipeline_id, p.name)
+                    : undefined}
+                  data-testid="palette-item"
+                  data-label={p.name}
                   style={{
                     ...styles.item,
                     borderLeftColor: '#a21caf',
@@ -816,16 +840,6 @@ export default function EditTab() {
                         }}
                       >
                         ✎
-                      </button>
-                      <button
-                        style={styles.rowBtn}
-                        title="Delete pipeline"
-                        onClick={e => {
-                          e.stopPropagation()
-                          handleDeletePipeline(p.pipeline_id)
-                        }}
-                      >
-                        ×
                       </button>
                     </>
                   )}
@@ -959,6 +973,7 @@ export default function EditTab() {
                           selected={selectedItem?.kind === 'function' && selectedItem.name === fn}
                           onDragStart={e => onDragStart(e, isGlue ? 'glueNode' : 'functionNode', fn)}
                           onClick={() => selectListItem('function', fn)}
+                          onContextMenu={e => openPaletteMenu(e, 'function', fn)}
                         />
                       )
                     }
@@ -1110,7 +1125,7 @@ export default function EditTab() {
                   onClick={() => selectListItem('variable', v)}
                   trailing={varSort === 'last_saved' ? relativeTime(entry?.last_saved) : undefined}
                   trailingTitle={entry?.last_saved ? `Last saved ${entry.last_saved}` : undefined}
-                  onDelete={entry?.declared_in_entities_file ? () => askDelete('variable', v) : undefined}
+                  onContextMenu={e => openPaletteMenu(e, 'variable', v)}
                 />
               )
             })}
@@ -1156,8 +1171,7 @@ export default function EditTab() {
                 selected={selectedItem?.kind === 'parameter' && selectedItem.name === c.name}
                 onDragStart={e => onDragStart(e, 'parameterNode', c.name)}
                 onClick={() => selectListItem('parameter', c.name)}
-                onContextMenu={c.source_file ? (e) => openParamContextMenu(e, c) : undefined}
-                onDelete={c.declared_in_entities_file ? () => askDelete('parameter', c.name) : undefined}
+                onContextMenu={e => openPaletteMenu(e, 'parameter', c.name, undefined, c)}
               />
             ))}
             {searching && shownParams.length === 0 && emptySearch('parameters')}
@@ -1193,7 +1207,7 @@ export default function EditTab() {
                 selected={selectedItem?.kind === 'pathInput' && selectedItem.name === p.name}
                 onDragStart={e => onDragStart(e, 'pathInputNode', p.name)}
                 onClick={() => selectListItem('pathInput', p.name)}
-                onDelete={p.declared_in_entities_file ? () => askDelete('pathInput', p.name) : undefined}
+                onContextMenu={e => openPaletteMenu(e, 'pathInput', p.name)}
               />
             ))}
             {searching && shownPathInputs.length === 0 && emptySearch('path inputs')}
@@ -1227,22 +1241,31 @@ export default function EditTab() {
           onClose={() => setSelectedItem(null)}
         />
       )}
-      {paramContextMenu && (
+      {paletteMenu && (
         <>
           {/* Transparent full-viewport backdrop: EditTab has no other
               click-away infra, unlike PipelineDAG's onPaneClick. */}
-          <div style={styles.contextMenuBackdrop} onClick={() => setParamContextMenu(null)} onContextMenu={e => { e.preventDefault(); setParamContextMenu(null) }} />
-          <div style={{ ...styles.contextMenu, left: paramContextMenu.x, top: paramContextMenu.y }}>
-            {paramContextMenu.item.declared_in_entities_file && (
+          <div style={styles.contextMenuBackdrop} onClick={() => setPaletteMenu(null)} onContextMenu={e => { e.preventDefault(); setPaletteMenu(null) }} />
+          <div style={{ ...styles.contextMenu, left: paletteMenu.x, top: paletteMenu.y }} data-testid="palette-context-menu">
+            {paletteMenu.param?.declared_in_entities_file && (
               <button style={styles.contextMenuItem} onClick={handleRefreshParamFromSidebar} type="button">
                 🔄 Refresh from file
               </button>
             )}
-            {paramContextMenu.item.source_file && (
+            {paletteMenu.param?.source_file && (
               <button style={styles.contextMenuItem} onClick={handleOpenParamSourceFromSidebar} type="button">
-                📝 Open source ({formatLocation({ file: paramContextMenu.item.source_file, line: paramContextMenu.item.source_line ?? null })})
+                📝 Open source ({formatLocation({ file: paletteMenu.param.source_file, line: paletteMenu.param.source_line ?? null })})
               </button>
             )}
+            <button
+              style={{ ...styles.contextMenuItem, color: '#f87171' }}
+              onClick={askDelete}
+              type="button"
+              data-testid="palette-context-delete"
+              title="Delete it, its data and everything computed from it. Shows exactly what goes first; Ctrl/Cmd+Z undoes it."
+            >
+              Delete…
+            </button>
           </div>
         </>
       )}
@@ -1253,7 +1276,7 @@ export default function EditTab() {
         <DeleteEntityDialog
           target={deleteTarget}
           onClose={() => setDeleteTarget(null)}
-          onDeleted={r => onDeleted(kindOfTarget(deleteTarget), deleteTarget.name, r)}
+          onDeleted={r => onDeleted(deleteTarget, r)}
           onOpenPipeline={(pid, name) => jumpTo(pid, name)}
         />
       )}
@@ -1404,21 +1427,18 @@ function DragItem({
   onContextMenu,
   trailing,
   trailingTitle,
-  onDelete,
 }: {
   label: string
   color: string
   selected?: boolean
   onDragStart: (e: React.DragEvent) => void
   onClick?: () => void
+  /** Right-click: the palette menu (its Delete… is the only Delete). */
   onContextMenu?: (e: React.MouseEvent) => void
   /** Muted text at the row's end (e.g. "2 d ago" under Last saved). */
   trailing?: string
   trailingTitle?: string
-  /** Shown as a trash button on hover; omitted when Delete isn't allowed. */
-  onDelete?: () => void
 }) {
-  const [hover, setHover] = useState(false)
   return (
     <div
       draggable
@@ -1427,8 +1447,6 @@ function DragItem({
       onDragStart={onDragStart}
       onClick={onClick}
       onContextMenu={onContextMenu}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{
         ...styles.item,
         display: 'flex',
@@ -1440,18 +1458,6 @@ function DragItem({
     >
       <span style={styles.itemLabel}>{label}</span>
       {trailing && <span style={styles.itemTrailing} title={trailingTitle}>{trailing}</span>}
-      {onDelete && (
-        <button
-          type="button"
-          style={{ ...styles.rowBtn, visibility: hover || selected ? 'visible' : 'hidden' }}
-          title="Delete the declaration (saved data is kept)"
-          aria-label={`Delete ${label}`}
-          data-testid="palette-delete"
-          onClick={e => { e.stopPropagation(); onDelete() }}
-        >
-          🗑
-        </button>
-      )}
     </div>
   )
 }

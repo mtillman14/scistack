@@ -119,16 +119,23 @@ class ChangeRecord:
     #: its own stack only (:func:`recent_changes`). Empty: not known (a record
     #: from before 2026-10-22, a script, a test).
     surface: str = ""
+    #: scidb deletes this call made, as tombstone ids in the order made
+    #: (:func:`note_trash`). Undo restores their data from scidb's trash and
+    #: redo deletes it again (GitHub #26). Data is the one state this module
+    #: cannot diff (it is scidb's, and large), so scidb owns its inverse:
+    #: ``variant_delete.restore_deleted`` / ``delete_again``.
+    trash: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return not any(self.rows.values()) and not self.files
+        return not any(self.rows.values()) and not self.files and not self.trash
 
     def summary(self) -> str:
         n_rows = sum(len(v) for v in self.rows.values())
         tables = ",".join(sorted(t for t, v in self.rows.items() if v)) or "-"
         files = ",".join(Path(p).name for p in sorted(self.files)) or "-"
-        return f"rows={n_rows} tables={tables} files={files}"
+        trash = f" data_deletes={len(self.trash)}" if self.trash else ""
+        return f"rows={n_rows} tables={tables} files={files}{trash}"
 
 
 @dataclass
@@ -136,6 +143,7 @@ class _Recording:
     change_id: str
     #: path -> (before bytes | None, reload)
     files: dict[str, tuple["bytes | None", bool]] = field(default_factory=dict)
+    trash: list[str] = field(default_factory=list)
 
 
 def _read_bytes(path: str) -> "bytes | None":
@@ -160,6 +168,19 @@ def note_write(path: "str | Path", *, reload: bool = True) -> None:
     key = str(Path(path).resolve())
     if key not in rec.files:
         rec.files[key] = (_read_bytes(key), reload)
+
+
+def note_trash(tombstone_id: str) -> bool:
+    """Call right AFTER a scidb ``delete_variant`` that saved its rows to the
+    trash (``DeleteResult.undoable``). Inside an undoable handler the delete
+    becomes part of this change record, so Ctrl Z restores the data too;
+    outside one it does nothing. Returns whether it was recorded."""
+    rec = _active.get()
+    if rec is None:
+        logger.info("[history] note_trash(%s): not inside an undoable call; not undoable from the GUI", tombstone_id)
+        return False
+    rec.trash.append(str(tombstone_id))
+    return True
 
 
 def get_record(change_id: str) -> "ChangeRecord | None":
@@ -313,6 +334,7 @@ def record_to_json(rec: ChangeRecord) -> str:
                 for path, f in rec.files.items()
             },
             "surface": rec.surface,
+            "trash": list(rec.trash),
         }
     )
 
@@ -345,6 +367,7 @@ def record_from_json(
         state=state,
         created_at=created_at,
         surface=str(data.get("surface") or ""),
+        trash=[str(t) for t in data.get("trash") or ()],
     )
 
 
@@ -723,7 +746,10 @@ def recording(change_id: str, *, label: str, method: str, surface: "str | None" 
             for path, (b, reload) in rec.files.items()
         }
         files = {p: f for p, f in files.items() if f.before != f.after}
-        new = ChangeRecord(change_id, label, method, columns, keys, rows, files, surface=surface or "")
+        new = ChangeRecord(
+            change_id, label, method, columns, keys, rows, files,
+            surface=surface or "", trash=list(rec.trash),
+        )
         stored = _store(new)
         _persist(stored)
         logger.info(
@@ -752,11 +778,14 @@ def _store(new: ChangeRecord) -> ChangeRecord:
         _records[new.change_id] = new
         _records.move_to_end(new.change_id)
         while len(_records) > MAX_RECORDS:
-            gone, _ = _records.popitem(last=False)
+            gone, rec = _records.popitem(last=False)
             logger.debug("[history] forgot oldest record %s", gone)
+            if rec.trash:
+                _purge_aged_out(rec)
         return new
     # Merge: keep the earliest before, take the latest after.
     old.surface = old.surface or new.surface
+    old.trash.extend(t for t in new.trash if t not in old.trash)
     for table, diff in new.rows.items():
         merged = old.rows.setdefault(table, {})
         old.columns.setdefault(table, new.columns[table])
@@ -776,9 +805,67 @@ def _store(new: ChangeRecord) -> ChangeRecord:
     return old
 
 
+def _purge_aged_out(rec: ChangeRecord) -> None:
+    """A record that can no longer be undone from the GUI takes its data
+    deletes' trash with it (``scidb.store.trash.purge_trash``). Never raises:
+    a failed purge costs disk space, which ``scidb purge-trash`` recovers."""
+    from scistack_gui.runtime.db import db_connection, get_db, is_loaded
+
+    if not is_loaded():
+        return
+    try:
+        from scidb.store.trash import purge_trash
+
+        with db_connection("history purge"):
+            purged = purge_trash(get_db(), list(rec.trash))
+        logger.info(
+            "[history] record %s aged out of the undo window; purged trash of %s",
+            rec.change_id,
+            purged,
+        )
+    except Exception:
+        logger.exception("[history] purging the trash of aged-out record %s failed", rec.change_id)
+
+
 # ---------------------------------------------------------------------------
 # Undo / redo
 # ---------------------------------------------------------------------------
+
+
+def _trash_conflicts(rec: ChangeRecord, direction: str) -> list[str]:
+    """scidb's own precondition for each data delete in *rec* (read-only)."""
+    if not rec.trash:
+        return []
+    from scistack_gui.runtime.db import db_connection, get_db, is_loaded
+    from scidb.store.variant_delete import redo_conflicts, restore_conflicts
+
+    if not is_loaded():
+        return ["the database is not open"]
+    check = restore_conflicts if direction == "undo" else redo_conflicts
+    out: list[str] = []
+    with db_connection("history trash check"):
+        db = get_db()
+        for tid in rec.trash:
+            out.extend(check(db, tid))
+    return out
+
+
+def _apply_trash(rec: ChangeRecord, direction: str) -> None:
+    """Restore (undo) or re-delete (redo) the data of *rec*'s deletes: undo
+    newest first, redo in the order made."""
+    from scistack_gui.runtime.db import db_connection, get_db
+    from scidb.store.variant_delete import delete_again, restore_deleted
+
+    order = list(reversed(rec.trash)) if direction == "undo" else list(rec.trash)
+    with db_connection("history trash"):
+        db = get_db()
+        for tid in order:
+            if direction == "undo":
+                result = restore_deleted(db, tid)
+                logger.info("[history] undo %s: restored data of delete %s: %s", rec.change_id, tid, result.restored_rows)
+            else:
+                result = delete_again(db, tid)
+                logger.info("[history] redo %s: deleted data of delete %s again: %s", rec.change_id, tid, result.plan.by_variable)
 
 
 def undo(change_id: str) -> dict:
@@ -819,7 +906,7 @@ def _apply(change_id: str, direction: str) -> dict:
             return {**base, "status": "empty"}
 
         t0 = time.monotonic()
-        conflicts = _conflicts(rec, direction)
+        conflicts = _conflicts(rec, direction) + _trash_conflicts(rec, direction)
         if conflicts:
             logger.warning(
                 "[history] %s id=%s method=%s -> conflict, nothing written: %s",
@@ -843,6 +930,24 @@ def _apply(change_id: str, direction: str) -> dict:
             if rec.rows:
                 _write_rows(rec, "redo" if direction == "undo" else "undo")
             raise
+        if rec.trash:
+            # Last: scidb's restore/redo is all or nothing on its own, so a
+            # failure here leaves the data as it was, and the rows and files
+            # just written are put back too.
+            try:
+                _apply_trash(rec, direction)
+            except Exception:
+                logger.exception(
+                    "[history] %s id=%s: restoring the deleted data failed — "
+                    "putting the rows and files back",
+                    direction,
+                    change_id,
+                )
+                back = "redo" if direction == "undo" else "undo"
+                if rec.rows:
+                    _write_rows(rec, back)
+                _write_files(rec, back)
+                raise
         rec.state = goal
         _persist(rec)
         reload = any(f.reload for f in rec.files.values())

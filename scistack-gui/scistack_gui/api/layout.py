@@ -24,8 +24,8 @@ table for both transports (``api/handlers.py``).
     DELETE /api/path-inputs/{name}              delete_path_input
     POST   /api/path-inputs/{node_id}/deep-copy deep_copy_path_input
     GET    /api/entities/{kind}/{name}/editability get_entity_editability
-    GET    /api/entities/{kind}/{name}/delete-preview preview_delete_entity
-    DELETE /api/entities/{kind}/{name}          delete_entity
+    POST   /api/entities/delete-plan            delete_entity_plan
+    POST   /api/entities/delete                 delete_entity
     PUT    /api/edges/{edge_id}                 put_edge
     DELETE /api/edges/{edge_id}                 delete_edge
     POST   /api/edges/{edge_id}/unhide          unhide_edge
@@ -163,6 +163,18 @@ class PathInputRename(BaseModel):
 class EntityRef(BaseModel):
     kind: Literal["parameter", "path_input", "variable"]
     name: str
+
+
+class EntityDeleteRequest(BaseModel):
+    """The sidebar's Delete (``entity_delete_service``). ``name`` is a
+    pipeline id for a submodule. ``values``: a Parameter's chosen values;
+    None = the whole entity."""
+
+    kind: Literal["variable", "parameter", "path_input", "function", "submodule"]
+    name: str
+    values: list[Any] | None = None
+    fingerprint: str | None = None
+    reason: str | None = None
 
 
 class EdgeCreate(BaseModel):
@@ -351,22 +363,24 @@ def _get_entity_editability(req: EntityRef) -> dict:
     return result
 
 
-def _preview_delete_entity(req: EntityRef) -> dict:
-    """What the palette's Delete would remove (the exact entities-file text)
-    and whether it would be refused -- every check, no write. Feeds the
-    confirm dialog (``entity_delete_service.delete_entity``)."""
+def _delete_entity_plan(db, req: EntityDeleteRequest) -> dict:
+    """The sidebar Delete's dry run: the data (downstream included), the
+    declaration, the canvas placements, and anything that blocks it. Writes
+    nothing (``entity_delete_service.delete_entity_plan``)."""
+    from scistack_gui.services.entity_delete_service import delete_entity_plan
+
+    return delete_entity_plan(db, req.kind, req.name, req.values)
+
+
+def _delete_entity(db, req: EntityDeleteRequest) -> dict:
+    """The sidebar's Delete: data + downstream, canvas nodes, declaration.
+    One undoable call, so one Ctrl Z restores all of it (the data from scidb's
+    trash). Refused if the data changed since the plan (``fingerprint``)."""
     from scistack_gui.services.entity_delete_service import delete_entity
 
-    return delete_entity(req.kind, req.name, preview=True)
-
-
-def _delete_entity(req: EntityRef) -> dict:
-    """Remove a Variable/Parameter/PathInput's declaration from the entities
-    file; its data is kept. Refused while it is on any canvas. Undoable: the
-    file is snapshotted before the write, so Undo restores it exactly."""
-    from scistack_gui.services.entity_delete_service import delete_entity
-
-    return delete_entity(req.kind, req.name)
+    return delete_entity(
+        db, req.kind, req.name, req.values, fingerprint=req.fingerprint, reason=req.reason
+    )
 
 
 def _put_edge(db, req: EdgeCreate) -> dict:
@@ -419,8 +433,8 @@ LAYOUT_HANDLERS: tuple[Handler, ...] = (
     Handler("delete_path_input", "/path-inputs/{name}", NamedInScope, _delete_path_input, needs_db=False, http_method="DELETE", body=True, undoable=True, undo_label="remove path input"),
     Handler("deep_copy_path_input", "/path-inputs/{node_id}/deep-copy", NodeRef, _deep_copy_path_input, needs_db=False, http_errors=_BAD_REQUEST, body=False, undoable=True, undo_label="copy path input"),
     Handler("get_entity_editability", "/entities/{kind}/{name}/editability", EntityRef, _get_entity_editability, needs_db=False, http_method="GET"),
-    Handler("preview_delete_entity", "/entities/{kind}/{name}/delete-preview", EntityRef, _preview_delete_entity, needs_db=False, http_method="GET"),
-    Handler("delete_entity", "/entities/{kind}/{name}", EntityRef, _delete_entity, needs_db=False, http_method="DELETE", body=False, undoable=True, undo_label="delete declaration"),
+    Handler("delete_entity_plan", "/entities/delete-plan", EntityDeleteRequest, _delete_entity_plan, http_errors=_BAD_REQUEST, undoable=False),
+    Handler("delete_entity", "/entities/delete", EntityDeleteRequest, _delete_entity, http_errors=_BAD_REQUEST, undoable=True, undo_label="delete"),
     Handler("put_edge", "/edges/{edge_id}", EdgeCreate, _put_edge, http_method="PUT", http_errors=_BAD_REQUEST, undoable=True, undo_label="connect"),
     Handler("delete_edge", "/edges/{edge_id}", EdgeDelete, _delete_edge, http_method="DELETE", body=True, undoable=True, undo_label="disconnect"),
     Handler("unhide_edge", "/edges/{edge_id}/unhide", EdgeInScope, _unhide_edge, body=True, undoable=True, undo_label="show edge"),

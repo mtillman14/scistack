@@ -27,7 +27,15 @@ from scidb import BaseVariable, configure_database, for_each
 from scidb.store import variant_delete
 from scidb.model.exceptions import AmbiguousVersionError
 from scidb.inspect.cli import main as cli_main
-from scidb.store.variant_delete import delete_plan, delete_variant, tombstones
+from scidb.store import trash
+from scidb.store.trash import TrashConflict
+from scidb.store.variant_delete import (
+    delete_again,
+    delete_plan,
+    delete_variant,
+    restore_deleted,
+    tombstones,
+)
 from scidb.store.variant_pins import active_pins, pin_history, pin_variant
 
 SCHEMA = ["subject", "trial"]
@@ -366,3 +374,234 @@ class TestCli:
         rc = cli_main(base + ["tombstones", "--json"])
         (stone,) = json.loads(capsys.readouterr().out)
         assert stone["reason"] == "bad"
+
+
+# ---------------------------------------------------------------------------
+# 8. Trash: undo / redo / purge (GitHub #26, docs/claude/deleting-entries-with-data.md)
+# ---------------------------------------------------------------------------
+
+
+#: Every table a delete touches, compared row by row (repr, so mixed types sort).
+_TRASH_TABLES = [
+    "_record", "_record_save", "_invocation", "_invocation_input",
+    "_invocation_output", "_invocation_pooled", "_run", "_run_invocation",
+    "_run_outputs", "_constant", "VdFiltered_data", "VdSteps_data", "VdRaw_data",
+]
+
+
+def _rows(db):
+    return {
+        t: sorted(repr(r) for r in db._duck.fetchall(f'SELECT * FROM "{t}"'))
+        for t in _TRASH_TABLES
+    }
+
+
+def _trash_root(db):
+    return trash.trash_root(db)
+
+
+class TestTrash:
+    def test_a_delete_is_trashed_and_undoable(self, db):
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        tid = result.tombstone.tombstone_id
+        assert result.undoable
+        e = trash.entry(db, tid)
+        assert e.state == trash.STATE_TRASHED
+        assert e.files and all(p.exists() for p in trash.file_paths(e))
+        assert sum(f["rows"] for f in e.files if f["table"] == "_record") == 4
+        (stone,) = tombstones(db)
+        assert stone.trash_state == trash.STATE_TRASHED
+
+    def test_restore_puts_back_every_row(self, db):
+        before = _rows(db)
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        assert _rows(db) != before
+        restored = restore_deleted(db, result.tombstone.tombstone_id)
+        assert _rows(db) == before
+        assert restored.restored_rows["_record"] == 4
+        # Both variants are back, so the unnamed load is ambiguous again.
+        with pytest.raises(AmbiguousVersionError):
+            VdFiltered.load(subject="01")
+        assert trash.entry(db, result.tombstone.tombstone_id).state == trash.STATE_RESTORED
+        assert not (_trash_root(db) / result.tombstone.tombstone_id).exists()
+
+    def test_restore_reactivates_a_released_pin(self, db):
+        pin_variant(db, "VdFiltered", _card(db, "VdFiltered", 10).selection, "test")
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        assert active_pins(db) == {}
+        restored = restore_deleted(db, result.tombstone.tombstone_id)
+        assert restored.repinned == ["VdFiltered"]
+        assert active_pins(db)["VdFiltered"].selection == _card(db, "VdFiltered", 10).selection
+
+    def test_redo_deletes_the_same_rows_again(self, db):
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        tid = result.tombstone.tombstone_id
+        after_delete = _rows(db)
+        restore_deleted(db, tid)
+        again = delete_again(db, tid)
+        assert _rows(db) == after_delete
+        assert again.plan.record_ids == result.plan.record_ids
+        assert [t.tombstone_id for t in tombstones(db)] == [tid]  # no second tombstone
+        assert trash.entry(db, tid).state == trash.STATE_TRASHED
+        # ... and it can be undone again.
+        restore_deleted(db, tid)
+
+    def test_restore_twice_is_refused(self, db):
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        restore_deleted(db, result.tombstone.tombstone_id)
+        with pytest.raises(TrashConflict, match="restored"):
+            restore_deleted(db, result.tombstone.tombstone_id)
+
+    def test_restore_after_a_rerun_is_refused(self, db):
+        """A re-run that writes the same records back makes a restore a
+        duplicate: refused, nothing written. (If this fails because the re-run
+        wrote NEW record ids, the restore would be a harmless older save, not a
+        duplicate; revisit the conflict rule rather than the test's intent.)"""
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        for_each(
+            vd_bandpass, {"signal": VdRaw, "low_hz": 10}, [VdFiltered],
+            subject=list(SUBJECTS), trial=[],
+        )
+        before = _rows(db)
+        with pytest.raises(TrashConflict, match="exist again"):
+            restore_deleted(db, result.tombstone.tombstone_id)
+        assert _rows(db) == before
+        assert trash.entry(db, result.tombstone.tombstone_id).state == trash.STATE_TRASHED
+
+    def test_a_failed_delete_leaves_no_trash(self, db, monkeypatch):
+        real = variant_delete._delete_in
+
+        def failing(duck, table, column, ids):
+            if table == "_record":
+                raise RuntimeError("simulated failure")
+            return real(duck, table, column, ids)
+
+        monkeypatch.setattr(variant_delete, "_delete_in", failing)
+        with pytest.raises(RuntimeError, match="simulated"):
+            delete_variant(db, _target(db, 10), "bad calibration")
+        root = _trash_root(db)
+        assert not root.exists() or not any(root.iterdir())
+        assert trash.entries(db) == []
+
+    def test_purge_makes_it_permanent(self, db):
+        result = delete_variant(db, _target(db, 10), "bad calibration")
+        tid = result.tombstone.tombstone_id
+        assert trash.purge_trash(db) == [tid]
+        assert not (_trash_root(db) / tid).exists()
+        assert tombstones(db)[0].trash_state == trash.STATE_PURGED
+        with pytest.raises(TrashConflict, match="purged"):
+            restore_deleted(db, tid)
+
+    def test_sweep_removes_orphan_folders(self, db):
+        orphan = _trash_root(db) / "crashed_mid_delete"
+        orphan.mkdir(parents=True)
+        kept = delete_variant(db, _target(db, 10), "bad calibration").tombstone.tombstone_id
+        assert trash.sweep_orphans(db) == ["crashed_mid_delete"]
+        assert (_trash_root(db) / kept).exists()
+
+
+class TestTrashCli:
+    def test_tombstones_show_trash_then_restore_then_purge(self, db_path, capsys):
+        base = ["--db", str(db_path)]
+        assert cli_main(base + ["delete-variant", "VdFiltered", "--variant",
+                                "vd_bandpass.low_hz=10", "--reason", "bad", "--yes"]) == 0
+        capsys.readouterr()
+        cli_main(base + ["tombstones"])
+        out = capsys.readouterr().out
+        assert "trashed" in out
+        cli_main(base + ["tombstones", "--json"])
+        (stone,) = json.loads(capsys.readouterr().out)
+        assert stone["trash_state"] == "trashed"
+
+        assert cli_main(base + ["restore-deleted", stone["tombstone_id"]]) == 0, capsys.readouterr().out
+        capsys.readouterr()
+        assert cli_main(base + ["restore-deleted", stone["tombstone_id"]]) != 0  # already restored
+
+        assert cli_main(base + ["delete-variant", "VdFiltered", "--variant",
+                                "vd_bandpass.low_hz=10", "--reason", "bad", "--yes"]) == 0
+        capsys.readouterr()
+        assert cli_main(base + ["purge-trash"]) == 0
+        assert "Nothing was purged" in capsys.readouterr().out
+        assert cli_main(base + ["purge-trash", "--yes"]) == 0
+        capsys.readouterr()
+        cli_main(base + ["tombstones", "--json"])
+        states = sorted(t["trash_state"] for t in json.loads(capsys.readouterr().out))
+        assert states == ["purged", "restored"]
+
+
+# ---------------------------------------------------------------------------
+# 9. Whole-entity targets: the sidebar's Delete (GitHub #26)
+# ---------------------------------------------------------------------------
+
+
+class VdLoaded(BaseVariable):
+    pass
+
+
+class VdLoadedSum(BaseVariable):
+    pass
+
+
+def vd_read(path):
+    with open(path) as fh:
+        return np.array([float(fh.read().strip())])
+
+
+def vd_sum(loaded):
+    return float(np.sum(loaded))
+
+
+class TestWholeEntityTargets:
+    def test_a_whole_variable_and_everything_downstream(self, db):
+        plan = delete_plan(db, [{"variable": "VdFiltered"}])
+        assert plan.by_variable == {"VdFiltered": 4, "VdSteps": 4}
+        assert plan.seed_by_variable == {"VdFiltered": 4}
+
+    def test_a_whole_parameter_is_the_union_of_its_values(self, db):
+        whole = delete_plan(db, [{"parameter": "low_hz"}])
+        each = delete_plan(db, [{"parameter": "low_hz", "value": 10}, {"parameter": "low_hz", "value": 20}])
+        assert whole.record_ids == each.record_ids
+        assert whole.by_variable == {"VdFiltered": 4, "VdSteps": 4}
+
+    def test_a_whole_function(self, db):
+        plan = delete_plan(db, [{"function": "vd_detect"}])
+        assert plan.by_variable == {"VdSteps": 4}
+        delete_variant(db, [{"function": "vd_detect"}], "retire vd_detect")
+        assert _count(db, "VdSteps_data") == 0
+        assert _count(db, "VdFiltered_data") == 4  # upstream untouched
+
+    def test_a_function_that_never_ran_is_a_warning(self, db):
+        plan = delete_plan(db, [{"function": "nope"}])
+        assert plan.record_ids == [] and plan.warnings
+
+    def test_an_unused_variable_is_a_warning(self, db):
+        plan = delete_plan(db, [{"variable": "VdOther"}])
+        assert plan.record_ids == [] and plan.warnings
+
+    def test_a_whole_path_input(self, tmp_path):
+        root = tmp_path / "files"
+        for i, subject in enumerate(SUBJECTS):
+            (root / subject).mkdir(parents=True)
+            (root / subject / "raw.txt").write_text(str(i + 1))
+        _scifor.set_schema([])
+        database = configure_database(tmp_path / "pi.duckdb", ["subject"])
+        try:
+            pi = _scifor.PathInput("{subject}/raw.txt", root_folder=str(root), name="RawFile")
+            for_each(vd_read, {"path": pi}, [VdLoaded], subject=list(SUBJECTS))
+            for_each(vd_sum, {"loaded": VdLoaded}, [VdLoadedSum], subject=[])
+            plan = delete_plan(database, [{"path_input": "RawFile"}])
+            assert plan.by_variable == {"VdLoaded": 2, "VdLoadedSum": 2}
+            assert delete_plan(database, [{"path_input": "Other"}]).warnings
+            result = delete_variant(database, [{"path_input": "RawFile"}], "wrong files")
+            restore_deleted(database, result.tombstone.tombstone_id)
+            assert _count(database, "VdLoadedSum_data") == 2
+        finally:
+            database.close()
+            _scifor.set_schema([])
+
+
+def test_parameter_values_lists_what_ran(db):
+    from scidb.store.variant_delete import parameter_values
+
+    assert sorted(parameter_values(db, "low_hz")) == [10, 20]
+    assert parameter_values(db, "NoSuchParameter") == []

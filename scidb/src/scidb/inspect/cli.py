@@ -828,11 +828,48 @@ def _cmd_tombstones(insp: Inspector, args) -> None:
             t.tombstone_id,
             t.deleted_at,
             ", ".join(f"{k}={v}" for k, v in t.by_variable.items()),
+            t.trash_state or "hard (not undoable)",
             t.reason,
         ]
         for t in stones
     ]
-    print(render.format_table(["tombstone", "deleted", "records", "reason"], rows))
+    print(render.format_table(["tombstone", "deleted", "records", "trash", "reason"], rows))
+
+
+def _cmd_restore_deleted(mut: Mutator, args) -> None:
+    from scidb.store.trash import TrashConflict
+
+    try:
+        result = mut.restore_deleted(args.tombstone_id)
+    except TrashConflict as exc:
+        raise CLIError(str(exc)) from exc
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_purge_trash(mut: Mutator, args) -> None:
+    from scidb.store import trash
+
+    days = args.older_than_days
+    wanted = set(args.tombstone_ids) if args.tombstone_ids else None
+    cutoff_note = f" older than {days} day(s)" if days is not None else ""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.now() - timedelta(days=days) if days is not None else None
+    candidates = [
+        e for e in trash.entries(mut._db, trash.STATE_TRASHED)
+        if (wanted is None or e.tombstone_id in wanted)
+        and (cutoff is None or datetime.fromisoformat(e.updated_at) <= cutoff)
+    ]
+    if not args.yes:
+        for e in candidates:
+            print(f"{e.tombstone_id}  {e.updated_at}  {e.bytes} bytes  {e.trash_dir}")
+        print(
+            f"\n{len(candidates)} trashed delete(s){cutoff_note} would be purged "
+            "(no longer undoable). Nothing was purged. Re-run with --yes."
+        )
+        return
+    result = mut.purge_trash(list(wanted) if wanted else None, older_than_days=days)
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
 def _cmd_include(mut: Mutator, args) -> None:
@@ -1802,6 +1839,25 @@ def _add_commands(
     )
     p.add_argument("name", nargs="?", default=None, help="Only those touching this variable.")
     p.set_defaults(_handler=_cmd_tombstones)
+
+    p = sub.add_parser(
+        "restore-deleted",
+        parents=[parent],
+        help="Undo a delete-variant from its trash (write; all or nothing).",
+    )
+    p.add_argument("tombstone_id", help="From `scidb tombstones`.")
+    p.set_defaults(_write_handler=_cmd_restore_deleted)
+
+    p = sub.add_parser(
+        "purge-trash",
+        parents=[parent],
+        help="Delete trashed rows for good, so those deletes can no longer be "
+        "undone (write; lists and stops unless --yes).",
+    )
+    p.add_argument("tombstone_ids", nargs="*", help="Only these (default: every trashed delete).")
+    p.add_argument("--older-than-days", type=float, default=None)
+    p.add_argument("--yes", action="store_true", help="Purge, rather than only list.")
+    p.set_defaults(_write_handler=_cmd_purge_trash)
 
     p = sub.add_parser(
         "pins", parents=[parent], help="Active variant pins (the defaults)."

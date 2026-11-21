@@ -251,7 +251,65 @@ class Mutator:
                 "deleted_rows": result.deleted_rows,
                 "released_pins": result.released_pins,
                 "by_variable": result.plan.by_variable,
+                "undoable": result.undoable,
             },
+        )
+
+    @_mutation
+    def restore_deleted(self, tombstone_id: str, reason: str = "undo") -> MutationResult:
+        """Undo a ``delete_variant`` from its trash (``scidb.store.trash``).
+        All or nothing; a conflict raises ``TrashConflict`` naming why."""
+        from scidb.store.variant_delete import restore_deleted
+
+        result = restore_deleted(self._db, tombstone_id)
+        return MutationResult(
+            operation="restore_deleted",
+            target={"tombstone_id": tombstone_id},
+            reason=reason,
+            detail=(
+                f"restored rows {result.restored_rows}"
+                + (f"; repinned {result.repinned}" if result.repinned else "")
+                + (f"; warnings {result.warnings}" if result.warnings else "")
+            ),
+            extra={
+                "restored_rows": result.restored_rows,
+                "repinned": result.repinned,
+                "warnings": result.warnings,
+            },
+        )
+
+    @_mutation
+    def delete_again(self, tombstone_id: str, reason: str = "redo") -> MutationResult:
+        """Redo a restored delete: the same rows, trashed again. Refused
+        (``TrashConflict``) unless the plan is unchanged."""
+        from scidb.store.variant_delete import delete_again
+
+        result = delete_again(self._db, tombstone_id)
+        return MutationResult(
+            operation="delete_again",
+            target={"tombstone_id": tombstone_id},
+            reason=reason,
+            detail=f"deleted {result.plan.total_records} record(s) {result.plan.by_variable} again",
+            extra={"deleted_rows": result.deleted_rows, "released_pins": result.released_pins},
+        )
+
+    @_mutation
+    def purge_trash(
+        self,
+        tombstone_ids: list[str] | None = None,
+        older_than_days: float | None = None,
+        reason: str = "purge trash",
+    ) -> MutationResult:
+        """Delete trashed rows for good; those deletes can no longer be undone."""
+        from scidb.store.trash import purge_trash
+
+        purged = purge_trash(self._db, tombstone_ids, older_than_days=older_than_days)
+        return MutationResult(
+            operation="purge_trash",
+            target={"tombstone_ids": tombstone_ids, "older_than_days": older_than_days},
+            reason=reason,
+            detail=f"purged {len(purged)} delete(s)",
+            extra={"purged": purged},
         )
 
     @_mutation

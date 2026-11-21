@@ -13,7 +13,7 @@ never confused:
 |---|---|---|
 | what it changes | which variant an **unnamed** load gets | whether the records exist |
 | other variants | untouched, still loadable by name | untouched (unless downstream of the deleted one) |
-| reversible | yes: release or move the pin | **no** |
+| reversible | yes: release or move the pin | yes, until the trash is purged (`restore_deleted`, 2026-11-19; see `deleting-entries-with-data.md`) |
 | storage | `_variant_pin` row (history kept) | rows removed; `_variant_tombstone` row written |
 | uses `_record.excluded` | **no** | no |
 
@@ -178,8 +178,11 @@ hidden with `exclude_variant` are on no card and are not deleted by a card
 target.*
 
 The project never deletes data. The exception is this button, for **erroneous
-runs that shouldn't be part of the record** (user, 2026-09-30). Do not
-generalise it to other surfaces.
+runs that shouldn't be part of the record** (user, 2026-09-30). **Amended
+2026-11-19 (GitHub #26):** the sidebar's right-click Delete is the second
+surface, by user decision; both go through this one `delete_plan` /
+`delete_variant`, and both are undoable through the trash. Do not add a third
+without asking. See `deleting-entries-with-data.md`.
 
 - **Scope:** the variant's records **and everything computed from them**
   (downstream closure). Deleting only the card would leave records whose inputs
@@ -198,6 +201,12 @@ generalise it to other surfaces.
   - files written to disk (`generates_file`);
   - runs and invocations that also produced surviving records.
 - **Atomic:** one transaction, so a failure deletes nothing.
+- **Trash (2026-11-19, GitHub #26):** every deleted row is first saved as
+  Parquet in `<db>.trash/<tombstone_id>/` (`scidb.store.trash`, state in
+  `_trash`). `restore_deleted` puts it back and re-activates released pins;
+  `delete_again` redoes it; `purge_trash` makes it permanent. CLI:
+  `scidb restore-deleted ID`, `scidb purge-trash [--yes]`; `scidb tombstones`
+  shows each delete's trash state.
 - **Tombstone:** `_variant_tombstone` row: variable, selection, counts per
   variable, reason (required), who, when. The database can then answer "where
   did those go?".

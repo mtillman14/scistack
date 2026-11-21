@@ -1,14 +1,13 @@
 """
-The palette's Delete (.claude/plan-palette-order-and-delete.md).
+The sidebar's Delete (GitHub #26, .claude/plan-delete-entries-with-data.md;
+replaces the 2026-11-03 declaration-only Delete).
 
-Delete removes a Variable/Parameter/PathInput's DECLARATION from the TOML
-entities file and nothing else:
-
-* only the entities file is written (``entity_editability``);
-* refused while the entity is on any canvas (the resolved graph);
-* the database is untouched -- records of a deleted variable stay;
-* Undo is the generic history: the file comes back byte for byte, and a
-  hand edit made after the delete makes Undo refuse rather than clobber.
+* ``remove_declaration`` still owns the entities-file cut (TestRemoveDeclaration);
+* Delete removes the data and everything downstream, the canvas nodes and the
+  declaration, and a placement never blocks it;
+* refusals (stale file, changed data) are found BEFORE anything is written;
+* Undo is the generic history: one Ctrl Z restores the file byte for byte,
+  the canvas rows, and the data (scidb trash via ``history.note_trash``).
 """
 
 from __future__ import annotations
@@ -126,62 +125,127 @@ class TestRemoveDeclaration:
 
 
 class TestDeleteEntity:
-    def test_refused_while_on_a_canvas(self, populated_db, tmp_path):
-        from scistack_gui.runtime.db import get_db
-        from scistack_gui.services.entity_delete_service import delete_entity
+    """The sidebar's Delete (GitHub #26): data + downstream, canvas nodes and
+    declaration, never blocked by a placement."""
+
+    def test_placed_entity_is_deleted_with_its_node(self, populated_db, tmp_path):
+        from scistack_gui.services.entity_delete_service import (
+            delete_entity,
+            delete_entity_plan,
+        )
         from scistack_gui.stores import pipeline_store as ps
 
         entities = _toml_project(tmp_path, BODY)
-        ps.write_manual_node(get_db(), "param__HZ::main", "parameterNode", "HZ", "main")
+        ps.write_manual_node(populated_db, "param__HZ::main", "parameterNode", "HZ", "main")
 
-        result = delete_entity("parameter", "HZ")
+        plan = delete_entity_plan(populated_db, "parameter", "HZ")
+        assert plan["ok"] and plan["blocked"] == []
+        assert [p["pipeline_id"] for p in plan["placements"]] == ["main"]
+        assert plan["declaration"]["action"] == "remove"
 
-        assert not result["ok"]
-        assert result["reason"] == "placed"
-        assert [p["pipeline_id"] for p in result["placements"]] == ["main"]
-        assert entities.read_text() == BODY
-
-    def test_unplaced_entity_is_deleted(self, populated_db, tmp_path):
-        from scistack_gui.services.entity_delete_service import delete_entity, entity_placements
-
-        entities = _toml_project(tmp_path, BODY)
-        assert entity_placements("parameter", "OTHER") == []
-
-        result = delete_entity("parameter", "OTHER")
+        result = delete_entity(populated_db, "parameter", "HZ")
 
         assert result["ok"], result
-        assert "OTHER" not in entities.read_text()
+        assert result["nodes_removed"] == 1
+        assert "HZ" not in entities.read_text()
+        assert "param__HZ::main" not in ps.get_manual_nodes(populated_db)
 
-    def test_deleting_a_variable_keeps_its_records(self, populated_db, tmp_path):
-        """A declared variable with saved data: delete the declaration, the
-        rows stay (declaring it again brings them back)."""
-        import numpy as np
-        from scidb import BaseVariable
+    def test_a_parameter_with_data_deletes_its_records(self, populated_db, tmp_path):
+        """``low_hz`` ran (FilteredSignal) and is not declared anywhere: the
+        plan says so, and the delete removes the records it made."""
+        from scistack_gui.services.entity_delete_service import (
+            delete_entity,
+            delete_entity_plan,
+        )
 
+        _toml_project(tmp_path, BODY)
+        plan = delete_entity_plan(populated_db, "parameter", "low_hz")
+        assert plan["data"]["by_variable"] == {"FilteredSignal": 4}
+        assert plan["data"]["undoable"] is True
+        assert plan["declaration"]["action"] == "none"
+
+        result = delete_entity(
+            populated_db, "parameter", "low_hz", fingerprint=plan["data"]["fingerprint"]
+        )
+
+        assert result["ok"], result
+        assert result["deleted"] == {"FilteredSignal": 4}
+        assert _count(populated_db, "FilteredSignal") == 0
+        assert _count(populated_db, "RawSignal") == 4
+
+    def test_chosen_values_only(self, populated_db, tmp_path):
+        """A subset of a Parameter's values: those values' data goes, the
+        declaration keeps the rest, and the node stays."""
+        from scistack_gui.services.entity_delete_service import delete_entity_plan
+
+        _toml_project(tmp_path, BODY)
+        plan = delete_entity_plan(populated_db, "parameter", "HZ", values=[10])
+        assert plan["declaration"]["action"] == "edit_values"
+        assert plan["declaration"]["remaining"] == [20]
+        assert plan["placements"] == []
+
+    def test_a_variable_and_its_records(self, populated_db, tmp_path):
         from scistack_gui.services.entity_delete_service import delete_entity
 
         _toml_project(tmp_path, BODY)
-        BaseVariable._all_subclasses["Kept"].save(np.array([1.0]), subject=1, session="pre")
-        duck = populated_db._duck
-        before = duck.fetchall("SELECT COUNT(*) FROM _record WHERE type = 'Kept'")[0][0]
-        assert before == 1
-
-        result = delete_entity("variable", "Kept")
-
-        # A saved variable shows on the canvas from run history only if it
-        # was produced by a run; a bare save is not placed.
+        result = delete_entity(populated_db, "variable", "FilteredSignal")
         assert result["ok"], result
-        after = duck.fetchall("SELECT COUNT(*) FROM _record WHERE type = 'Kept'")[0][0]
-        assert after == before
+        assert result["deleted"] == {"FilteredSignal": 4}
+        assert _count(populated_db, "FilteredSignal") == 0
 
-    def test_unsupported_kind(self, populated_db, tmp_path):
+    def test_a_function_in_user_code_keeps_its_code(self, client, populated_db):
+        """``client`` registers bandpass_filter (it lives in the test module, not
+        in functions_dir): its data and nodes go, its code stays."""
+        from scistack_gui.services.entity_delete_service import delete_entity_plan
+
+        plan = delete_entity_plan(populated_db, "function", "bandpass_filter")
+        assert plan["data"]["by_variable"] == {"FilteredSignal": 4}
+        assert plan["declaration"]["action"] == "none"
+
+    def test_a_changed_plan_is_refused(self, populated_db, tmp_path):
         from scistack_gui.services.entity_delete_service import delete_entity
 
-        assert delete_entity("function", "f")["reason"] == "unsupported_kind"
+        _toml_project(tmp_path, BODY)
+        result = delete_entity(populated_db, "variable", "FilteredSignal", fingerprint="0" * 16)
+        assert not result["ok"] and result["reason"] == "changed"
+        assert _count(populated_db, "FilteredSignal") == 4
+
+    def test_a_stale_entities_file_blocks_before_anything_is_written(self, populated_db, tmp_path):
+        from scistack_gui.services.entity_delete_service import delete_entity
+
+        entities = _toml_project(tmp_path, BODY)
+        entities.write_text(BODY + "# edited behind the GUI's back\n", encoding="utf-8")
+        result = delete_entity(populated_db, "parameter", "HZ")
+        assert not result["ok"] and result["reason"] == "blocked", result
+        assert entities.read_text().endswith("# edited behind the GUI's back\n")
+
+    def test_unsupported_kind(self, populated_db):
+        from scistack_gui.services.entity_delete_service import delete_entity_plan
+
+        assert delete_entity_plan(populated_db, "merge", "m")["reason"] == "unsupported_kind"
+
+    def test_a_submodule_hides_and_removes_its_placements(self, populated_db):
+        from scistack_gui.services.entity_delete_service import (
+            delete_entity,
+            delete_entity_plan,
+        )
+        from scistack_gui.stores import pipeline_store as ps
+
+        child = ps.create_pipeline(populated_db, "child")
+        plan = delete_entity_plan(populated_db, "submodule", child)
+        assert plan["ok"] and plan["data"]["total_records"] == 0, plan
+        result = delete_entity(populated_db, "submodule", child)
+        assert result["ok"], result
+        hidden = {p["pipeline_id"] for p in ps.list_hidden_pipelines(populated_db)}
+        assert child in hidden
+
+
+def _count(db, variable):
+    return db._duck.fetchone("SELECT COUNT(*) FROM _record WHERE type = ?", [variable])[0]
 
 
 class TestUndo:
-    """Undo is the generic history -- no second mechanism."""
+    """One Ctrl Z restores everything: file, canvas rows AND data."""
 
     @staticmethod
     def _change(cid):
@@ -194,7 +258,10 @@ class TestUndo:
         entities = _toml_project(tmp_path, BODY)
         original = entities.read_bytes()
 
-        reply = client.delete("/api/entities/parameter/OTHER", headers=self._change("d1"))
+        reply = client.post(
+            "/api/entities/delete", json={"kind": "parameter", "name": "OTHER"},
+            headers=self._change("d1"),
+        )
         assert reply.json()["ok"], reply.json()
         assert entities.read_bytes() != original
 
@@ -203,10 +270,33 @@ class TestUndo:
         assert entities.read_bytes() == original
         history.clear()
 
+    def test_undo_restores_the_data_and_redo_deletes_it_again(self, client, populated_db, tmp_path):
+        history.clear()
+        _toml_project(tmp_path, BODY)
+
+        reply = client.post(
+            "/api/entities/delete", json={"kind": "parameter", "name": "low_hz"},
+            headers=self._change("d3"),
+        ).json()
+        assert reply["ok"] and reply["undoable"], reply
+        assert _count(populated_db, "FilteredSignal") == 0
+
+        undo = client.post("/api/history/undo", json={"change_id": "d3"}).json()
+        assert undo["status"] == "ok", undo
+        assert _count(populated_db, "FilteredSignal") == 4
+
+        redo = client.post("/api/history/redo", json={"change_id": "d3"}).json()
+        assert redo["status"] == "ok", redo
+        assert _count(populated_db, "FilteredSignal") == 0
+        history.clear()
+
     def test_undo_after_a_hand_edit_is_a_conflict(self, client, tmp_path):
         history.clear()
         entities = _toml_project(tmp_path, BODY)
-        client.delete("/api/entities/parameter/OTHER", headers=self._change("d2"))
+        client.post(
+            "/api/entities/delete", json={"kind": "parameter", "name": "OTHER"},
+            headers=self._change("d2"),
+        )
         edited = entities.read_text() + "# a hand edit\n"
         entities.write_text(edited, encoding="utf-8")
 
@@ -216,14 +306,17 @@ class TestUndo:
         assert entities.read_text() == edited
         history.clear()
 
-    def test_preview_is_not_an_undo_step(self, client, tmp_path):
+    def test_the_plan_is_not_an_undo_step(self, client, tmp_path):
         history.clear()
         entities = _toml_project(tmp_path, BODY)
 
-        reply = client.get("/api/entities/parameter/HZ/delete-preview").json()
+        reply = client.post(
+            "/api/entities/delete-plan", json={"kind": "parameter", "name": "HZ"}
+        ).json()
 
-        assert reply["ok"] and reply["removed"] == "HZ = [10, 20]  # sampling\n"
+        assert reply["ok"] and reply["declaration"]["removed"] == "HZ = [10, 20]  # sampling\n"
         assert entities.read_text() == BODY
+        assert history.status()["records"] == 0
         history.clear()
 
 
