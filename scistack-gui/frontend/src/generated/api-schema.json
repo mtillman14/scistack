@@ -237,6 +237,21 @@
       "title": "BarOptions",
       "type": "object"
     },
+    "BetweenKeysUpdate": {
+      "properties": {
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "BetweenKeysUpdate",
+      "type": "object"
+    },
     "BinMode": {
       "description": "How a histogram's bins are chosen (``scistackplot.reduce.bins`` owns the rule).",
       "enum": [
@@ -594,6 +609,27 @@
         "keys"
       ],
       "title": "ChangeSchemaKeysRequest",
+      "type": "object"
+    },
+    "CleanupOutdatedRequest": {
+      "properties": {
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "additionalProperties": true,
+            "tsType": "object",
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "title": "CleanupOutdatedRequest",
       "type": "object"
     },
     "ClearDataRequest": {
@@ -1222,6 +1258,109 @@
         "variable"
       ],
       "title": "DataPreviewQuery",
+      "type": "object"
+    },
+    "DataViewQuery": {
+      "properties": {
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "function_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outputs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "part": {
+          "type": "string"
+        },
+        "record_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variants": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "tsType": "object",
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "part"
+      ],
+      "title": "DataViewQuery",
       "type": "object"
     },
     "DeclareRequirements": {
@@ -2710,6 +2849,17 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -6718,6 +6868,9 @@
     "change_schema_keys": {
       "$ref": "#/$defs/ChangeSchemaKeysRequest"
     },
+    "cleanup_outdated": {
+      "$ref": "#/$defs/CleanupOutdatedRequest"
+    },
     "clear_data": {
       "$ref": "#/$defs/ClearDataRequest"
     },
@@ -6744,6 +6897,9 @@
     },
     "create_variable": {
       "$ref": "#/$defs/CreateVariableRequest"
+    },
+    "data_view": {
+      "$ref": "#/$defs/DataViewQuery"
     },
     "declare_library_requirements": {
       "$ref": "#/$defs/DeclareRequirements"
@@ -7105,6 +7261,9 @@
     "schema_key_type_impact": {
       "$ref": "#/$defs/SchemaKeyTypeQuery"
     },
+    "set_between_keys": {
+      "$ref": "#/$defs/BetweenKeysUpdate"
+    },
     "set_distribute": {
       "$ref": "#/$defs/DistributeOption"
     },
@@ -7262,6 +7421,7 @@
     "add_project_path",
     "cancel_run",
     "change_schema_keys",
+    "cleanup_outdated",
     "clear_data",
     "create_builtin_function",
     "create_function",
@@ -7271,6 +7431,7 @@
     "create_path_input",
     "create_pipeline",
     "create_variable",
+    "data_view",
     "declare_library_requirements",
     "deep_copy_path_input",
     "delete_edge",
@@ -7391,6 +7552,7 @@
     "schema_inventory",
     "schema_key_proposal",
     "schema_key_type_impact",
+    "set_between_keys",
     "set_distribute",
     "set_entities_file",
     "set_key_expectation",

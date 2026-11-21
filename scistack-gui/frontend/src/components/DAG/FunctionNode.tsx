@@ -9,6 +9,8 @@
  */
 
 import { showMessage } from '../dialogs'
+import { chipTone, statesForReason, verdictTitle, type StepVerdict } from './stepVerdict'
+import { openDataView } from '../DataView/openDataView'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Handle, Position, useReactFlow, useUpdateNodeInternals } from '@xyflow/react'
 import { callBackend, isVSCodeMode } from '../../api'
@@ -65,6 +67,10 @@ interface FunctionNodeData {
   // with an explicit error rather than silently no-op'ing — see
   // execution_service.disconnected_reason).
   disconnected?: boolean
+  // The step verdict (GitHub #28): scidb's words, attached by
+  // services/step_status_service. Colour still answers "needs running?";
+  // the chip says why (stepVerdict.ts).
+  verdict?: StepVerdict
   // The picker's pair (include prefixes + exclude_levels rule); null = all.
   schemaSelection?: { include: [string, string][][]; exclude_levels: Record<string, string[]> } | null
   schemaLevel?: string[] | null
@@ -112,6 +118,14 @@ function describeColumns(sel: { columns: string[]; iterate: boolean; groups?: un
   return `${n} columns`
 }
 
+
+/** The reason chip's colours, by chipTone. */
+const CHIP_TONES: Record<string, React.CSSProperties> = {
+  problem: { background: '#fef2f2', color: '#b91c1c', border: '1px solid #dc2626' },
+  warning: { background: '#fffbeb', color: '#92400e', border: '1px solid #d97706' },
+  info: { background: '#f3f4f6', color: '#374151', border: '1px solid #9ca3af' },
+  none: {},
+}
 
 const VARIANT_DOT: Record<string, string> = {
   green:   '#16a34a',
@@ -500,7 +514,7 @@ function PipelineFunctionNode({ id, data }: Props) {
         />
       ))}
 
-      {data.disconnected && (
+      {data.disconnected && !data.verdict && (
         <div style={styles.disconnectedBadge} title="A required input's edge was deleted — reconnect it before running">
           🔌 disconnected
         </div>
@@ -522,6 +536,42 @@ function PipelineFunctionNode({ id, data }: Props) {
       >
         {data.label}
       </div>
+
+      {data.verdict && (data.verdict.chip || data.verdict.new_chip) && (
+        <div style={styles.verdictRow}>
+          {data.verdict.chip && (
+            <button
+              type="button"
+              className="nodrag"
+              data-testid="verdict-chip"
+              style={{ ...styles.verdictChip, ...CHIP_TONES[chipTone(data.verdict)] }}
+              title={verdictTitle(data.verdict) + '\nClick to see where.'}
+              onClick={e => {
+                e.stopPropagation()
+                const top = data.verdict?.reasons[0]?.kind ?? (data.verdict?.warnings ? 'warning' : 'excluded')
+                openDataView({ variables: data.output_types ?? null, states: statesForReason(top), functionName: data.label })
+              }}
+            >
+              {data.verdict.chip}
+            </button>
+          )}
+          {data.verdict.new_chip && (
+            <button
+              type="button"
+              className="nodrag"
+              data-testid="new-chip"
+              style={{ ...styles.verdictChip, ...CHIP_TONES.info }}
+              title="New input data is waiting; the next run processes it. Click to see where."
+              onClick={e => {
+                e.stopPropagation()
+                openDataView({ variables: data.output_types ?? null, states: ['new'], functionName: data.label })
+              }}
+            >
+              {data.verdict.new_chip}
+            </button>
+          )}
+        </div>
+      )}
 
       {nodeFailed > 0 && (
         <button
@@ -1030,6 +1080,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+  },
+  verdictRow: { display: 'flex', gap: 4, justifyContent: 'center', margin: '0 auto 4px', flexWrap: 'wrap' },
+  verdictChip: {
+    padding: '0 8px',
+    borderRadius: 10,
+    fontSize: 10,
+    fontWeight: 600,
+    cursor: 'pointer',
+    lineHeight: '16px',
   },
   failedBadge: {
     display: 'block',

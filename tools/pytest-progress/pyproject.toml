@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Dev tool: live pytest progress for the Claude Code status line.
+# Inert unless SCISTACK_PYTEST_PROGRESS_DIR is set (see the module docstring).
+[project]
+name = "scistack-pytest-progress"
+version = "0.1.0"
+description = "Writes live pytest progress to a JSON file for the Claude Code status line"
+requires-python = ">=3.10"
+dependencies = ["pytest>=7"]
+
+[project.entry-points.pytest11]
+scistack_progress = "scistack_pytest_progress"
+
+[tool.hatch.build.targets.wheel]
+include = ["scistack_pytest_progress.py"]

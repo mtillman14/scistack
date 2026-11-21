@@ -47,6 +47,9 @@ import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocatio
 import VariantsPopup from '../Variants/VariantsPopup'
 import DataPreviewPopup from '../DataPreview/DataPreviewPopup'
 import ExpectedLocationsPopup, { type ExpectedFilter } from '../Expectation/ExpectedLocationsPopup'
+import { SHOW_EXPECTED_LOCATIONS } from '../Expectation/expectationTypes'
+import { SHOW_LEGACY_DATA_ENTRIES, openDataView } from '../DataView/openDataView'
+import TryPopup, { type TryTarget } from '../DataView/TryPopup'
 import { ExpectationBadgesProvider, useExpectationBadgeFetch } from '../../context/ExpectationBadgesContext'
 import { useRunReport } from '../../context/RunReportContext'
 import { OPEN_DATA_PREVIEW_EVENT, type DataPreviewTarget } from '../DataPreview/dataPreview'
@@ -173,6 +176,8 @@ export default function PipelineDAG() {
   // from plotTarget: looking at integrity is not the same act as opening a
   // figure, and one leads to the other rather than replacing it.
   const [locationTarget, setLocationTarget] = useState<string | null>(null)
+  // "▶ Try on…" (GitHub #28): one function, some locations, nothing saved.
+  const [tryTarget, setTryTarget] = useState<TryTarget | null>(null)
   // The variable the Variants popup is open on: every variant as a card, with
   // Make current / Delete, and what defines each (.claude/plan-variants-popup.md).
   // It replaced the separate Provenance and Variants panels; the question
@@ -1187,6 +1192,39 @@ export default function PipelineDAG() {
           >
             📋 Run report…
           </button>
+          <button
+            style={styles.contextMenuItem}
+            title="Run this one function at locations you pick, saving nothing (not even a run record)"
+            onClick={() => {
+              const node = getNodes().find(n => n.id === contextMenu.fnNodeId)
+              const d = (node?.data ?? {}) as { schemaLevel?: string[] | null; runOptions?: Record<string, unknown> | null; language?: string }
+              if (contextMenu.fnNodeId && contextMenu.fnLabel) {
+                setTryTarget({
+                  nodeId: contextMenu.fnNodeId,
+                  functionName: contextMenu.fnLabel,
+                  outputs: contextMenu.fnOutputs ?? [],
+                  schemaLevel: d.schemaLevel ?? null,
+                  runOptions: d.runOptions ?? null,
+                  language: d.language,
+                })
+              }
+              setContextMenu(null)
+            }}
+            type="button"
+          >
+            ▶ Try on…
+          </button>
+          <button
+            style={styles.contextMenuItem}
+            title="Every location of this step's outputs, with what is there and why"
+            onClick={() => {
+              openDataView({ variables: contextMenu.fnOutputs ?? null, functionName: contextMenu.fnLabel ?? null })
+              setContextMenu(null)
+            }}
+            type="button"
+          >
+            ▦ Data view
+          </button>
           {contextMenu.fnLabel?.startsWith('plot_') && contextMenu.fnNodeId && (
             <button
               style={styles.contextMenuItem}
@@ -1238,20 +1276,33 @@ export default function PipelineDAG() {
             </button>
             <button
               style={styles.contextMenuItem}
-              onClick={() => { setLocationTarget(varType); setContextMenu(null) }}
+              onClick={() => { openDataView({ variables: [varType] }); setContextMenu(null) }}
+              data-testid="menu-data-view"
               type="button"
+              title="Every location of this variable: present, outdated, failed, missing input, new, not run or excluded, and why"
             >
-              🗂 View Schema Locations
+              ▦ Data view
             </button>
-            <button
-              style={styles.contextMenuItem}
-              onClick={() => { setExpectedTarget({ variable: varType, filter: null }); setContextMenu(null) }}
-              data-testid="menu-expected-locations"
-              type="button"
-              title="Which locations this variable should have, and whether each is present, missing unexpectedly, present unexpectedly, missing as expected or excluded, with why (`scidb expected <name>`)"
-            >
-              ✅ Expected locations…
-            </button>
+            {SHOW_LEGACY_DATA_ENTRIES && (
+              <button
+                style={styles.contextMenuItem}
+                onClick={() => { setLocationTarget(varType); setContextMenu(null) }}
+                type="button"
+              >
+                🗂 View Schema Locations
+              </button>
+            )}
+            {SHOW_EXPECTED_LOCATIONS && (
+              <button
+                style={styles.contextMenuItem}
+                onClick={() => { setExpectedTarget({ variable: varType, filter: null }); setContextMenu(null) }}
+                data-testid="menu-expected-locations"
+                type="button"
+                title="Which locations this variable should have, and whether each is present, missing unexpectedly, present unexpectedly, missing as expected or excluded, with why (`scidb expected <name>`)"
+              >
+                ✅ Expected locations…
+              </button>
+            )}
             <button
               style={styles.contextMenuItem}
               onClick={() => { setVariantsTarget(varType); setContextMenu(null) }}
@@ -1335,6 +1386,7 @@ export default function PipelineDAG() {
       {sourceLoc && (
         <SourceLocationDialog location={sourceLoc} onClose={() => setSourceLoc(null)} />
       )}
+      {tryTarget && <TryPopup target={tryTarget} onClose={() => setTryTarget(null)} />}
     </div>
     </ExpectationBadgesProvider>
   )

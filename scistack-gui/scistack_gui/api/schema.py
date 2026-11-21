@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -132,6 +133,10 @@ class InventoryRow(BaseModel):
 
 class InventoryRowChange(InventoryRow):
     reason: str
+    #: Scope the exclusion / include to one variable (GitHub #28: "Exclude
+    #: for this variable", "Mark missing / present as expected"); None =
+    #: everything.
+    variable: str | None = None
 
 
 def _inventory_row_override(db, req: InventoryRow) -> dict:
@@ -155,19 +160,22 @@ def _inventory_row_override(db, req: InventoryRow) -> dict:
 
 
 def _change_row(db, req: InventoryRowChange, *, exclude: bool) -> dict:
-    from scidb.store.exclusions import exclude_schema, include_schema
+    from scidb.store.exclusions import exclude_schema_dict, include_schema_dict
     from scidb.provenance.inventory import row_keyset
 
     reason = req.reason.strip()
     if not reason:
         raise ValueError("A reason is required.")
     keys = row_keyset(req.columns, req.row)
-    (exclude_schema if exclude else include_schema)(reason, db=db, **keys)
-    logger.info(
-        "[schema] %s keys=%s reason=%r",
-        "exclude_schema_combo" if exclude else "include_schema_combo", keys, reason,
+    (exclude_schema_dict if exclude else include_schema_dict)(
+        keys, reason, db=db, variable=req.variable or None
     )
-    return {"keys": keys}
+    logger.info(
+        "[schema] %s keys=%s variable=%s reason=%r",
+        "exclude_schema_combo" if exclude else "include_schema_combo", keys,
+        req.variable or "(everything)", reason,
+    )
+    return {"keys": keys, "variable": req.variable or None}
 
 
 def _exclude_schema_combo(db, req: InventoryRowChange) -> dict:
@@ -178,6 +186,55 @@ def _exclude_schema_combo(db, req: InventoryRowChange) -> dict:
 def _include_schema_combo(db, req: InventoryRowChange) -> dict:
     """Re-include the combination(s) one inventory row stands for."""
     return _change_row(db, req, exclude=False)
+
+
+class DataViewQuery(BaseModel):
+    # "view" | "step" | "outdated" | "cleanup_plan" | "between"
+    # (services/step_status_service.data_view).
+    part: str
+    variables: list[str] | None = None
+    #: {variable: branch_params_filter}: a column's chosen variant.
+    variants: dict[str, dict[str, Any]] | None = None
+    function_name: str | None = None
+    outputs: list[str] | None = None
+    call_id: str | None = None
+    variable: str | None = None
+    #: With "cell": the cell's record ids.
+    record_ids: list[str] | None = None
+
+
+def _data_view(db, req: DataViewQuery) -> dict:
+    from scistack_gui.services.step_status_service import data_view
+
+    return data_view(
+        db, req.part, variables=req.variables, variants=req.variants,
+        function_name=req.function_name, outputs=req.outputs, call_id=req.call_id,
+        variable=req.variable, record_ids=req.record_ids,
+    )
+
+
+class CleanupOutdatedRequest(BaseModel):
+    #: The ticked candidates' ``target`` dicts (``data_view`` part
+    #: ``cleanup_plan``), deleted in one call: one Ctrl Z.
+    targets: list[dict[str, Any]]
+    reason: str = ""
+
+
+def _cleanup_outdated(db, req: CleanupOutdatedRequest) -> dict:
+    from scistack_gui.services.step_status_service import cleanup_outdated
+
+    return cleanup_outdated(db, req.targets, req.reason)
+
+
+class BetweenKeysUpdate(BaseModel):
+    #: Exactly the keys that are between (every other key is crossed).
+    keys: list[str]
+
+
+def _set_between_keys(db, req: BetweenKeysUpdate) -> dict:
+    from scistack_gui.services.step_status_service import set_between_keys
+
+    return set_between_keys(db, req.keys)
 
 
 class SchemaKeyTypeQuery(BaseModel):
@@ -322,6 +379,10 @@ SCHEMA_HANDLERS: tuple[Handler, ...] = (
     # the canvas re-reads run state.
     Handler("exclude_schema_combo", "/inventory/exclude", InventoryRowChange, _exclude_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
     Handler("include_schema_combo", "/inventory/include", InventoryRowChange, _include_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
+    # The data view and step verdicts (GitHub #28): one read endpoint with parts.
+    Handler("data_view", "/data-view", DataViewQuery, _data_view, http_errors=_BAD_REQUEST, undoable=False),
+    Handler("cleanup_outdated", "/data-view/cleanup-outdated", CleanupOutdatedRequest, _cleanup_outdated, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="clean up outdated"),
+    Handler("set_between_keys", "/schema/between", BetweenKeysUpdate, _set_between_keys, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
     Handler("variable_expectation", "/expectation", ExpectationQuery, _variable_expectation, http_errors=_EXPECTATION_ERRORS, undoable=False),
     Handler("expectation_badges", "/expectation/badges", BadgeQuery, _expectation_badges, http_errors=_BAD_REQUEST, undoable=False),
     Handler("expectation_coverage", "/expectation/coverage", CoverageQuery, _expectation_coverage, http_errors=_BAD_REQUEST, undoable=False),

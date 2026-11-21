@@ -571,7 +571,7 @@ def test_history_without_data_is_kept_as_files_not_loaded(project, tmp_path):
     assert _count(target, "_record") == 0  # the live database stays consistent
     # Dataset intent governs a re-run, so the exclusion is live.
     assert set(hist["intent_loaded"]) == {
-        "__scidb_schema_overrides", "_schema_key_type",
+        "__scidb_schema_overrides", "_schema_key_type", "_schema_key_between",
         "_schema_key_expectation", "_expectation_mark",
     }
     assert _count(target, "__scidb_schema_overrides") >= 1

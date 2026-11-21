@@ -22,6 +22,10 @@
     "types": ["node"]
   },
   "include": [
+    "src/components/DAG/stepVerdict.ts",
+    "src/components/DAG/stepVerdict.test.ts",
+    "src/components/DataView/dataView.ts",
+    "src/components/DataView/dataView.test.ts",
     "src/webviewRpc.ts",
     "src/positionSources.ts",
     "src/positionSources.test.ts",

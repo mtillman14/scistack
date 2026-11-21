@@ -40,3 +40,7 @@ scimatlab/tests/matlab/test-failures.txt
 # 2026-11-10 (grug stage repo_hygiene); the files stay on disk.
 /tmp.py
 /test-failures.txt
+.venv-linux/
+
+# Live pytest progress for the Claude Code status line (tools/pytest-progress)
+/.pytest-progress/

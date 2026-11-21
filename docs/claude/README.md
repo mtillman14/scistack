@@ -115,6 +115,7 @@ Rules:
 - [DuckDB Column Types for Table (DataFrame) Variables](duckdb-column-types.md) — `duckdb-column-types.md`
 - [EachOf — Generalized Variant Expansion](each-of-variant-expansion.md) — `each-of-variant-expansion.md`
 - [Expected locations](expected-locations.md) — `expected-locations.md`
+- [Pipeline status: did that step work? (GitHub #28)](pipeline-status.md) — `pipeline-status.md`
 - [Run report](run-report.md) — `run-report.md`
 - [How `scifor.for_each()` Works — A Detailed Walkthrough](scifor-for-each-internals.md) — `scifor-for-each-internals.md`
 - [Multi-Column Save: Schema Inference, Skip-on-Mismatch, and the Length-1 Unwrap](multi-column-save-schema.md) — `multi-column-save-schema.md`

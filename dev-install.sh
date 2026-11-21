@@ -35,4 +35,8 @@ pip install -e $SCRIPT_DIR/scimatlab --no-deps
 pip install -e $SCRIPT_DIR/scistack --no-deps
 pip install -e $SCRIPT_DIR/scistack-gui --no-deps
 
+# Dev tool: live pytest progress for the Claude Code status line (inert unless
+# SCISTACK_PYTEST_PROGRESS_DIR is set; see tools/pytest-progress).
+pip install -e $SCRIPT_DIR/tools/pytest-progress --no-deps
+
 echo "All packages installed in editable mode."

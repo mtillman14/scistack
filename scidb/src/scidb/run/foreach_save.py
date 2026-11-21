@@ -108,6 +108,9 @@ class SaveReport:
     #: One line per write that failed, and the exception behind each.
     failures: "list[str]" = field(default_factory=list)
     causes: "list[BaseException]" = field(default_factory=list)
+    #: Every saved record with its value still in memory, for the anomaly
+    #: findings (``scidb.provenance.findings.check_saved``).
+    saved_outputs: list = field(default_factory=list)
 
     def fail(self, line: str, cause: BaseException) -> None:
         self.failures.append(line)
@@ -139,6 +142,7 @@ def _save_results(
     report = apply_save_plan(plan, state, db)
     if state.run_recorder is not None:
         state.run_recorder.saved(report.run_id, report.total_saved)
+        _check_findings(report, state, db)
 
     batch_total_elapsed = time.perf_counter() - batch_start_time
     _journal = Log.current_run()
@@ -149,6 +153,21 @@ def _save_results(
         f"transaction in {batch_total_elapsed:.3f}s "
         f"({report.total_saved / batch_total_elapsed:.1f} records/s)"
     )
+
+
+def _check_findings(report: SaveReport, state: "_ForEachState", db: "DatabaseManager") -> None:
+    """Anomaly findings over what this save wrote, while the values are in
+    memory (GitHub #28); the run's recorder stores them with its run id.
+    Never fails the run."""
+    if not report.saved_outputs:
+        return
+    try:
+        from scidb.provenance.findings import check_saved
+
+        found = check_saved(db, report.saved_outputs)
+        state.run_recorder.add_findings(found)
+    except Exception as e:  # findings must never fail a run
+        Log.warn(f"[findings] not checked: {type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -633,9 +652,23 @@ def _save_one_batch(
     # slot (output_num); items align with record_ids in order.
     schema_version = getattr(out_cls, "schema_version", 1)
     pooled_params = _pooled_params_of(state)
+    schema_key_set = plan.schema_keys
     for item, rid in zip(items, record_ids, strict=False):
         if not isinstance(rid, str):
             continue
+        if state.run_recorder is not None:
+            from scidb.provenance.findings import SavedOutput
+
+            report.saved_outputs.append(SavedOutput(
+                variable=out_cls.__name__,
+                record_id=rid,
+                location={
+                    k: str(v) for k, v in item.metadata.items()
+                    if k in schema_key_set and v is not None
+                },
+                value=item.data,
+                input_rids=[e.rid for e in (item.edges or ()) if getattr(e, "rid", None)],
+            ))
         report.graph_records.append(
             _GraphRecord(
                 out_cls.__name__,

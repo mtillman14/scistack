@@ -10,6 +10,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { callBackend } from '../api'
+import { SHOW_EXPECTED_LOCATIONS } from '../components/Expectation/expectationTypes'
 import { useBackendMessage } from '../hooks/useBackendMessage'
 import type { ExpectedFilter } from '../components/Expectation/ExpectedLocationsPopup'
 
@@ -43,7 +44,8 @@ export function useExpectationBadgeFetch(variables: string[]): Record<string, Ex
 
   const fetchBadges = useCallback(() => {
     const names = key ? key.split('\u0000') : []
-    if (names.length === 0) { setBadges({}); return }
+    // Hidden (GitHub #28): the badges are not fetched at all.
+    if (names.length === 0 || !SHOW_EXPECTED_LOCATIONS) { setBadges({}); return }
     const id = ++queryId.current
     callBackend('expectation_badges', { variables: names })
       .then(d => {

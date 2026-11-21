@@ -72,7 +72,9 @@ for domain in \
     "statsig.com" \
     "marketplace.visualstudio.com" \
     "vscode.blob.core.windows.net" \
-    "update.code.visualstudio.com"; do
+    "update.code.visualstudio.com" \
+    "pypi.org" \
+    "files.pythonhosted.org"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
@@ -134,4 +136,12 @@ if ! curl --connect-timeout 5 https://api.github.com/zen >/dev/null 2>&1; then
     exit 1
 else
     echo "Firewall verification passed - able to reach https://api.github.com as expected"
+fi
+
+# Verify PyPI access (pip installs into the Linux venv, /workspace/.venv-linux).
+# PyPI is on a CDN; its IPs are resolved once, above, at container start.
+if ! curl --connect-timeout 5 https://pypi.org/simple/pip/ >/dev/null 2>&1; then
+    echo "WARNING: unable to reach https://pypi.org - pip install will fail until the container restarts"
+else
+    echo "Firewall verification passed - able to reach https://pypi.org as expected"
 fi

@@ -132,11 +132,12 @@ _HISTORY = {
     "_variant_tombstone", "__scidb_schema_overrides",
     "_schema_key_type",  # dataset intent since 2026-11-01 (was in no section)
     "_schema_key_expectation", "_expectation_mark",  # dataset intent since 2026-11-07
+    "_schema_key_between",  # between keys, dataset intent (2026-11-21, GitHub #28)
     "_run_outcome",  # why a location got no output (2026-11-07)
     "_run_summary",  # what only the run knows: counts, timing, options (2026-11-15)
 }
 _INTENT = {
-    "__scidb_schema_overrides", "_schema_key_type",
+    "__scidb_schema_overrides", "_schema_key_type", "_schema_key_between",
     "_schema_key_expectation", "_expectation_mark",
 }
 _DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
@@ -164,7 +165,7 @@ def test_section_constants_do_not_shadow_table_decls():
     assert tables.INTENT.name == "_intent"
     assert tables.BUNDLE_INTENT == "intent"
     assert tables.intent_tables() == (
-        "__scidb_schema_overrides", "_schema_key_type",
+        "__scidb_schema_overrides", "_schema_key_type", "_schema_key_between",
         "_schema_key_expectation", "_expectation_mark",
     )
 

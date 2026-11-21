@@ -11,6 +11,7 @@ import { Handle, Position } from '@xyflow/react'
 import { variableNodeText, type NodeVariants } from './variableNodeText'
 import { useExpectationBadge } from '../../context/ExpectationBadgesContext'
 import { STATE_STYLES } from './runStateStyles'
+import { openDataView } from '../DataView/openDataView'
 
 export interface Variant {
   constants: Record<string, unknown>
@@ -25,6 +26,9 @@ export interface VariableNodeData {
   variant?: NodeVariants
   // 'pending' is GUI-only: a staged (unrun) constant value — not in the DB.
   run_state?: 'green' | 'pending' | 'red'
+  /** Variants made by code that is no longer the function's source (scidb
+   *  `variant_cards.variant_outdated`, GitHub #28). */
+  outdated_variants?: number
 }
 
 interface Props {
@@ -52,6 +56,19 @@ export default function VariableNode({ data }: Props) {
         </div>
         {text.heading && <div style={styles.heading}>{text.heading}</div>}
       </div>
+
+      {(data.outdated_variants ?? 0) > 0 && (
+        <button
+          type="button"
+          className="nodrag"
+          data-testid="outdated-variants"
+          style={{ ...styles.badge, ...styles.badgeOutdated }}
+          title="Variants made by code that is no longer the function's source. Click to clean them up."
+          onClick={e => { e.stopPropagation(); openDataView({ variables: [data.label], cleanup: true }) }}
+        >
+          ↻ {data.outdated_variants} outdated variant{data.outdated_variants === 1 ? '' : 's'}
+        </button>
+      )}
 
       {badge && (badge.problems > 0 || badge.marks > 0) && (
         <div style={styles.badges}>
@@ -98,6 +115,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: '16px',
   },
   badgeProblem: { border: '1px solid #dc2626', background: '#fef2f2', color: '#b91c1c' },
+  badgeOutdated: { border: '1px solid #d97706', background: '#fffbeb', color: '#92400e', marginTop: 4 },
   container: {
     background: '#fff',
     border: '2px solid #4a90d9',

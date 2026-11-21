@@ -59,6 +59,16 @@ scidb.include_schema("re-reviewed, recording was valid", 'subject', 1, 'trial', 
 tbl = scidb.list_exclusions()
 ```
 
+**Scoped to one variable** (`variable=`): only that variable is bad or absent
+here. Every step that reads it skips the location, and the step's outputs
+read ⊘ "inherited from <variable>". Two presets write the same rows:
+
+```python
+scidb.exclude_schema("EMG lead fell off", variable=RawEMG, subject=3, trial=2)
+scidb.mark_missing_expected(RawEMG, subject=4)      # scoped exclusion
+scidb.mark_present_expected(RawEMG, subject=4)      # scoped include
+```
+
 Exclusions live in the `__scidb_schema_overrides` table (one row per change,
 with its reason) and are applied automatically by `for_each` before the
 iteration loop: an excluded location is not run. They are not part of any
@@ -77,6 +87,23 @@ RawSignal.save(np.array([1, 2, 3]), subject=1, session="A")
 raw = RawSignal.load(subject=1, session="A")  # one match -> a BaseVariable; several -> a list
 all_versions = list(RawSignal.load(subject=1, session="A", version="all"))
 ```
+
+## Did that step work? (step verdict)
+
+```python
+from scidb.provenance.status import step_status
+
+v = step_status(db, filter_emg, [FilteredEMG])
+v.status_line()   # "✅ Succeeded · 40 of 40 present · ＋4 new to process"
+v.chip()          # the top reason: "✕ 3 failed", "↓ 2 missing input", "○ not run", ...
+```
+
+Every planned location (the product of each iteration key's levels, taken
+within each stratum of the declared between keys) gets one state: ✓ present,
+⚠ warning (an anomaly finding the run stored), ↻ outdated, ✕ failed, ↓ missing
+input, ＋ new, ○ not run, ⊘ excluded. `scidb status FN` prints the same.
+Try a function without saving anything: `scidb.run.try_step.try_step(fn,
+inputs, outputs, locations=...)`. Details: `docs/claude/pipeline-status.md`.
 
 ## Data Inventory (missing schema-key combinations)
 

@@ -34,7 +34,7 @@ shallowest uniform block wins, so a subject with no data at all is one row
 Statuses and counts are per combination and do not change.
 
 Owners (CLAUDE.md NOTE 4): :func:`schema_inventory` computes statuses,
-:func:`_strata` the strata and their per-key values, :func:`inventory_table`
+:func:`strata_of` the strata and their per-key values, :func:`inventory_table`
 decides which columns and rows a "missing only" / "all" view shows (and
 collapses them, via :func:`_collapse_rows`), and
 :func:`write_inventory_csv` writes that table. The CLI, the Inspector and the
@@ -198,7 +198,7 @@ def schema_inventory(
     sizes = {k: len(levels[k]) for k in chosen}
 
     if within_keys:
-        strata = _strata(db, within_keys, chosen, levels)
+        strata = strata_of(db, within_keys, chosen, levels)
     else:
         strata = [StratumSummary(values={}, levels={k: levels[k] for k in chosen})]
     for s in strata:
@@ -287,14 +287,17 @@ def schema_inventory(
     return inv
 
 
-def _strata(
+def strata_of(
     db: DatabaseManager,
     within: list[str],
     cross: list[str],
     levels: dict[str, list[str]],
 ) -> list[StratumSummary]:
     """The strata (existing combinations of the Within keys' values) and each
-    one's Cross-key values. The one owner of both.
+    one's Cross-key values. The one owner of both, public since GitHub #28:
+    planned locations (``scidb.provenance.status``) take a variable's levels
+    within each stratum of the between keys (``scidb.store.between_keys``)
+    through this, as the inventory does.
 
     Strata are in product order of the Within keys' global values; a stratum's
     values for a key keep the global (declared) order. A row NULL at a Within
@@ -569,3 +572,83 @@ def _resolve_cross(
             f"Schema key(s) {both} are both Cross and Within; choose one role."
         )
     return [k for k in schema_keys if k in keys]
+
+
+def describe_locations(
+    keys: list[str],
+    locations: "Iterable[dict]",
+    universe: "Iterable[dict] | None" = None,
+    *,
+    levels: "dict[str, list[str]] | None" = None,
+) -> list[str]:
+    """Some locations written compactly: ``subject=1, trial=11–20``.
+
+    The collapsed-block rule is :func:`_collapse_rows`' (THE owner): the
+    locations are the PRESENT rows of an inventory over *universe* (default:
+    the locations themselves, crossed), so a subject whose every trial is in
+    the set reads ``subject=1, trial=(all)``. On top of it, rows that differ
+    only in their deepest key and sit at consecutive levels merge into a
+    range ``11–20`` (level order is *levels*' or the values' sorted order).
+    """
+    keys = list(keys)
+    wanted = {tuple(str(loc.get(k)) for k in keys) for loc in locations}
+    if not wanted:
+        return []
+    if not keys:
+        return ["(the whole dataset)"]
+    space = (
+        {tuple(str(loc.get(k)) for k in keys) for loc in universe}
+        if universe is not None else set()
+    ) | wanted
+    lv = {
+        k: list((levels or {}).get(k) or sorted({row[i] for row in space}, key=_level_sort_key))
+        for i, k in enumerate(keys)
+    }
+    inv = SchemaInventory(keys=keys, levels=lv, columns=list(keys))
+    block = StratumSummary(values={}, levels=lv)
+    rows = []
+    for combo in itertools.product(*(lv[k] for k in keys)):
+        rows.append((*combo, PRESENT if combo in wanted else MISSING))
+    block.product_size = len(rows)
+    inv.rows = rows
+    inv.row_blocks = [block]
+    collapsed = [r[:-1] for r in _collapse_rows(inv) if r[-1] == PRESENT]
+    merged = _merge_ranges(collapsed, lv[keys[-1]])
+    return [", ".join(f"{k}={v}" for k, v in zip(keys, row)) for row in merged]
+
+
+def _level_sort_key(v: str):
+    try:
+        return (0, float(v), v)
+    except ValueError:
+        return (1, 0.0, v)
+
+
+def _merge_ranges(rows: list[tuple], last_levels: list[str]) -> list[tuple]:
+    """Consecutive rows equal but for the last key, at consecutive levels of
+    it, become one row with ``first–last`` there."""
+    pos = {v: i for i, v in enumerate(last_levels)}
+    out: list[tuple] = []
+    run: list[tuple] = []
+
+    def flush():
+        if not run:
+            return
+        if len(run) == 1:
+            out.append(run[0])
+        else:
+            out.append((*run[0][:-1], f"{run[0][-1]}–{run[-1][-1]}"))
+        run.clear()
+
+    for row in rows:
+        if (
+            run and row[:-1] == run[-1][:-1]
+            and row[-1] in pos and run[-1][-1] in pos
+            and pos[row[-1]] == pos[run[-1][-1]] + 1
+        ):
+            run.append(row)
+            continue
+        flush()
+        run.append(row)
+    flush()
+    return out

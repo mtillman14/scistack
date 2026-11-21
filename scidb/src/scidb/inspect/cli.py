@@ -218,6 +218,14 @@ def _cmd_verify(insp: Inspector, args) -> None:
 
 
 def _cmd_status(insp: Inspector, args) -> None:
+    """``scidb status``: the database overview; ``scidb status FN`` (or
+    ``--run RID``): that step's verdict. One subcommand, one owner of the
+    name; the verdict path lives in ``_cmd_step_status``."""
+    if getattr(args, "function", None) or getattr(args, "run", None):
+        Log.debug(f"scidb cli status: step verdict (function={args.function!r}, run={args.run!r})")
+        _cmd_step_status(insp, args)
+        return
+    Log.debug("scidb cli status: database overview")
     overview = insp.overview()
     if args.json:
         _emit_json(overview)
@@ -564,6 +572,25 @@ def _cmd_marks(insp: Inspector, args) -> None:
     print(render.render_expectation_marks(marks, insp._db.dataset_schema_keys))
 
 
+def _cmd_step_status(insp: Inspector, args) -> None:
+    """``scidb status FN``: the step verdict (scidb.provenance.status)."""
+    if args.run:
+        v = insp.run_verdict(args.run)
+    else:
+        v = insp.step_status(args.function, call_id=args.call_id)
+    if getattr(args, "json", False):
+        print(json.dumps(v.to_dict(location_limit=args.limit), indent=2, default=str))
+        return
+    print(f"{v.function_name}: {v.status_line()}")
+    for r in v.reasons:
+        where = "; ".join(
+            ", ".join(f"{k}={val}" for k, val in loc.items()) for loc in r.locations[:3]
+        )
+        print(f"  {r.text()}" + (f"  e.g. {where}" if where else ""))
+    for note in v.notes:
+        print(f"  note: {note}")
+
+
 def _cmd_inventory(insp: Inspector, args) -> None:
     from scidb.provenance.inventory import write_inventory_csv
 
@@ -583,7 +610,9 @@ def _cmd_inventory(insp: Inspector, args) -> None:
 
 
 def _cmd_exclude(mut: Mutator, args) -> None:
-    result = mut.exclude_schema(args.reason, **_parse_kv(args.schema))
+    result = mut.exclude_schema(
+        args.reason, variable=getattr(args, "variable", None), **_parse_kv(args.schema)
+    )
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
@@ -873,7 +902,9 @@ def _cmd_purge_trash(mut: Mutator, args) -> None:
 
 
 def _cmd_include(mut: Mutator, args) -> None:
-    result = mut.include_schema(args.reason, **_parse_kv(args.schema))
+    result = mut.include_schema(
+        args.reason, variable=getattr(args, "variable", None), **_parse_kv(args.schema)
+    )
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
@@ -1158,8 +1189,14 @@ def _add_commands(
     p = sub.add_parser(
         "status",
         parents=[parent],
-        help="Database overview: counts, size, last activity.",
+        help="Database overview: counts, size, last activity. With FN (or --run): "
+        "did that step work? The verdict and its reasons.",
     )
+    p.add_argument("function", nargs="?", default=None,
+                   help="A function name: print its step verdict instead of the overview.")
+    p.add_argument("--run", default=None, help="A stored run id instead (its verdict).")
+    p.add_argument("--call-id", default=None, help="Restrict the verdict to one call site.")
+    p.add_argument("--limit", type=int, default=200, help="Verdict locations per output in --json.")
     p.set_defaults(_handler=_cmd_status)
 
     from scidb.project.verify import DEFAULT_ATOL, DEFAULT_RTOL
@@ -1732,6 +1769,12 @@ def _add_commands(
         required=True,
         help="Why this data is excluded (stored in the audit trail).",
     )
+    p.add_argument(
+        "--variable",
+        default=None,
+        help="Scope the exclusion to one variable (only it is bad or absent here; "
+        "every step reading it skips the location).",
+    )
     p.set_defaults(_write_handler=_cmd_exclude)
 
     p = sub.add_parser(
@@ -1746,6 +1789,11 @@ def _add_commands(
         "--reason",
         required=True,
         help="Why this data is re-included (stored in the audit trail).",
+    )
+    p.add_argument(
+        "--variable",
+        default=None,
+        help="Re-include for one variable only (a scoped include).",
     )
     p.set_defaults(_write_handler=_cmd_include)
 

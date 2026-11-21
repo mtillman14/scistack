@@ -154,6 +154,7 @@ export interface ApiParams {
   add_project_path: PathBody
   cancel_run: RunRef
   change_schema_keys: ChangeSchemaKeysRequest
+  cleanup_outdated: CleanupOutdatedRequest
   clear_data: ClearDataRequest
   create_builtin_function: CreateBuiltinFunctionRequest
   create_function: CreateFunctionRequest
@@ -163,6 +164,7 @@ export interface ApiParams {
   create_path_input: PathInputCreate
   create_pipeline: PipelineCreate
   create_variable: CreateVariableRequest
+  data_view: DataViewQuery
   declare_library_requirements: DeclareRequirements
   deep_copy_path_input: NodeRef
   delete_edge: EdgeDelete
@@ -283,6 +285,7 @@ export interface ApiParams {
   schema_inventory: InventoryRequest
   schema_key_proposal: SchemaKeyProposalRequest
   schema_key_type_impact: SchemaKeyTypeQuery
+  set_between_keys: BetweenKeysUpdate
   set_distribute: DistributeOption
   set_entities_file: PathBody
   set_key_expectation: KeyExpectationUpdate
@@ -378,6 +381,14 @@ export interface ChangeSchemaKeysRequest {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CleanupOutdatedRequest".
+ */
+export interface CleanupOutdatedRequest {
+  reason?: string
+  targets: object[]
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "ClearDataRequest".
  */
 export interface ClearDataRequest {
@@ -442,6 +453,22 @@ export interface CreateVariableRequest {
   docstring?: string | null
   language?: string | null
   name?: string | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DataViewQuery".
+ */
+export interface DataViewQuery {
+  call_id?: string | null
+  function_name?: string | null
+  outputs?: string[] | null
+  part: string
+  record_ids?: string[] | null
+  variable?: string | null
+  variables?: string[] | null
+  variants?: {
+    [k: string]: object
+  } | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -568,6 +595,7 @@ export interface InventoryRowChange {
   columns: string[]
   reason: string
   row: string[]
+  variable?: string | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1815,6 +1843,13 @@ export interface SchemaKeyProposalRequest {
 export interface SchemaKeyTypeQuery {
   key: string
   key_type?: string | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "BetweenKeysUpdate".
+ */
+export interface BetweenKeysUpdate {
+  keys: string[]
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

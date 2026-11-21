@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
@@ -68,6 +70,22 @@ _COLUMNS = (
 
 #: Failure groups kept in ``notes`` (the per-location rows are ``_run_outcome``).
 _MAX_NOTE_GROUPS = 50
+
+#: Set inside :func:`recording_suppressed`: a run that must leave nothing
+#: behind (Try, GitHub #28) writes no ``_run_summary``, no ``_run_outcome``
+#: and no findings.
+_SUPPRESSED: ContextVar[bool] = ContextVar("scidb_run_recording_suppressed", default=False)
+
+
+@contextmanager
+def recording_suppressed():
+    """Runs started inside write no run record at all (Try mode: "nothing
+    is written, not even ``_run_summary``"). Thread- and task-local."""
+    token = _SUPPRESSED.set(True)
+    try:
+        yield
+    finally:
+        _SUPPRESSED.reset(token)
 
 
 @dataclass(frozen=True)
@@ -218,6 +236,8 @@ class RunRecorder:
         self.failures: list[dict] = []
         self.output_skips: dict = {}
         self.outcomes = OutcomeCollector()
+        #: Anomaly findings over the saved records (scidb.provenance.findings).
+        self.findings: list = []
         #: The ``_run`` row's id, once the save has written one.
         self.saved_run_id: str | None = None
         self.saved_records = 0
@@ -263,6 +283,10 @@ class RunRecorder:
             self.saved_run_id = run_id
         self.saved_records += int(n_records or 0)
 
+    def add_findings(self, findings: list) -> None:
+        """The save's anomaly findings, written with the run's id."""
+        self.findings.extend(findings or [])
+
     # ---- writing ---------------------------------------------------------
 
     def finish(
@@ -286,6 +310,9 @@ class RunRecorder:
 
     def _finish(self, db, output_types, up_to_date, progress_fn) -> str | None:
         fn = self.function_name
+        if _SUPPRESSED.get():
+            Log.debug(f"[run_summary] {fn}: recording suppressed (Try); run not recorded")
+            return None
         if db is None:
             Log.debug(f"[run_summary] {fn}: no database; run not recorded")
             return None
@@ -340,8 +367,19 @@ class RunRecorder:
                     f"[outcomes] {fn}: could not store {len(self.outcomes.events)} "
                     f"location outcome(s): {type(e).__name__}: {e}"
                 )
+        n_findings = 0
+        if self.findings:
+            try:
+                from scidb.provenance.findings import write_findings
+
+                n_findings = write_findings(db, fn, output_types, self.findings, run_id)
+            except Exception as e:  # never fail a run over a finding
+                Log.warn(
+                    f"[findings] {fn}: could not store {len(self.findings)} finding(s): "
+                    f"{type(e).__name__}: {e}"
+                )
         Log.info(
-            f"[run_summary] run={run_id} group={group_id or '-'} fn={fn} "
+            f"[run_summary] run={run_id} group={group_id or '-'} fn={fn} findings={n_findings} "
             f"total={row[6]} computed={c['completed']} up_to_date={up_to_date} "
             f"failed={failed} no_data={c['no_data']} saved_records={self.saved_records} "
             f"outcomes={n_outcomes} had_run_row={self.saved_run_id is not None} "

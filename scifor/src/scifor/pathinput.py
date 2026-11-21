@@ -5,6 +5,7 @@ import json
 import os
 import re
 import string as _string
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,16 @@ from .project.root import project_root
 #: has a much larger problem. ``clear_listing_cache()`` exists for tests and
 #: for the "I just changed the filesystem" case.
 _DIR_CACHE: dict[str, tuple[int, list[str]]] = {}
+
+#: A listing whose directory mtime is this recent is read but NOT cached
+#: ("racily clean", as git calls it; 2026-11-21). File timestamps come from a
+#: coarse clock (one kernel tick, ~4 ms on Linux; 1–2 s on HFS+/FAT/exFAT), so
+#: a directory changed in the same tick as our read keeps the mtime we stored,
+#: and the mtime check would serve the stale listing until the directory
+#: changed again: a new subject folder invisible for good. Two seconds covers
+#: the coarsest common filesystem. The cost is only that a directory touched in
+#: the last two seconds is re-read on each walk.
+_RACY_WINDOW_NS = 2_000_000_000
 
 
 def validate_path_input_name(name: Any) -> str:
@@ -333,6 +344,8 @@ class PathInput:
         # The cache ITSELF is module-level (`_DIR_CACHE`) — see there.
         self._dir_cache_reads = 0
         self._dir_cache_hits = 0
+        # Reads too recent to cache (see _RACY_WINDOW_NS); a subset of reads.
+        self._dir_cache_racy = 0
         # Where the last discover() walk stopped; read by _log_zero_result.
         self._deepest_miss: "dict | None" = None
         self.aliases = aliases or {}
@@ -868,8 +881,18 @@ class PathInput:
             entries = sorted(os.listdir(directory))
         except OSError:
             return []
-        _DIR_CACHE[key] = (mtime, entries)
         self._dir_cache_reads += 1
+        if time.time_ns() - mtime < _RACY_WINDOW_NS:
+            # Changed too recently to trust the mtime: a later change within
+            # the same timestamp tick would be invisible (see _RACY_WINDOW_NS).
+            _DIR_CACHE.pop(key, None)
+            self._dir_cache_racy += 1
+            Log.debug(
+                "[pathinput] %s changed in the last %.1f s; listing not cached",
+                key, _RACY_WINDOW_NS / 1e9, layer="scifor",
+            )
+            return entries
+        _DIR_CACHE[key] = (mtime, entries)
         return entries
 
     def _fallback_scan(
@@ -1137,6 +1160,7 @@ class PathInput:
         # round-trips the walk cost; `cached` says how many the listing cache
         # absorbed, which is the number that should climb on a re-open.
         reads_before, hits_before = self._dir_cache_reads, self._dir_cache_hits
+        racy_before = self._dir_cache_racy
         self._deepest_miss = None
         with Log.timer(
             "pathinput_discover", layer="scifor", extra=str(root)
@@ -1149,10 +1173,11 @@ class PathInput:
                     self._walk(root, segments, 0, {}, results, enforce_kind=False)
         Log.info(
             "pathinput_discover: %d combo(s); %d director(ies) read from disk, "
-            "%d served from the listing cache",
+            "%d served from the listing cache (%d too recently changed to cache)",
             len(results),
             self._dir_cache_reads - reads_before,
             self._dir_cache_hits - hits_before,
+            self._dir_cache_racy - racy_before,
             layer="scifor",
         )
         if not results:

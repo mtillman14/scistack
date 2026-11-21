@@ -359,6 +359,24 @@ def _carry_declarations(duck, renames: dict, deleted: list, source: str) -> None
                 "INSERT INTO _schema_key_type (key, key_type, declared_at, source) VALUES (?, NULL, ?, ?)",
                 [old, now, source],
             )
+    if duck.table_exists("_schema_key_between"):
+        # Between keys (scidb.store.between_keys) are keyed by name too.
+        for old in list(renames) + list(deleted):
+            row = duck.fetchone(
+                "SELECT is_between FROM _schema_key_between WHERE key = ? "
+                "ORDER BY declared_at DESC LIMIT 1", [old]
+            )
+            if row is None or not row[0]:
+                continue
+            if old in renames:
+                duck.execute(
+                    "INSERT INTO _schema_key_between (key, is_between, declared_at, source) VALUES (?, TRUE, ?, ?)",
+                    [renames[old], now, source],
+                )
+            duck.execute(
+                "INSERT INTO _schema_key_between (key, is_between, declared_at, source) VALUES (?, FALSE, ?, ?)",
+                [old, now, source],
+            )
     if duck.table_exists("_schema_key_expectation"):
         for old in list(renames) + list(deleted):
             row = duck.fetchone(

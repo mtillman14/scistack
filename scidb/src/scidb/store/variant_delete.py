@@ -53,6 +53,10 @@ Target kinds (a list of dicts, combined as a union):
   ``declared_name``, else its argument name). This is the canvas Parameter
   node's identity, so "remove 10 from this Parameter" needs no canvas wiring.
 
+Any target may carry ``"locations"``: a location selection (``include`` /
+``exclude_levels``, ``scifor.locations.LocationFilter``) restricting its own
+records before the downstream closure (GitHub #28's per-location delete).
+
 Whole-entity targets (the sidebar's Delete, GitHub #26):
 
 * ``{"variable": V}``: every record of V, ``exclude_variant``-hidden ones too;
@@ -432,6 +436,55 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
     return seeds, warnings
 
 
+def _located_seeds(db: "DatabaseManager", targets: list[dict]) -> tuple[set, list[str]]:
+    """:func:`_seed_records`, with each target's optional ``locations``
+    (the ``include`` / ``exclude_levels`` pair of a location selection,
+    ``scifor.locations.LocationFilter``) restricting ITS seed records to the
+    selected locations (GitHub #28: "Delete V2 here…"). The downstream
+    closure, trash and undo are unchanged: they follow from the seeds."""
+    if not any("locations" in t for t in targets):
+        return _seed_records(db, targets)
+    seeds: set = set()
+    warnings: list[str] = []
+    for target in targets:
+        plain = {k: v for k, v in target.items() if k != "locations"}
+        found, w = _seed_records(db, [plain])
+        warnings += w
+        if target.get("locations") is not None:
+            found = _restrict_to_locations(db, found, target["locations"], warnings, plain)
+        seeds |= found
+    return seeds, warnings
+
+
+def _restrict_to_locations(db, rids: set, locations, warnings: list[str], target: dict) -> set:
+    from scifor.locations import LocationFilter
+
+    from scidb.provenance import query as pq
+
+    flt = LocationFilter.of(locations)
+    if flt.is_empty() or not rids:
+        return rids
+    keys = list(db.dataset_schema_keys)
+    sid_of = {
+        rid: sid
+        for rid, sid in pq._chunked_in(
+            db._duck, "SELECT record_id, schema_id FROM _record WHERE record_id IN ({ph})", sorted(rids)
+        )
+    }
+    locs = pq._schema_locations(db._duck, set(sid_of.values()), keys)
+    kept = {
+        rid for rid in rids
+        if flt.matches({k: str(v) for k, v in locs.get(sid_of.get(rid), {}).items() if v is not None})
+    }
+    Log.info(
+        f"delete_plan: target {target} restricted to locations {flt.to_dict()}: "
+        f"{len(kept)} of {len(rids)} record(s) kept"
+    )
+    if not kept:
+        warnings.append(f"{target}: no records at the selected locations")
+    return kept
+
+
 def _downstream(duck, seeds: set) -> set:
     """Every record computed, at any depth, from ``seeds`` (seeds excluded)."""
     from scidb.provenance.query import _chunked_in
@@ -463,7 +516,7 @@ def delete_plan(db: "DatabaseManager", targets: list[dict]) -> DeletePlan:
     t0 = time.perf_counter()
     if not targets:
         raise ValueError("delete: no targets")
-    seeds, warnings = _seed_records(db, targets)
+    seeds, warnings = _located_seeds(db, targets)
     downstream = _downstream(duck, seeds) if seeds else set()
     rids = sorted(seeds | downstream)
     rid_set = set(rids)

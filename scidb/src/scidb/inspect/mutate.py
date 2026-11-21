@@ -135,20 +135,25 @@ class Mutator:
     # -- write operations (each wraps an owning-layer primitive) ------------
 
     @_mutation
-    def exclude_schema(self, reason: str, **schema_keys) -> MutationResult:
-        """Mark a schema-key combination excluded from every analysis.
+    def exclude_schema(self, reason: str, variable=None, **schema_keys) -> MutationResult:
+        """Mark a schema-key combination excluded from every analysis, or,
+        with *variable*, for that variable only (GitHub #28).
 
         Values are passed verbatim (schema values are strings; zero-padded
         values like "01" survive). Omitted keys act as wildcards.
         """
-        from scidb.store.exclusions import exclude_schema
+        from scidb.store.exclusions import exclude_schema_dict
 
-        exclude_schema(reason, db=self._db, **schema_keys)
+        exclude_schema_dict(dict(schema_keys), reason, db=self._db, variable=variable)
         return MutationResult(
             operation="exclude_schema",
-            target=dict(schema_keys),
+            target={**schema_keys, **({"variable": variable} if variable else {})},
             reason=reason,
-            detail="excluded from all analyses (for_each skips it; history preserved)",
+            detail=(
+                f"excluded for {variable} (every step reading it skips it; history preserved)"
+                if variable
+                else "excluded from all analyses (for_each skips it; history preserved)"
+            ),
         )
 
     @_mutation
@@ -404,14 +409,15 @@ class Mutator:
         )
 
     @_mutation
-    def include_schema(self, reason: str, **schema_keys) -> MutationResult:
-        """Re-include a previously excluded schema-key combination."""
-        from scidb.store.exclusions import include_schema
+    def include_schema(self, reason: str, variable=None, **schema_keys) -> MutationResult:
+        """Re-include a previously excluded schema-key combination (for
+        *variable* only, when given)."""
+        from scidb.store.exclusions import include_schema_dict
 
-        include_schema(reason, db=self._db, **schema_keys)
+        include_schema_dict(dict(schema_keys), reason, db=self._db, variable=variable)
         return MutationResult(
             operation="include_schema",
-            target=dict(schema_keys),
+            target={**schema_keys, **({"variable": variable} if variable else {})},
             reason=reason,
             detail="re-included (the exclusion history rows are preserved)",
         )

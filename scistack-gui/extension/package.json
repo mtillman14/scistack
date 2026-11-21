@@ -68,6 +68,14 @@
       {
         "command": "scistack.importProjectBundle",
         "title": "SciStack: Import Project Bundle…"
+      },
+      {
+        "command": "scistack.revealStep",
+        "title": "SciStack: Show Step in the Data View"
+      },
+      {
+        "command": "scistack.cleanUpOutdated",
+        "title": "SciStack: Clean Up Outdated Variants…"
       }
     ],
     "configuration": {
@@ -112,8 +120,38 @@
           "when": "resourceExtname == .csv",
           "group": "scistack@1"
         }
+      ],
+      "view/item/context": [
+        {
+          "command": "scistack.cleanUpOutdated",
+          "when": "view == scistackPipeline && viewItem == scistackSession",
+          "group": "scistack@1"
+        }
       ]
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "scistack",
+          "title": "SciStack",
+          "icon": "media/scistack.svg"
+        }
+      ]
+    },
+    "views": {
+      "scistack": [
+        {
+          "id": "scistackPipeline",
+          "name": "Pipeline"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "scistackPipeline",
+        "contents": "No pipeline open.\n[Open Pipeline](command:scistack.openPipeline)"
+      }
+    ]
   },
   "scripts": {
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",

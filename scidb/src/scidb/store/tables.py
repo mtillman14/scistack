@@ -340,9 +340,14 @@ SCHEMA_OVERRIDES = _core(
         {_schema_columns(keys)},
         status     BOOLEAN   NOT NULL,
         reason     TEXT      NOT NULL,
-        changed_at TIMESTAMP NOT NULL
+        changed_at TIMESTAMP NOT NULL,
+        scoped_to  VARCHAR
     )
     """,
+    # The variable an exclusion is scoped to (NULL = everything): added
+    # 2026-11-20 with GitHub #28 (scidb.store.exclusions, "Scoped exclusions").
+    # Not named `variable`: a schema key may be, and it is a column here too.
+    "ALTER TABLE __scidb_schema_overrides ADD COLUMN IF NOT EXISTS scoped_to VARCHAR",
     bundle=BUNDLE_INTENT, kept="dataset intent: governs a re-run",
 )
 
@@ -686,6 +691,24 @@ SCHEMA_KEY_TYPE = _core(
     bundle=BUNDLE_INTENT, kept="schema key types (declarations)",
 )
 
+# Between keys (scidb.store.between_keys, the one owner; GitHub #28): a
+# key whose levels are taken separately within each stratum of the between
+# keys when planned locations are built (a study arm, a site). Declared
+# explicitly, never worked out from the data. Append-only: the newest row per
+# key is current. Stored with the key types, in the dataset intent.
+SCHEMA_KEY_BETWEEN = _core(
+    "_schema_key_between",
+    """
+    CREATE TABLE IF NOT EXISTS _schema_key_between (
+        key         VARCHAR NOT NULL,
+        is_between  BOOLEAN NOT NULL,
+        declared_at VARCHAR NOT NULL,
+        source      VARCHAR NOT NULL
+    )
+    """,
+    bundle=BUNDLE_INTENT, kept="between keys (declarations)",
+)
+
 # Each schema key's PARENT (scidb.store.schema_tree_store, the one owner;
 # scifor.schema.SchemaTree holds the rules). One row per key, the whole tree,
 # replaced as a unit. The tree is a default, never a firewall: a record may
@@ -726,6 +749,10 @@ RUN_OUTCOME = _core(
     # The run that saw it (`_run_summary.run_id`): added 2026-11-15, NULL on
     # rows written before it.
     "ALTER TABLE _run_outcome ADD COLUMN IF NOT EXISTS run_id VARCHAR",
+    # Anomaly findings (scidb.provenance.findings, GitHub #28): outcome
+    # 'finding', the record it is about, and its kind. Added 2026-11-20.
+    "ALTER TABLE _run_outcome ADD COLUMN IF NOT EXISTS record_id VARCHAR",
+    "ALTER TABLE _run_outcome ADD COLUMN IF NOT EXISTS finding VARCHAR",
     bundle=BUNDLE_HISTORY, cleared=True,
 )
 

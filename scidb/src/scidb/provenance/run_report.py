@@ -113,9 +113,19 @@ class RunReport:
     marks: list[dict]
     attention: list[Attention] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: "Did it work?": ``scidb.provenance.status.run_verdict``'s dict, or
+    #: None when it could not be computed (a note says why).
+    verdict: dict | None = None
+    #: "What's new?": ``scidb.provenance.whats_new`` per output variable.
+    whats_new: list[dict] = field(default_factory=list)
+    #: "What looks odd?": the anomaly findings the run stored.
+    findings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
+            "verdict": self.verdict,
+            "whats_new": list(self.whats_new),
+            "findings": list(self.findings),
             "summary": self.summary.to_dict(),
             "run": dict(self.run),
             "settings": self.settings,
@@ -342,6 +352,8 @@ def run_report(db: "DatabaseManager", run_id: str) -> RunReport:
             f"computed them and are not listed here."
         )
     attention = _summary_attention(db, summary, graph, outputs)
+    verdict, whats_new, findings = _did_it_work(db, summary, notes)
+    t_verdict = time.perf_counter()
     report = RunReport(
         summary=summary,
         run={**graph.run_row, "timestamp": _text(graph.run_row["timestamp"])},
@@ -352,9 +364,13 @@ def run_report(db: "DatabaseManager", run_id: str) -> RunReport:
         marks=marks,
         attention=attention,
         notes=notes,
+        verdict=verdict,
+        whats_new=whats_new,
+        findings=findings,
     )
     Log.info(
         f"[run_report] run={run_id} fn={summary.function_name}: "
+        f"verdict={(verdict or {}).get('word')} in {(t_verdict - t_cards) * 1000:.1f} ms; "
         f"{len(graph.invocation_ids)} invocation(s), {len(inputs)} input(s), "
         f"{len(outputs)} output(s), {len(exclusions)} exclusion(s), "
         f"{len(attention)} attention item(s); graph "
@@ -366,6 +382,33 @@ def run_report(db: "DatabaseManager", run_id: str) -> RunReport:
 
 def _text(value: Any) -> Any:
     return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _did_it_work(db: "DatabaseManager", summary: RunSummary, notes: list[str]):
+    """The report's first three sections: the verdict (``status.run_verdict``),
+    what's new (``whats_new``) and the findings. A section that cannot be
+    computed becomes a note, never a refused report."""
+    from scidb.provenance.findings import findings_of_run
+    from scidb.provenance.status import run_verdict
+    from scidb.provenance.whats_new import whats_new
+
+    verdict = None
+    try:
+        verdict = run_verdict(db, summary.run_id).to_dict(location_limit=200)
+    except Exception as e:
+        Log.warn(f"[run_report] run={summary.run_id}: verdict not computed: {type(e).__name__}: {e}")
+        notes.append(f"The verdict could not be computed: {type(e).__name__}: {e}")
+    news: list[dict] = []
+    try:
+        news = [n.to_dict() for n in whats_new(db, summary)]
+    except Exception as e:
+        Log.warn(f"[run_report] run={summary.run_id}: what's new not computed: {type(e).__name__}: {e}")
+    try:
+        found = findings_of_run(db, summary.run_id)
+    except Exception as e:
+        Log.warn(f"[run_report] run={summary.run_id}: findings not read: {type(e).__name__}: {e}")
+        found = []
+    return verdict, news, found
 
 
 def _settings(duck, summary: RunSummary, graph: _RunGraph) -> dict:
@@ -566,7 +609,9 @@ def _summary_attention(
             NOTE, "function_versions",
             "The run's records come from more than one version of the function.",
         ))
-    out.extend(_expectation_attention(db, [c["variable"] for c in outputs]))
+    # Expected locations are hidden from the GUI since GitHub #28: the verdict
+    # (status.run_verdict) answers "what is still missing" with the planned
+    # locations instead. _expectation_attention stays for the CLI (fence).
     return out
 
 
@@ -803,7 +848,8 @@ def _outcome_rows(db: "DatabaseManager", summary: RunSummary, schema_keys: list[
         return []
     key_cols = "".join(f'"{k}", ' for k in schema_keys)
     rows = duck.fetchall(
-        f"SELECT {key_cols}outcome, blame, probable, reason FROM {TABLE} WHERE run_id = ?",
+        f"SELECT {key_cols}outcome, blame, probable, reason FROM {TABLE} "
+        f"WHERE run_id = ? AND outcome IN ('failed', 'no_data')",
         [summary.run_id],
     )
     from scistacklog.journal import blame_headline

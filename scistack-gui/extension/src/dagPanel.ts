@@ -8,6 +8,8 @@
  *   - Handles panel lifecycle (dispose, reveal)
  */
 
+import { pipelineTree } from './pipelineTree';
+import type { GraphPayload } from './pipelineTreeCore';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Session } from './session';
@@ -356,6 +358,14 @@ export class DagPanel {
             method,
             (msg.params ?? {}) as Record<string, unknown>,
           );
+          // The Activity Bar tree shows the canvas's own verdicts (GitHub #28):
+          // relayed from the root canvas's graph, no endpoint of its own.
+          if (method === 'get_pipeline') {
+            const scope = ((msg.params ?? {}) as { pipeline_id?: string }).pipeline_id;
+            if (!scope || scope === 'main') {
+              pipelineTree.update(this.session.id, this.session.label, result as GraphPayload);
+            }
+          }
           // Send response back to Webview with the matching id
           this.panel.webview.postMessage({
             id: msg.id,

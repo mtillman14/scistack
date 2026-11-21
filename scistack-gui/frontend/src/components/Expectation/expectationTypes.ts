@@ -7,6 +7,15 @@
  * tone colours.
  */
 
+/**
+ * Hidden from the GUI since GitHub #28: exclusions absorb "expected"
+ * (scoped exclusions + the two mark presets, in the data view). The popup,
+ * marks, ✕N/🏷N badges and Coverage cells stay in the code (Chesterton's
+ * fence: hide, don't delete) behind this one switch, and the scidb code and
+ * CLI (`scidb expected`) are unchanged.
+ */
+export const SHOW_EXPECTED_LOCATIONS = false
+
 export type Status =
   | 'present'
   | 'missing_unexpected'

@@ -99,6 +99,10 @@ _INTENT_LABELS: dict[str, tuple[str, str]] = {
         "schema key type declaration(s)",
         "re-declare them (db.set_schema_key_type, or the Numeric box on the PathInput)",
     ),
+    "_schema_key_between": (
+        "between key declaration(s)",
+        "declare them again (scidb.store.between_keys.set_between, or the Schema Keys dialog)",
+    ),
     "_schema_key_expectation": (
         "schema key expectation setting(s)",
         "set them again (scidb set-key, or the Expected locations popup)",
@@ -126,6 +130,7 @@ def _value_free(schema_keys: list[str]) -> "dict[str, tuple[str | None, list[str
     names_no_value = " AND ".join(f'"{k}" IS NULL' for k in schema_keys) or "TRUE"
     return {
         "_schema_key_type": (None, []),
+        "_schema_key_between": (None, []),
         # Shared / per parent is about the key; the declared values are the data's.
         "_schema_key_expectation": (None, ["declared_values"]),
         "_expectation_mark": (names_no_value, []),

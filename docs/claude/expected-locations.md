@@ -1,5 +1,10 @@
 # Expected locations
 
+> **Hidden from the GUI 2026-11-20 (GitHub #28):** exclusions absorb "expected"
+> (scoped exclusions, "Mark missing / present as expected" presets); the popup,
+> marks and badges sit behind `SHOW_EXPECTED_LOCATIONS`. The scidb code and
+> `scidb expected` are unchanged. See [pipeline-status.md](pipeline-status.md).
+
 *Written 2026-11-07. Plan: `.claude/plan-variable-expected-locations.md`.
 Owner: `scidb/provenance/expectation.py`. Tests: `scidb/tests/test_expectation.py`.*
 

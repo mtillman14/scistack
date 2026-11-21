@@ -259,6 +259,7 @@ export default function SchemaKeysDialog({ nodeId = null, fnName = '', dataColum
         {dropped.length > 0 && (
           <div style={styles.note}>Removed: {dropped.join(', ')}</div>
         )}
+        {!nodeId && !loading && <BetweenKeys />}
         {error && <div style={styles.error}>{error}</div>}
         <div style={styles.footer}>
           <button type="button" style={styles.button} onClick={onClose} disabled={busy}>Cancel</button>
@@ -272,6 +273,59 @@ export default function SchemaKeysDialog({ nodeId = null, fnName = '', dataColum
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Between keys (GitHub #28): a key whose levels are taken within each
+ * stratum of the between keys when planned locations are built (a study
+ * arm, a site). Declared explicitly, never worked out from the data; an
+ * undeclared key is crossed. scidb owns the setting
+ * (`scidb.store.between_keys`); a tick saves it at once.
+ */
+function BetweenKeys() {
+  const [keys, setKeys] = useState<string[]>([])
+  const [between, setBetween] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    callBackend('data_view', { part: 'between' })
+      .then(r => {
+        const d = r as { between: string[]; schema_keys: string[] }
+        setKeys(d.schema_keys)
+        setBetween(d.between)
+      })
+      .catch(err => setError((err as Error).message))
+  }, [])
+
+  const toggle = async (key: string) => {
+    const next = between.includes(key) ? between.filter(k => k !== key) : [...between, key]
+    try {
+      const r = await callBackend('set_between_keys', { keys: next }) as { between: string[] }
+      setBetween(r.between)
+      setError(null)
+      console.info('[SchemaKeys] between keys now', r.between)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  if (keys.length === 0) return null
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={styles.heading}>Between keys</div>
+      <div style={styles.note}>
+        Tick a key that splits the study into groups (an arm, a site). Other keys' levels are then
+        expected only within each group, so a subject of one arm is never missing at another arm's
+        sessions. An unticked key is crossed with every other.
+      </div>
+      {keys.map(k => (
+        <label key={k} style={{ ...styles.mono, display: 'inline-flex', gap: 4, marginRight: 12 }}>
+          <input type="checkbox" checked={between.includes(k)} onChange={() => void toggle(k)} /> {k}
+        </label>
+      ))}
+      {error && <div style={styles.error}>{error}</div>}
     </div>
   )
 }

@@ -20,6 +20,7 @@ import { PlotPanel, PlotTarget } from './plotPanel';
 import { declarationOf, describeSchema, parseSchemaText } from './schemaKeysText';
 import type { SchemaDeclaration } from './schemaKeysText';
 import { Session, SessionManager } from './session';
+import { pipelineTree } from './pipelineTree';
 
 let sessions: SessionManager;
 let outputChannel: vscode.OutputChannel;
@@ -327,6 +328,36 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // The Activity Bar "SciStack" view (GitHub #28): steps, verdicts, exclusions.
+  pipelineTree.setChannel(outputChannel);
+  const treeView = vscode.window.createTreeView('scistackPipeline', { treeDataProvider: pipelineTree });
+  sessions.onDidChange(() => pipelineTree.prune(sessions.all().map(s => s.id)));
+  const revealStep = vscode.commands.registerCommand(
+    'scistack.revealStep',
+    (sessionId?: string, nodeId?: string, variables?: string[], states?: string[]) => {
+      const session = sessions.resolveForCommand('revealStep', sessionId);
+      if (!session?.dagPanel) {
+        outputChannel.appendLine(`[tree] revealStep: no canvas open for ${sessionId ?? '(active)'}`);
+        return;
+      }
+      session.dagPanel.reveal();
+      session.dagPanel.postMessage({
+        method: 'reveal_step',
+        params: { node_id: nodeId ?? null, variables: variables ?? [], states: states ?? [] },
+      });
+      outputChannel.appendLine(`[tree] revealStep ${nodeId} → data view (${(states ?? []).join(',') || 'all'})`);
+    },
+  );
+  const cleanUpOutdated = vscode.commands.registerCommand(
+    'scistack.cleanUpOutdated',
+    (item?: { sessionId?: string }) => {
+      const session = sessions.resolveForCommand('cleanUpOutdated', item?.sessionId);
+      if (!session?.dagPanel) return;
+      session.dagPanel.reveal();
+      session.dagPanel.postMessage({ method: 'open_data_view', params: { cleanup: true } });
+    },
+  );
+
   context.subscriptions.push(
     openPipeline,
     restartPython,
@@ -338,6 +369,9 @@ export function activate(context: vscode.ExtensionContext) {
     summarizeVariable,
     plotCsv,
     importBundle,
+    treeView,
+    revealStep,
+    cleanUpOutdated,
     outputChannel
   );
 }

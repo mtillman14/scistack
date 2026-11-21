@@ -1,8 +1,26 @@
 {
   "env": {
-    "ENABLE_LSP_TOOL": "1"
+    "ENABLE_LSP_TOOL": "1",
+    "SCISTACK_PYTEST_PROGRESS_DIR": "/workspace/.pytest-progress"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/workspace/.claude/statusline.sh",
+    "refreshInterval": 2
   },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv /workspace/.venv-linux)",
+      "Bash(/workspace/.venv-linux/bin/pip install *)",
+      "Bash(/workspace/.venv-linux/bin/python -m pytest *)"
+    ]
+  },
+  "sandbox": {
+    "network": {
+      "allowedDomains": ["pypi.org", "files.pythonhosted.org"]
+    }
   }
 }

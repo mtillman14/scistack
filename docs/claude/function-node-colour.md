@@ -1,5 +1,9 @@
 # How a function node's colour is decided
 
+> **Added 2026-11-20 (GitHub #28):** green/red still means "does this need
+> running?"; a reason chip on the node says why (scidb's step verdict). See
+> [pipeline-status.md](pipeline-status.md).
+
 Written 2026-10-17 after a scistack.log triage: `pandas.read_csv`, rewired from
 a hidden `RatingsData` to a new, empty `Rating`, stayed green. Read with
 `manual-edges-on-history-nodes.md` (the rule "visible edges are the ground

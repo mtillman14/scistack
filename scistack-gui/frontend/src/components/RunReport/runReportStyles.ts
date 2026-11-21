@@ -57,6 +57,10 @@ export const styles: Record<string, CSSProperties> = {
   },
   dim: { color: '#888', fontSize: 11 },
   statusLine: { margin: '6px 0', fontSize: 13 },
+  // "Did it work?" (GitHub #28): the verdict leads the report.
+  verdictLine: { margin: '4px 0 6px', fontSize: 15, fontWeight: 700 },
+  // "What's new?": new locations are announced prominently, once.
+  newHeadline: { fontSize: 13, fontWeight: 700, color: '#7dd3fc' },
   section: { marginTop: 12 },
   sectionTitle: {
     color: '#9aa0ff',

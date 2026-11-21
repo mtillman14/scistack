@@ -49,6 +49,10 @@ TABLE = RUN_OUTCOME.name
 FAILED = "failed"
 NO_DATA = "no_data"
 OUTCOMES = (FAILED, NO_DATA)
+#: An anomaly finding on a saved record (``scidb.provenance.findings``, the
+#: owner of those rows). Not an outcome of a missing location: every reader
+#: here leaves them out.
+FINDING = "finding"
 
 #: Rows per INSERT statement.
 _CHUNK = 500
@@ -192,7 +196,7 @@ def latest_outcomes(duck, schema_keys: list[str], variable: str) -> list[Outcome
                 ORDER BY recorded_at DESC, rowid DESC
             ) AS rn
             FROM {TABLE}
-            WHERE list_contains(output_types, ?)
+            WHERE list_contains(output_types, ?) AND outcome <> '{FINDING}'
         ) WHERE rn = 1
         """,
         [variable],

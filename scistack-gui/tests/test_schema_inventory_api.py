@@ -153,7 +153,7 @@ def test_exclude_a_row_changes_the_counts(inv_client):
         json={"columns": ["subject", "session"], "row": ["3", "post"], "reason": "never collected"},
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"keys": {"subject": "3", "session": "post"}}
+    assert r.json() == {"keys": {"subject": "3", "session": "post"}, "variable": None}
     d = _all_rows(inv_client)
     assert d["counts"] == {"present": 5, "missing": 0, "excluded": 1}
 
@@ -166,7 +166,7 @@ def test_exclude_a_collapsed_row_excludes_the_block(inv_client):
         "/api/inventory/exclude", json={"columns": d["columns"], "row": row, "reason": "withdrew"}
     )
     assert r.status_code == 200, r.text
-    assert r.json() == {"keys": {"subject": "1"}}
+    assert r.json() == {"keys": {"subject": "1"}, "variable": None}
     assert _all_rows(inv_client)["counts"]["excluded"] == 2
 
 

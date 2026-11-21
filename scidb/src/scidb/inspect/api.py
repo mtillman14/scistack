@@ -296,6 +296,8 @@ class ExclusionRecord:
     changed_at: str
     #: False = an exclusion; True = a re-inclusion (only in the history).
     included: bool = False
+    #: The variable it is scoped to (GitHub #28); None = everything.
+    variable: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1661,6 +1663,7 @@ class Inspector:
                     reason=str(o.reason),
                     changed_at=_iso(o.changed_at) or "",
                     included=o.included,
+                    variable=o.variable,
                 )
                 for o in override_history(self._db)
             ]
@@ -1678,6 +1681,10 @@ class Inspector:
                     schema=schema,
                     reason=str(row["reason"]),
                     changed_at=_iso(row["changed_at"]) or "",
+                    variable=(
+                        None if row.get("scoped_to") is None or pd.isna(row.get("scoped_to"))
+                        else str(row["scoped_to"])
+                    ),
                 )
             )
         return out
@@ -1688,10 +1695,62 @@ class Inspector:
     ):
         """Every combination of the chosen schema keys with its status
         (present / missing / excluded), optionally run separately within each
-        combination of the ``within`` keys. Owner: ``scidb.provenance.inventory``."""
-        from scidb.provenance.inventory import schema_inventory
+        combination of the ``within`` keys. Owner: ``scidb.provenance.inventory``.
 
-        return schema_inventory(self._db, keys, within)
+        ``within=None`` defaults to the declared between keys
+        (``scidb.store.between_keys``) that are not crossed in *keys*;
+        ``within=[]`` asks for no strata."""
+        from scidb.provenance.inventory import schema_inventory
+        from scidb.store.between_keys import between_keys
+
+        if within is None:
+            within = [k for k in between_keys(self._db) if keys is None or k not in keys]
+            if within:
+                Log.debug(f"inspect.inventory: Within defaults to the between keys {within}")
+        return schema_inventory(self._db, keys, within or None)
+
+    @_timed
+    def step_status(self, fn, outputs=None, **kwargs):
+        """The verdict of one step with its outputs' location states
+        (``scidb.provenance.status.step_status``, the owner)."""
+        from scidb.provenance.status import step_status
+
+        return step_status(self._db, fn, outputs, **kwargs)
+
+    @_timed
+    def run_verdict(self, run_id: str, fn_registry: dict | None = None):
+        """The verdict of one stored run (``scidb.provenance.status.run_verdict``)."""
+        from scidb.provenance.status import run_verdict
+
+        return run_verdict(self._db, run_id, fn_registry=fn_registry)
+
+    @_timed
+    def location_status(self, variable, variant: dict | None = None, fn_registry: dict | None = None):
+        """One variable's planned locations and states (the data view's column)."""
+        from scidb.provenance.status import location_status
+
+        return location_status(self._db, variable, variant=variant, fn_registry=fn_registry)
+
+    @_timed
+    def data_view(self, variables=None, fn_registry: dict | None = None, variants: dict | None = None):
+        """Every data-view column, footer and drop-off (``scidb.provenance.data_view``)."""
+        from scidb.provenance.data_view import data_view
+
+        return data_view(self._db, variables, fn_registry=fn_registry, variants=variants)
+
+    @_timed
+    def variant_outdated(self, variable, fn_registry: dict | None = None):
+        """Per variant card: made by the current code? (``variant_cards.variant_outdated``)."""
+        from scidb.inspect.variant_cards import variant_outdated
+
+        return variant_outdated(self._db, variable, fn_registry)
+
+    @_timed
+    def outdated_cleanup(self, fn_registry: dict | None = None, variables=None):
+        """Every outdated variant with what deleting it removes (writes nothing)."""
+        from scidb.inspect.variant_cards import outdated_cleanup
+
+        return outdated_cleanup(self._db, fn_registry, variables)
 
     @_timed
     def expectation(self, variable):

@@ -84,7 +84,13 @@ from scidb.model.exceptions import (
     SchemaKeysMismatchError,
     SciStackError,
 )
-from scidb.store.exclusions import exclude_schema, include_schema, list_exclusions
+from scidb.store.exclusions import (
+    exclude_schema,
+    include_schema,
+    list_exclusions,
+    mark_missing_expected,
+    mark_present_expected,
+)
 from scidb.model.filters import all_of, raw_sql, schema_key
 
 # Batch execution (Layer 2 — DB-backed, no lineage)
@@ -179,6 +185,18 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.model.variable",
     "scidb.model.variant",
     "scidb.store.variant_pins",
+    # Sidebar delete with undo (#26): variant_delete owns what a delete
+    # removes, trash owns putting it back; the GUI's delete service and
+    # history store call both.
+    "scidb.store.variant_delete",
+    "scidb.store.trash",
+    # Step verdicts and the data view (GitHub #28): status owns a step's
+    # verdict, data_view the variables x locations grid, between_keys the
+    # declared between keys, try_step the dry run of one step.
+    "scidb.provenance.status",
+    "scidb.provenance.data_view",
+    "scidb.store.between_keys",
+    "scidb.run.try_step",
     "scidb.store.versioned_store",
     "scidb.provenance.wirings",
     # Project runtime, model-bound (the model-free half is scifor.project)
@@ -266,6 +284,8 @@ __all__ = [
     "exclude_schema",
     "include_schema",
     "list_exclusions",
+    "mark_missing_expected",
+    "mark_present_expected",
     # Exceptions
     "SciStackError",
     "OutputSaveError",

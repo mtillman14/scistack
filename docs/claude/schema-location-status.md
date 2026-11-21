@@ -1,5 +1,10 @@
 # What "green" means, and at what granularity
 
+> **GUI superseded 2026-11-20 (GitHub #28):** the GUI's per-location answer is now
+> `scidb.provenance.status` (eight states, the step verdict) and the data view;
+> see [pipeline-status.md](pipeline-status.md). `location_states` and this
+> document still describe the Plot Studio picker and the scidb code.
+
 > Written 2026-09-13, ahead of the schema location picker
 > (`.claude/plan-schema-location-picker.md`).
 >

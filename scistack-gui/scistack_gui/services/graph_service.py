@@ -449,6 +449,27 @@ def _resolve_node_identity(
     return plan, warnings
 
 
+def fn_registry_for(fn_names) -> dict:
+    """``{fn_name: callable}`` for the state checks: the Python registry plus
+    the two kinds of function that aren't in ``registry._functions``:
+    library references (pandas.read_csv, resolved by import) and MATLAB
+    functions (a proxy carrying the right hash). Only for *fn_names*, so
+    neither lookup is paid for the whole registry. One owner for the canvas
+    colour pass and the step verdicts."""
+    from scistack_gui.matlab import registry as matlab_registry
+
+    fn_registry = dict(registry._functions)  # Copy Python functions
+    for fn_name_str in fn_names:
+        if fn_name_str in fn_registry:
+            continue
+        library_fn = registry.lookup_function(fn_name_str)
+        if library_fn is not None:
+            fn_registry[fn_name_str] = library_fn
+        elif matlab_registry.is_matlab_function(fn_name_str):
+            fn_registry[fn_name_str] = _build_matlab_fn_proxy(fn_name_str)
+    return fn_registry
+
+
 def _compute_run_states(
     db: DatabaseManager,
     fn_input_params: dict[tuple, dict],
@@ -500,24 +521,7 @@ def _compute_run_states(
     t0 = time.monotonic()
 
     # --- Pass 1: Build function registry and nodes list ---
-    # Build registry combining Python and MATLAB functions
-    fn_registry = dict(registry._functions)  # Copy Python functions
-
-    from scistack_gui.matlab import registry as matlab_registry
-
-    # Fill in the two kinds of function that aren't in registry._functions:
-    # library references (pandas.read_csv — resolved by import) and MATLAB
-    # functions (a proxy carrying the right hash). Only for names actually
-    # on this canvas, so neither lookup is paid for the whole registry.
-    for fn_name in fn_input_params.keys():
-        fn_name_str, _ = fn_name
-        if fn_name_str in fn_registry:
-            continue
-        library_fn = registry.lookup_function(fn_name_str)
-        if library_fn is not None:
-            fn_registry[fn_name_str] = library_fn
-        elif matlab_registry.is_matlab_function(fn_name_str):
-            fn_registry[fn_name_str] = _build_matlab_fn_proxy(fn_name_str)
+    fn_registry = fn_registry_for(fn_name for fn_name, _cid in fn_input_params)
 
     # Build nodes list for batched state checking. Own state is a property of
     # the REAL call site ("has it done its recorded work"), so a call site
@@ -1823,6 +1827,13 @@ def build_graph(
     if endpoint_count:
         logger.info("[pipeline] tagged %d endpoint node(s)", endpoint_count)
 
+    if with_run_states:
+        # The step verdict and its reason chip (GitHub #28): scidb's words,
+        # the GUI only adds its own reasons (an unconnected input).
+        from scistack_gui.services.step_status_service import attach_step_verdicts
+
+        attach_step_verdicts(db, nodes)
+
     logger.info("[pipeline] Graph build complete - assembling final result")
     if not with_run_states:
         # Nothing was checked, so nothing is reported: variable nodes default
@@ -1861,6 +1872,12 @@ def build_graph(
         )
 
     result = {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
+    if with_run_states:
+        # The Activity Bar tree's "Exclusions (N)" (GitHub #28): carried on the
+        # graph the extension host already relays, so it needs no endpoint.
+        from scistack_gui.services.step_status_service import exclusions_wire
+
+        result["exclusions"] = exclusions_wire(db)
     # How much of this canvas is stored rows vs. re-derived from run history
     # on every build (plan-canvas-as-document Stage 0). The stages that
     # follow drive `nodes_derived` and `edges_derived` to zero.

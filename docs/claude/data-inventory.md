@@ -1,5 +1,10 @@
 # Data inventory (missing schema-key combinations)
 
+> **GUI entry hidden 2026-11-20 (GitHub #28):** the data view (▦ Data) answers
+> "what data do I have"; 📋 Inventory and ✅ Coverage sit behind
+> `SHOW_LEGACY_DATA_ENTRIES`. `inventory.strata_of` (was `_strata`) is now
+> public and also builds planned locations. See [pipeline-status.md](pipeline-status.md).
+
 Plan: `.claude/plan-data-inventory.md` (2026-10-15). Code: `scidb/provenance/inventory.py`.
 
 ## The question

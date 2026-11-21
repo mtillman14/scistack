@@ -44,7 +44,19 @@ def tree(tmp_path):
             d = tmp_path / subject / session
             d.mkdir(parents=True)
             (d / "data.txt").write_text("x")
+    _age(tmp_path)
     return tmp_path
+
+
+def _age(root, seconds: int = 3600) -> None:
+    """Backdate every directory under *root*, like a real data folder.
+
+    A listing whose directory changed within the racy window is never cached
+    (``pathinput._RACY_WINDOW_NS``), so a just-built tree would not exercise
+    the cache at all."""
+    past = int(os.stat(root).st_mtime) - seconds
+    for d in [root, *(p for p in root.rglob("*") if p.is_dir())]:
+        os.utime(d, (past, past))
 
 
 def _listdir_calls(monkeypatch) -> list[str]:
@@ -124,6 +136,32 @@ class TestWalkUsesTheListingCache:
             for c in PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE)).discover()
         }
         assert ("s3", "A") in found, "a shared cache served a stale listing"
+
+    def test_a_change_in_the_same_timestamp_tick_is_seen(self, tmp_path):
+        """Regression (2026-11-21): racily clean listings.
+
+        File mtimes come from a coarse clock (~4 ms on Linux, 1-2 s on
+        HFS+/FAT), so a directory read and then changed within one tick keeps
+        the mtime that was cached, and the mtime check served the stale
+        listing: a new subject folder stayed invisible. The flaky symptom was
+        ``0 director(ies) read from disk, 3 served from the listing cache``
+        right after a mkdir. Simulated deterministically by putting the
+        root's mtime back after the change."""
+        from scifor import pathinput
+
+        (tmp_path / "s1" / "A").mkdir(parents=True)
+        (tmp_path / "s1" / "A" / "data.txt").write_text("x")
+        st = os.stat(tmp_path)  # fresh: inside the racy window
+        pi = PathInput(TEMPLATE, root_folder=str(tmp_path), name=str(TEMPLATE))
+        assert len(pi.discover()) == 1
+        assert str(tmp_path) not in pathinput._DIR_CACHE, "a racy listing was cached"
+
+        (tmp_path / "s3" / "A").mkdir(parents=True)
+        (tmp_path / "s3" / "A" / "data.txt").write_text("x")
+        os.utime(tmp_path, ns=(st.st_atime_ns, st.st_mtime_ns))  # same tick
+
+        found = {(c["subject"], c["session"]) for c in pi.discover()}
+        assert ("s3", "A") in found
 
 
 class TestDiscoverReportsItself:

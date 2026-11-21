@@ -7,6 +7,8 @@
  * window opens by itself, how a tab is flagged, and number formatting.
  */
 
+import type { StepVerdict } from '../DAG/stepVerdict'
+
 export interface RunSummary {
   run_id: string
   group_id: string | null
@@ -81,6 +83,37 @@ export interface RunReport {
   marks: { variable: string; keys: Record<string, string>; expected: boolean; reason: string }[]
   attention: Attention[]
   notes: string[]
+  /** "Did it work?" (scidb.provenance.status.run_verdict; GitHub #28). */
+  verdict?: StepVerdict | null
+  /** "What's new?" per output variable (scidb.provenance.whats_new). */
+  whats_new?: WhatsNew[]
+  /** "What looks odd?": the anomaly findings the run stored. */
+  findings?: RunFinding[]
+}
+
+export interface WhatsNew {
+  variable: string
+  keys: string[]
+  headline: string
+  new_count: number
+  new_compact: string[]
+  new_locations: Record<string, string>[]
+  new_truncated: boolean
+  resaved_changed: number
+  resaved_unchanged: number
+  locations_before: number
+  locations_after: number
+  levels: Record<string, [number, number]>
+  changes: string[]
+}
+
+export interface RunFinding {
+  location: Record<string, string>
+  variable: string | null
+  record_id: string
+  kind: string
+  label: string
+  text: string
 }
 
 export interface CellCounts {

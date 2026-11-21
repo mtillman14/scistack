@@ -797,3 +797,155 @@ def _card_upstream(
         steps=out_steps,
         edges=sorted(edges.values(), key=lambda e: (e.source, e.target, e.param)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Outdated variants (GitHub #28): made by code that is no longer the source
+# ---------------------------------------------------------------------------
+
+OUTDATED_YES = True
+OUTDATED_NO = False
+#: The flag when the function's current source cannot be trusted or is not
+#: known (MATLAB proxies without a trusted hash, a function not in the
+#: registry): never a guess.
+OUTDATED_UNKNOWN = None
+
+
+def variant_outdated(db: "DatabaseManager", variable, fn_registry: "dict | None" = None) -> list[dict]:
+    """Per card of *variable*: is it made by its function's current code?
+
+    ``outdated`` is True when every record of the card was made by a
+    ``function_hash`` that is not ``function_hash_for(fn)`` now, False when
+    the current code made them, None ("unknown") when the current source
+    cannot be read or trusted (the ``trusts_hash`` rule of
+    ``scidb.provenance.state``). The one owner of the flag: the card badge,
+    the variable-node chip and "Clean up outdated…" all read it.
+    """
+    from scidb.provenance import query as pq
+    from scidb.run.foreach_config import function_hash_for
+
+    t0 = time.perf_counter()
+    name = getattr(variable, "__name__", variable)
+    cards = build_variant_cards(db, name, include_runs=False, detail=False)
+    duck = db._duck
+    fns = {c.function_name for c in cards.cards if c.function_name}
+    ordinals = pq.code_version_ordinals(duck, fns) if fns else {}
+    current: dict[str, str | None] = {}
+    for fn_name in fns:
+        fn = (fn_registry or {}).get(fn_name)
+        if fn is None or hasattr(fn, "hash"):
+            current[fn_name] = None
+            continue
+        try:
+            current[fn_name] = function_hash_for(fn)
+        except Exception as e:
+            Log.debug(f"[outdated] {fn_name}: no current hash: {e}")
+            current[fn_name] = None
+    out: list[dict] = []
+    for card in cards.cards:
+        fn_name = card.function_name
+        rids = list(card.record_ids)
+        if not fn_name:
+            out.append(_outdated_row(card, OUTDATED_NO, None, None, "raw data (no function made it)"))
+            continue
+        made = pq.producing_function_versions_batch(duck, rids) if rids else {}
+        hashes = {info["fn_hash"] for info in made.values()}
+        labels = ordinals.get(fn_name, {})
+        made_by = ", ".join(sorted(f"{fn_name} {labels.get(h) or 'v1'}" for h in hashes)) or fn_name
+        cur = current.get(fn_name)
+        if cur is None:
+            out.append(_outdated_row(card, OUTDATED_UNKNOWN, made_by, None,
+                                     f"made by {made_by}; the current code cannot be checked"))
+            continue
+        cur_label = labels.get(cur) or "(edited, not run yet)"
+        flag = bool(hashes) and cur not in hashes
+        text = (
+            f"made by {made_by}, current code is {fn_name} {cur_label}" if flag
+            else f"made by the current code ({fn_name} {cur_label})"
+        )
+        out.append(_outdated_row(card, flag, made_by, f"{fn_name} {cur_label}", text))
+    Log.info(
+        f"[outdated] {name}: {sum(1 for r in out if r['outdated'] is True)} of {len(out)} "
+        f"variant(s) outdated, {sum(1 for r in out if r['outdated'] is None)} unknown in "
+        f"{(time.perf_counter() - t0) * 1000:.1f} ms"
+    )
+    return out
+
+
+def _outdated_row(card: "VariantCard", flag, made_by, current, text) -> dict:
+    return {
+        "card_id": card.card_id,
+        "ordinal": card.ordinal,
+        "function_name": card.function_name,
+        "selection": dict(card.selection),
+        "record_count": card.record_count,
+        "is_default": card.is_default,
+        "is_pinned": card.is_pinned,
+        "outdated": flag,
+        "made_by": made_by,
+        "current": current,
+        "text": text,
+    }
+
+
+def outdated_cleanup(
+    db: "DatabaseManager",
+    fn_registry: "dict | None" = None,
+    variables=None,
+) -> dict:
+    """"Clean up outdated…": every outdated variant, with what deleting it
+    would remove. Writes nothing.
+
+    *variables* None = pipeline-wide (pipeline order); else those variables
+    (the Variants popup's per-variable list). Each candidate carries its
+    record count and the downstream count from ``delete_plan`` (the one
+    delete path), and ``warn`` lines: never the default or pinned variant
+    without saying so. Ticking candidates and passing their ``target`` dicts
+    to ``delete_variant`` in ONE call makes one trash batch, one Ctrl Z.
+    Unknown flags (MATLAB without a trusted hash) are never candidates.
+    """
+    from scidb.provenance.query import variable_type_edges, variable_types_in_pipeline_order
+    from scidb.store.variant_delete import delete_plan
+
+    t0 = time.perf_counter()
+    duck = db._duck
+    if variables is None:
+        names = variable_types_in_pipeline_order(duck, variable_type_edges(duck))
+    else:
+        names = [getattr(v, "__name__", v) for v in variables]
+    candidates: list[dict] = []
+    unknown = 0
+    for name in names:
+        try:
+            rows = variant_outdated(db, name, fn_registry)
+        except NotFoundError:
+            continue
+        for row in rows:
+            if row["outdated"] is None:
+                unknown += 1
+                continue
+            if not row["outdated"]:
+                continue
+            target = {"variable": name, "card_id": row["card_id"]}
+            plan = delete_plan(db, [target])
+            warn = []
+            if row["is_pinned"]:
+                warn.append(f"V{row['ordinal']} is the pinned variant of {name}")
+            elif row["is_default"]:
+                warn.append(f"V{row['ordinal']} is what an unnamed load of {name} returns")
+            candidates.append({
+                **row,
+                "variable": name,
+                "target": target,
+                "records": plan.seed_by_variable.get(name, 0),
+                "downstream": {k: v for k, v in plan.downstream_by_variable.items()},
+                "downstream_total": sum(plan.downstream_by_variable.values()),
+                "warn": warn,
+                # Pre-ticked only when nothing needs saying.
+                "ticked": not warn,
+            })
+    Log.info(
+        f"[outdated] cleanup over {len(names)} variable(s): {len(candidates)} outdated "
+        f"variant(s), {unknown} unknown, in {(time.perf_counter() - t0) * 1000:.1f} ms"
+    )
+    return {"candidates": candidates, "unknown": unknown, "variables": names}

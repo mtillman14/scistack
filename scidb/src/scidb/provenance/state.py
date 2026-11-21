@@ -876,7 +876,10 @@ def check_pathinput_node_state(
         for prod in itertools.product(*[iteration[k] for k in grid_keys]):
             _add(dict(zip(grid_keys, prod, strict=False)))
 
-    should = filter_excluded_combos(should, schema_keys, db)
+    should = filter_excluded_combos(
+        should, schema_keys, db,
+        variables=[getattr(o, "__name__", o) for o in outputs or ()],
+    )
 
     # --- realized locations produced under the current constants (graph truth) ---
     cfg = provenance_query.config_from_inputs(inputs)

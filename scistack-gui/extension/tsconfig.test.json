@@ -26,6 +26,7 @@
     "src/runFailures.ts",
     "src/openExternal.ts",
     "src/ownWrites.ts",
+    "src/pipelineTreeCore.ts",
     "src/*.test.ts"
   ]
 }

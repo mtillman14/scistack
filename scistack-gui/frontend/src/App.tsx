@@ -32,6 +32,7 @@
 
 import { showMessage } from './components/dialogs'
 import { useEffect, useState, useCallback } from "react";
+import { useBackendMessage } from "./hooks/useBackendMessage";
 import { ReactFlowProvider } from "@xyflow/react";
 import PipelineDAG from "./components/DAG/PipelineDAG";
 import Breadcrumb from "./components/DAG/Breadcrumb";
@@ -39,6 +40,13 @@ import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
 import CoveragePopup from "./components/Expectation/CoveragePopup";
+import DataViewPopup from "./components/DataView/DataViewPopup";
+import {
+  OPEN_DATA_VIEW_EVENT,
+  SHOW_LEGACY_DATA_ENTRIES,
+  openDataView,
+  type DataViewRequest,
+} from "./components/DataView/openDataView";
 import ClearDataButton from "./components/DAG/ClearDataButton";
 import SchemaKeysButton from "./components/DAG/SchemaKeysButton";
 import { SCHEMA_KEYS_CHANGED_EVENT } from "./components/SchemaKeysDialog";
@@ -225,6 +233,27 @@ export default function App() {
   const [pathsOpen, setPathsOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [coverageOpen, setCoverageOpen] = useState(false);
+  // The data view (GitHub #28): opened from the header, a node chip, a
+  // variable's right-click, or the Activity Bar tree (openDataView).
+  const [dataViewRequest, setDataViewRequest] = useState<DataViewRequest | null>(null);
+  // The Activity Bar tree (extension host): a step or reason clicked there,
+  // or "Clean up outdated…" on a session.
+  useBackendMessage(useCallback((msg: Record<string, unknown>) => {
+    const kind = (msg.type ?? msg.method) as string | undefined;
+    if (kind !== "reveal_step" && kind !== "open_data_view") return;
+    const p = (msg.params ?? {}) as { variables?: string[]; states?: string[]; cleanup?: boolean; node_id?: string };
+    console.info(`[DataView] ${kind} from the extension`, p);
+    openDataView({
+      variables: p.variables && p.variables.length ? p.variables : null,
+      states: p.states ?? [],
+      cleanup: Boolean(p.cleanup),
+    });
+  }, []));
+  useEffect(() => {
+    const onOpen = (e: Event) => setDataViewRequest((e as CustomEvent<DataViewRequest>).detail ?? {});
+    window.addEventListener(OPEN_DATA_VIEW_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_DATA_VIEW_EVENT, onOpen);
+  }, []);
   // Drag the sidebar's left edge to resize it; until then it keeps its
   // quarter of the window (styles.sidebar). The canvas keeps >= 320 px.
   const sidebarResize = useResizablePanel({
@@ -407,21 +436,34 @@ export default function App() {
                       </button>
                       <button
                         style={styles.pathsBtn}
-                        onClick={() => setInventoryOpen(true)}
+                        onClick={() => openDataView()}
+                        data-testid="data-view-button"
                         disabled={schema.keys.length === 0}
-                        title="Which schema-key combinations have no data"
+                        title="What data you have: every location, every variable in pipeline order, what is there and why, and where subjects drop out"
                       >
-                        📋 Inventory
+                        ▦ Data
                       </button>
-                      <button
-                        style={styles.pathsBtn}
-                        onClick={() => setCoverageOpen(true)}
-                        data-testid="coverage-button"
-                        disabled={schema.keys.length === 0}
-                        title="Which variables have which subjects (or any key), in pipeline order, with where data drops out"
-                      >
-                        ✅ Coverage
-                      </button>
+                      {SHOW_LEGACY_DATA_ENTRIES && (
+                        <>
+                          <button
+                            style={styles.pathsBtn}
+                            onClick={() => setInventoryOpen(true)}
+                            disabled={schema.keys.length === 0}
+                            title="Which schema-key combinations have no data"
+                          >
+                            📋 Inventory
+                          </button>
+                          <button
+                            style={styles.pathsBtn}
+                            onClick={() => setCoverageOpen(true)}
+                            data-testid="coverage-button"
+                            disabled={schema.keys.length === 0}
+                            title="Which variables have which subjects (or any key), in pipeline order, with where data drops out"
+                          >
+                            ✅ Coverage
+                          </button>
+                        </>
+                      )}
                       <SchemaKeysButton />
                       <ClearDataButton />
                       <BugReportButton />
@@ -456,6 +498,9 @@ export default function App() {
               )}
               {coverageOpen && (
                 <CoveragePopup schemaKeys={schema.keys} onClose={() => setCoverageOpen(false)} />
+              )}
+              {dataViewRequest && (
+                <DataViewPopup request={dataViewRequest} onClose={() => setDataViewRequest(null)} />
               )}
               {blockingErrors.length > 0 && (
                 <StartupErrorDialog errors={blockingErrors} />

@@ -281,6 +281,9 @@ class _SingleRun:
     #: for_each; from scidb's `run_recorded` progress event), for
     #: run_done.reports.
     report_run_ids: list = field(default_factory=list)
+    #: A Try run's reports (scidb.run.try_step.describe_try), one per target;
+    #: None for a normal run.
+    try_results: "list | None" = None
 
     def is_cancelled(self) -> bool:
         return self.cancel_event.is_set()
@@ -301,6 +304,7 @@ class _PreparedRun:
     level: object
     for_each_schema_keys: object
     where_arg: object
+    try_run: bool = False
 
 
 @dataclass
@@ -440,6 +444,8 @@ class _RunOpts:
     distribute: bool
     as_table: object
     on_error: str
+    #: "▶ Try on…" (GitHub #28): save off and no run record at all.
+    try_run: bool = False
 
 
 def _prepare_run(
@@ -510,6 +516,7 @@ def _prepare_run(
         # key (F26).
         for_each_schema_keys=level.for_each_schema_keys(),
         where_arg=where_arg,
+        try_run=opts.try_run,
     )
 
 
@@ -640,13 +647,17 @@ def _resolve_run_options(run_id: str, run_options: dict | None) -> _RunOpts:
     # the same answer the sidebar's non-default badges compare against.
     defaults = run_option_defaults()
     raw = run_options or {}
+    try_run = bool(raw.get("try"))
     opts = _RunOpts(
-        dry_run=raw.get("dry_run", defaults["dry_run"]),
-        save=raw.get("save", defaults["save"]),
+        dry_run=False if try_run else raw.get("dry_run", defaults["dry_run"]),
+        save=False if try_run else raw.get("save", defaults["save"]),
         distribute=raw.get("distribute", defaults["distribute"]),
         as_table=raw.get("as_table", defaults["as_table"]),
         on_error=on_error_from_config(raw),
+        try_run=try_run,
     )
+    if try_run:
+        logger.info("[run_thread] Try: save off, nothing recorded (run_id=%s)", run_id)
     logger.debug(
         "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s, on_error=%s (run_id=%s)",
         opts.dry_run,
@@ -878,6 +889,22 @@ def _build_target_call(
     )
 
 
+def _record_try(run: _SingleRun, result_tbl, call: _TargetCall, summary: dict, printed: str, started_at: float) -> None:
+    """A Try target's report (scidb owns it: scidb.run.try_step.describe_try)."""
+    from scidb.run.try_step import describe_try
+
+    try:
+        res = describe_try(
+            run.db, result_tbl, call.output_classes, run.function_name,
+            failures=summary.get("failures") or [], printed=printed,
+            duration_ms=int((time.time() - started_at) * 1000),
+        )
+        run.try_results = (run.try_results or []) + [res.to_dict()]
+    except Exception as e:  # the run itself succeeded; say why there is no report
+        logger.warning("[run_thread] Try report not built: %s: %s (run_id=%s)", type(e).__name__, e, run.run_id)
+        run.try_results = (run.try_results or []) + [{"function_name": run.function_name, "notes": [str(e)], "rows": []}]
+
+
 def _target_label(function_name: str, v: dict) -> str:
     """``fn(k=v, ...)`` for a target's console lines (constants are final:
     pending overrides already applied)."""
@@ -913,6 +940,8 @@ def _run_target(
 ) -> bool:
     """Run for_each for one target. False = stop the loop (force-cancelled)."""
     run_id, function_name = run.run_id, run.function_name
+    if prep.try_run and run.try_results is None:
+        run.try_results = []  # run_done carries the Try section even if every target fails
     n_targets = len(prep.targets)
     label = _target_label(function_name, v)
     bindings = _binding_summary(v)
@@ -1009,8 +1038,13 @@ def _run_target(
         # told apart from it on the canvas.
         relay = _RunLogRelay(run.emit)
         names = run_output_names(call.declared_ports)
-        with relay, redirect_stdout(buf), run_origin(ORIGIN_GUI), names:
-            for_each(
+        from contextlib import nullcontext
+
+        from scidb.provenance.run_summary import recording_suppressed
+
+        quiet = recording_suppressed() if prep.try_run else nullcontext()
+        with relay, redirect_stdout(buf), run_origin(ORIGIN_GUI), names, quiet:
+            result_tbl = for_each(
                 fn,
                 inputs=call.inputs,
                 outputs=call.output_classes,
@@ -1044,6 +1078,8 @@ def _run_target(
                 run_id,
             )
             run.emit(output)
+        if prep.try_run:
+            _record_try(run, result_tbl, call, target_summary, output, started_at)
         target_ms = int((time.time() - started_at) * 1000)
         target_failed = combo_totals["failed"] - target_snapshot["failed"]
         target_no_data = combo_totals["no_data"] - target_snapshot["no_data"]
@@ -1197,6 +1233,9 @@ def _report_run_done(run: _SingleRun, run_started_at: float) -> None:
                 "function_name": run.function_name,
                 "run_ids": run.report_run_ids,
             }]),
+            # "▶ Try on…": what the run computed, nothing stored (GitHub #28).
+            **({"try_results": run.try_results, "node_id": run.node_id}
+               if run.try_results is not None else {}),
         }
     )
     logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)

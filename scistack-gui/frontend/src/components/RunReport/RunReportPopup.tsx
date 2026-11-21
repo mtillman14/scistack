@@ -44,6 +44,9 @@ import {
   type VariableProfile,
 } from './runReportTypes'
 import { styles } from './runReportStyles'
+import { openDataView } from '../DataView/openDataView'
+import { statesForReason } from '../DAG/stepVerdict'
+import { SHOW_EXPECTED_LOCATIONS } from '../Expectation/expectationTypes'
 
 type DataState = RunReportData | 'loading' | { error: string }
 
@@ -290,13 +293,69 @@ function ReportView({ tab, report, runs, data, dataState, onPickRun, onReadRecor
       </div>
       {[...report.notes, ...(data?.notes ?? [])].map((n, i) => <div key={i} style={styles.note}>{n}</div>)}
 
-      <Section title="Needs attention">
+      {report.verdict && (
+        <Section title="Did it work?">
+          <div style={styles.verdictLine} data-testid="run-report-verdict" data-word={report.verdict.word}>
+            {report.verdict.status_line}
+          </div>
+          {report.verdict.reasons.map((r, i) => (
+            <div key={i} style={styles.kv}>
+              <button
+                type="button"
+                style={styles.linkBtn}
+                title="Open the data view on these locations"
+                onClick={() => openDataView({
+                  variables: s.output_types, states: statesForReason(r.kind), functionName: s.function_name,
+                })}
+              >
+                {r.text}
+              </button>
+              {r.locations && r.locations.length > 0 && (
+                <span style={styles.dim}>
+                  {' '}e.g. {r.locations.slice(0, 3).map(l => keysText(l)).join('; ')}
+                </span>
+              )}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {(report.whats_new ?? []).some(n => n.new_count > 0 || n.resaved_changed > 0 || n.changes.length > 0) && (
+        <Section title="What's new?">
+          {(report.whats_new ?? []).map(n => (
+            <div key={n.variable} style={styles.card} data-testid="run-report-new">
+              <div style={n.new_count > 0 ? styles.newHeadline : undefined}>{n.headline}</div>
+              {n.new_compact.length > 3 && (
+                <details><summary style={styles.dim}>all {n.new_count} new location(s)</summary>
+                  {n.new_compact.map(line => <div key={line}><code>{line}</code></div>)}
+                </details>
+              )}
+              <div style={styles.dim}>
+                {n.locations_before} → {n.locations_after} location(s)
+                {n.changes.length > 0 && ` · ${n.changes.join(' · ')}`}
+              </div>
+              {(n.resaved_changed > 0 || n.resaved_unchanged > 0) && (
+                <div style={styles.dim}>
+                  saved again: {n.resaved_changed} with a changed value, {n.resaved_unchanged} unchanged
+                </div>
+              )}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="What looks odd?">
+        {(report.findings ?? []).map((f, i) => (
+          <div key={`f${i}`} style={styles.attnProblem} data-testid="run-report-finding">
+            <span>⚠</span> {f.text} <span style={styles.dim}>({keysText(f.location)})</span>
+          </div>
+        ))}
         {attention.map((a, i) => (
           <div key={i} style={a.severity === 'problem' ? styles.attnProblem : styles.attnNote} data-testid="run-report-attention" data-severity={a.severity}>
             <span>{a.severity === 'problem' ? '⚠' : '•'}</span> {a.text}
           </div>
         ))}
-        {attention.length === 0 && !dataPending && !dataError && <div style={styles.ok}>✓ Nothing flagged.</div>}
+        {attention.length === 0 && (report.findings ?? []).length === 0 && !dataPending && !dataError && <div style={styles.ok}>✓ Nothing flagged.</div>}
         {dataState === 'loading' && <div style={styles.hint}>Reading the run's records for NaNs and shapes…</div>}
         {dataState === undefined && s.computed > 0 && (
           <div style={styles.hint}>
@@ -307,7 +366,7 @@ function ReportView({ tab, report, runs, data, dataState, onPickRun, onReadRecor
         {dataError && <div style={styles.error}>The records could not be read: {dataError}</div>}
       </Section>
 
-      <Section title="Settings used">
+      <Section title="What was it run with?">
         <SettingsTable report={report} />
       </Section>
 
@@ -328,7 +387,7 @@ function ReportView({ tab, report, runs, data, dataState, onPickRun, onReadRecor
             ))}
           </span>
         </div>
-        {report.marks.length > 0 && (
+        {SHOW_EXPECTED_LOCATIONS && report.marks.length > 0 && (
           <div style={styles.kv}>
             <span style={styles.k} title="Marks say what should exist. They never change what runs.">Expected / Not expected marks</span>
             <span>

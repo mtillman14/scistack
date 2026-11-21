@@ -629,7 +629,12 @@ def _resolve_iterables(
 
 
 def _existing_combos(
-    metadata_iterables: dict, inputs: dict, needs_resolve: list, resolved_db, db
+    metadata_iterables: dict,
+    inputs: dict,
+    needs_resolve: list,
+    resolved_db,
+    db,
+    outputs: "list | None" = None,
 ) -> "list[dict] | None":
     """Prepare stage: the combos to run, restricted to schema combinations that
     exist in the database and not excluded — or None when the iterables were
@@ -694,6 +699,7 @@ def _existing_combos(
                 all_combos,
                 _exclusion_db.dataset_schema_keys,
                 _exclusion_db,
+                variables=_step_variables(inputs, outputs),
             )
             _after = len(all_combos)
             if _before != _after:
@@ -709,6 +715,32 @@ def _existing_combos(
     else:
         Log.debug("no database available, skipping schema exclusion filtering")
     return all_combos
+
+
+def _step_variables(inputs: dict, outputs: "list | None") -> list[str]:
+    """The variable types a step reads and writes: the scopes whose
+    exclusions it honours (``scidb.store.exclusions``, scoped exclusions)."""
+    from scidb.model.input_spec import type_name
+
+    names: list[str] = []
+    for spec in (inputs or {}).values():
+        try:
+            name = type_name(spec)
+        except Exception:  # an exotic spec names no variable
+            name = None
+        if name and name not in names:
+            names.append(name)
+    for out in outputs or ():
+        if isinstance(out, str):
+            name = out
+        elif isinstance(out, type):
+            name = out.__name__
+        else:
+            name = type(out).__name__
+        if isinstance(name, str) and name not in names:
+            names.append(name)
+    Log.debug(f"[exclusions] step variables (scopes honoured): {names}")
+    return names
 
 
 def _dry_run_preview(
@@ -732,7 +764,7 @@ def _dry_run_preview(
     Log.debug("dry_run=True, converting inputs for display and delegating to scifor")
     display_inputs = _convert_inputs_for_display(inputs)
     all_combos = _existing_combos(
-        metadata_iterables, inputs, needs_resolve, resolved_db, db
+        metadata_iterables, inputs, needs_resolve, resolved_db, db, output_names
     )
     _scifor_for_each(
         fn,
@@ -2213,7 +2245,7 @@ def _for_each_prepare(
 
     # Only the schema combinations that exist (and are not excluded).
     all_combos = _existing_combos(
-        metadata_iterables, inputs, needs_resolve, resolved_db, db
+        metadata_iterables, inputs, needs_resolve, resolved_db, db, outputs
     )
 
     # Bulk-load every input (+ glue fusion on the loaded tables).
