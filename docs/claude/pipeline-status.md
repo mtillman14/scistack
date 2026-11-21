@@ -84,7 +84,14 @@ out for an input is skipped and its outputs read ⊘ "inherited from <input>".
 Presets: `mark_missing_expected` (scoped exclusion, reason "marked missing as
 expected") and `mark_present_expected` (scoped include). A dataset with a
 schema key named `variable` must use `exclude_schema_dict(..., variable=)`.
-Not yet in the MATLAB `scidb.exclude_schema` wrapper.
+MATLAB (2026-11-21): `scidb.exclude_schema(R, 'subject', 1, 'variable', V)`
+and `include_schema(...)`, read by `+scidb/+internal/exclusion_args.m` (the
+one owner of the pair rules; V a name or a BaseVariable instance; in a
+dataset with a schema key `variable` the pair is that key). Tests:
+`scimatlab/tests/matlab/scidb/TestScopedExclusions.m`. `list_exclusions`
+returns None, never NaN, for NULL cells so the MATLAB table shows `missing`.
+The presets (`mark_missing_expected` / `mark_present_expected`) have no
+MATLAB wrapper.
 
 ## Findings (`scidb.provenance.findings`)
 

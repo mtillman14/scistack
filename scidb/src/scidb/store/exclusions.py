@@ -256,6 +256,11 @@ def list_exclusions(db: DatabaseManager | None = None):
         ORDER BY changed_at DESC
         """,
     )
+    # NULL (a wildcard key, an unscoped exclusion) is None, never NaN: pandas
+    # turns NULL into NaN in a column that also holds strings, and the MATLAB
+    # table conversion then shows the text "NaN" instead of missing.
+    text_cols = [*schema_keys, "scoped_to", "reason"]
+    rows[text_cols] = rows[text_cols].astype(object).where(rows[text_cols].notna(), None)
     return rows
 
 

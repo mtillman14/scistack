@@ -105,6 +105,24 @@ class TestScopedExclusions:
         assert ex.variable_scope("") is None
         assert ex.variable_scope(None) is None
 
+    def test_unscoped_and_wildcard_cells_are_none_not_nan(self, db):
+        """Regression (2026-11-21): with a scoped and an unscoped row listed
+        together, pandas made the unscoped ``scoped_to`` NaN, which the MATLAB
+        wrapper's table conversion showed as the text "NaN"."""
+        ex.exclude_schema("withdrew", db=db, subject="S01")
+        ex.exclude_schema("emg bad", db=db, variable=PsRaw, subject="S01")
+        df = ex.list_exclusions(db=db)
+        assert sorted(df["scoped_to"], key=str) == [None, "PsRaw"]
+        assert list(df["trial"]) == [None, None]  # the wildcard key
+
+    def test_dict_entry_point_takes_the_scope(self, db):
+        """The MATLAB wrappers' path: ``*_schema_dict(keys, reason, None,
+        variable=...)`` (scimatlab +scidb/+internal/exclusion_args.m)."""
+        ex.exclude_schema_dict({"subject": "S01"}, "emg bad", None, variable="PsRaw")
+        assert list(ex.list_exclusions(db=db)["scoped_to"]) == ["PsRaw"]
+        ex.include_schema_dict({"subject": "S01"}, "fixed", None, variable="PsRaw")
+        assert len(ex.list_exclusions(db=db)) == 0
+
     def test_scoped_row_is_listed_with_its_variable(self, db):
         ex.exclude_schema("emg bad", db=db, variable=PsRaw, subject="S01", trial="t1")
         df = ex.list_exclusions(db=db)

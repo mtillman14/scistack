@@ -3,6 +3,8 @@ function include_schema(reason, varargin)
 %
 %   scidb.include_schema(REASON, 'subject', 1, 'trial', 2)
 %   scidb.include_schema(REASON, 'subject', 3)   % re-include all trials
+%   scidb.include_schema(REASON, 'subject', 3, 'variable', "EMG")
+%                                                % re-include for EMG only
 %
 %   Stores a re-inclusion record in the database (the original exclusion row
 %   is NOT deleted — the full history is preserved).  The combination will
@@ -10,7 +12,12 @@ function include_schema(reason, varargin)
 %
 %   Arguments:
 %       reason   - Human-readable explanation (string)
-%       varargin - Schema key/value pairs, e.g. 'subject', 1, 'trial', 2
+%       varargin - Schema key/value pairs, e.g. 'subject', 1, 'trial', 2,
+%                  and optionally 'variable', V: re-include for one variable
+%                  only (a name or a BaseVariable instance), the counterpart
+%                  of a scoped scidb.exclude_schema. In a dataset with a
+%                  schema key named 'variable', the pair is that schema key
+%                  instead (scidb.internal.exclusion_args).
 %
 %   The exclusion may be on a coarser keyset: after
 %   scidb.exclude_schema(R, 'subject', 3), include_schema(R, 'subject', 3, 'trial', 2)
@@ -23,27 +30,8 @@ function include_schema(reason, varargin)
         reason (1,1) string
     end
 
-    if mod(numel(varargin), 2) ~= 0
-        error('scidb:include_schema', ...
-              'Schema keys must be provided as name-value pairs.');
-    end
-
-    py_keys = py.dict();
-    for i = 1:2:numel(varargin)
-        key = char(string(varargin{i}));
-        val = varargin{i + 1};
-        is_whole = false;
-        if isnumeric(val) && isscalar(val)
-            [py_num, is_whole] = scidb.internal.number_to_python(val);
-        end
-        if is_whole
-            py_keys{key} = py_num;
-        else
-            py_keys{key} = py.str(char(string(val)));
-        end
-    end
-
+    [py_keys, py_scope] = scidb.internal.exclusion_args('include_schema', varargin{:});
     py.scidb.store.exclusions.include_schema_dict( ...
-        py_keys, char(reason), py.None);
+        py_keys, char(reason), py.None, pyargs('variable', py_scope));
 
 end

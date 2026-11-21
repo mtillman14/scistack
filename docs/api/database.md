@@ -192,13 +192,35 @@ idempotent.
 
 Module-level functions (not methods) — see [Filtering & Selection](../guide/filters.md):
 
-```python
-from scidb import exclude_schema, include_schema, list_exclusions
+=== "Python"
+    ```python
+    from scidb import exclude_schema, include_schema, list_exclusions
 
-exclude_schema(subject=1, trial=2, reason="...")   # reason required
-include_schema(subject=1, trial=2, reason="...")
-list_exclusions()                                  # -> DataFrame
-```
+    exclude_schema(subject=1, trial=2, reason="...")   # reason required
+    include_schema(subject=1, trial=2, reason="...")
+    list_exclusions()                                  # -> DataFrame
+
+    # Scoped to one variable: only EMG is bad here; steps reading EMG skip
+    # the location, every other step still runs it.
+    exclude_schema(subject=1, variable=EMG, reason="sensor fault")
+    include_schema(subject=1, variable=EMG, reason="sensor fixed")
+    ```
+=== "MATLAB"
+    ```matlab
+    scidb.exclude_schema("...", 'subject', 1, 'trial', 2)   % reason first
+    scidb.include_schema("...", 'subject', 1, 'trial', 2)
+    tbl = scidb.list_exclusions();                          % -> table
+
+    % Scoped to one variable (a name or a BaseVariable instance)
+    scidb.exclude_schema("sensor fault", 'subject', 1, 'variable', "EMG")
+    scidb.include_schema("sensor fixed", 'subject', 1, 'variable', EMG())
+    ```
+
+`list_exclusions()` has a `scoped_to` column: the variable an exclusion is
+scoped to, or `None` / `missing` when it covers everything. In a dataset with
+a schema key literally named `variable`, scope from Python with
+`exclude_schema_dict(keys, reason, variable=...)`; in MATLAB the
+`'variable'` pair is then that schema key.
 
 ---
 

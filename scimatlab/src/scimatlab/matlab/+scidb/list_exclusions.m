@@ -9,6 +9,9 @@ function tbl = list_exclusions()
 %
 %   Columns:
 %       <schema key columns>  - Schema key values (strings; NULL if wildcard)
+%       scoped_to             - The variable the exclusion is scoped to
+%                               ('variable', V in scidb.exclude_schema), or
+%                               missing when it covers everything
 %       reason                - Human-readable exclusion reason
 %       changed_at            - Timestamp of the exclusion
 %
