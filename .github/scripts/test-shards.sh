@@ -19,7 +19,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # name|packages|shards — tune shards from the --durations output of past runs.
 # A group of several packages must have 1 shard.
 SHARD_GROUPS=(
-    "small|scistacklog scicanonicalhash sciduckdb scistack|1"
+    # tools: the dev tooling's own tests (tools/pytest-progress, installed by dev-install.sh)
+    "small|scistacklog scicanonicalhash sciduckdb scistack tools|1"
     "scifor|scifor|1"
     "scistackplotdb|scistackplotdb|1"
     "scistackstats|scistackstats scistackstatsdb|1"
