@@ -204,6 +204,10 @@ Module-level functions (not methods) — see [Filtering & Selection](../guide/fi
     # the location, every other step still runs it.
     exclude_schema(subject=1, variable=EMG, reason="sensor fault")
     include_schema(subject=1, variable=EMG, reason="sensor fixed")
+
+    # Presets with a fixed reason: absent here on purpose / belongs here
+    mark_missing_expected(EMG, subject=3)
+    mark_present_expected(EMG, subject=3)   # -> False when nothing to undo
     ```
 === "MATLAB"
     ```matlab
@@ -214,6 +218,10 @@ Module-level functions (not methods) — see [Filtering & Selection](../guide/fi
     % Scoped to one variable (a name or a BaseVariable instance)
     scidb.exclude_schema("sensor fault", 'subject', 1, 'variable', "EMG")
     scidb.include_schema("sensor fixed", 'subject', 1, 'variable', EMG())
+
+    % Presets with a fixed reason: absent here on purpose / belongs here
+    scidb.mark_missing_expected("EMG", 'subject', 3)
+    written = scidb.mark_present_expected("EMG", 'subject', 3);  % false: nothing to undo
     ```
 
 `list_exclusions()` has a `scoped_to` column: the variable an exclusion is

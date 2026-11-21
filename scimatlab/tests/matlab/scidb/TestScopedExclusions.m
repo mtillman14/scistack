@@ -75,6 +75,32 @@ classdef TestScopedExclusions < matlab.unittest.TestCase
             testCase.verifyEqual(height(scidb.list_exclusions()), 2);
         end
 
+        % --- The presets: mark missing / present as expected ---
+
+        function test_mark_missing_expected_is_a_scoped_exclusion(testCase)
+            scidb.mark_missing_expected("RawSignal", 'subject', 3);
+            tbl = scidb.list_exclusions();
+            testCase.verifyEqual(height(tbl), 1);
+            testCase.verifyEqual(string(tbl.scoped_to(1)), "RawSignal");
+            testCase.verifyEqual(string(tbl.reason(1)), "marked missing as expected");
+        end
+
+        function test_mark_present_expected_undoes_it(testCase)
+            scidb.mark_missing_expected(RawSignal(), 'subject', 3);
+            testCase.verifyTrue(scidb.mark_present_expected("RawSignal", 'subject', 3));
+            testCase.verifyEqual(height(scidb.list_exclusions()), 0);
+        end
+
+        function test_mark_present_when_nothing_excludes_writes_nothing(testCase)
+            testCase.verifyFalse(scidb.mark_present_expected("RawSignal", 'subject', 3));
+        end
+
+        function test_mark_with_a_second_scope_fails(testCase)
+            testCase.verifyError( ...
+                @() scidb.mark_missing_expected("RawSignal", 'subject', 3, 'variable', "Other"), ...
+                'scidb:mark_missing_expected');
+        end
+
         function test_odd_pairs_fail(testCase)
             testCase.verifyError( ...
                 @() scidb.exclude_schema("r", 'subject', 1, 'variable'), ...

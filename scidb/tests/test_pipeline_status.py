@@ -123,6 +123,18 @@ class TestScopedExclusions:
         ex.include_schema_dict({"subject": "S01"}, "fixed", None, variable="PsRaw")
         assert len(ex.list_exclusions(db=db)) == 0
 
+    def test_mark_presets_dict_forms(self, db):
+        """The MATLAB wrappers' path for the presets
+        (scimatlab +scidb/mark_missing_expected.m, mark_present_expected.m)."""
+        ex.mark_missing_expected_dict({"subject": "S01"}, "PsRaw")
+        df = ex.list_exclusions(db=db)
+        assert list(df["scoped_to"]) == ["PsRaw"]
+        assert list(df["reason"]) == [ex.MARKED_MISSING_REASON]
+        assert ex.mark_present_expected_dict({"subject": "S01"}, "PsRaw") is True
+        assert len(ex.list_exclusions(db=db)) == 0
+        # Nothing excludes it now: already expected, nothing written.
+        assert ex.mark_present_expected_dict({"subject": "S01"}, "PsRaw") is False
+
     def test_scoped_row_is_listed_with_its_variable(self, db):
         ex.exclude_schema("emg bad", db=db, variable=PsRaw, subject="S01", trial="t1")
         df = ex.list_exclusions(db=db)

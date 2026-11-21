@@ -90,8 +90,10 @@ one owner of the pair rules; V a name or a BaseVariable instance; in a
 dataset with a schema key `variable` the pair is that key). Tests:
 `scimatlab/tests/matlab/scidb/TestScopedExclusions.m`. `list_exclusions`
 returns None, never NaN, for NULL cells so the MATLAB table shows `missing`.
-The presets (`mark_missing_expected` / `mark_present_expected`) have no
-MATLAB wrapper.
+The presets: `scidb.mark_missing_expected(V, 'subject', 3)` and
+`written = scidb.mark_present_expected(V, ...)`, arguments read by
+`+scidb/+internal/mark_args.m`, calling `mark_missing_expected_dict` /
+`mark_present_expected_dict` (the owners; the keyword forms wrap them).
 
 ## Findings (`scidb.provenance.findings`)
 

@@ -175,7 +175,7 @@ def mark_missing_expected(
     :data:`MARKED_MISSING_REASON`. It removes the location from every step
     that reads *variable* from now on; the user can include it again later.
     """
-    exclude_schema(MARKED_MISSING_REASON, db=db, variable=variable, **schema_keys)
+    mark_missing_expected_dict(schema_keys, variable, db)
 
 
 def mark_present_expected(
@@ -187,6 +187,22 @@ def mark_present_expected(
     :data:`MARKED_PRESENT_REASON`. Returns False (and writes nothing) when
     nothing excludes the location for *variable*: it is already expected.
     """
+    return mark_present_expected_dict(schema_keys, variable, db)
+
+
+def mark_missing_expected_dict(
+    schema_keys: dict, variable, db: DatabaseManager | None = None
+) -> None:
+    """Dict form of :func:`mark_missing_expected` (the owner): the MATLAB
+    wrapper's entry point, and the way to mark in a dataset with a schema key
+    literally named ``variable``."""
+    _insert_checked(schema_keys, MARKED_MISSING_REASON, db, variable, exclude=True)
+
+
+def mark_present_expected_dict(
+    schema_keys: dict, variable, db: DatabaseManager | None = None
+) -> bool:
+    """Dict form of :func:`mark_present_expected` (the owner)."""
     db = _get_db(db)
     _validate_keys(db, schema_keys)
     scope = variable_scope(variable)
@@ -202,7 +218,7 @@ def mark_present_expected(
             f"excluded; nothing to write"
         )
         return False
-    include_schema(MARKED_PRESENT_REASON, db=db, variable=scope, **schema_keys)
+    _insert_checked(schema_keys, MARKED_PRESENT_REASON, db, scope, exclude=False)
     return True
 
 
