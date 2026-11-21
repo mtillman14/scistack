@@ -60,10 +60,24 @@ Still open on this topic:
 
 ### Moving projects between machines and people
 
-| Feature | Anchor tests | Engineering note | User doc target |
-|---|---|---|---|
-| `hide_path_locations` at export (#16): no folder path in any bundle member; a path in code refuses the export | `scidb/tests/test_path_redaction.py` | `portability.md` | `docs/sharing/export-import.md` |
-| Per-machine path roots: `~/.scistack/machine.toml`, `{rto}/...` in a shared `scistack.toml` | `scifor/tests/test_machine.py` | `config-file-formats.md` | `docs/getting-started/project-files.md` |
+**Closed 2026-11-21.** `hide_path_locations` is documented in
+`docs/sharing/export-import.md` and `.ui.md` ("Hide where your raw files are",
+plus the import's `--path-root` / Choose my folder… note). Machine roots are
+in `docs/getting-started/project-files.md` ("Folders that live somewhere
+different on each computer").
+
+Found while writing them:
+
+- Machine roots are **not** expanded in `db` (`scidb/inspect/cli.py`
+  `_config_db` uses `Path(db)`) or in a PathInput's `root_folder`
+  (`PathInput.__init__` uses `Path(root_folder)`). The user doc says so.
+  Expanding `root_folder` is the obvious next step if users ask, but it's not
+  built.
+- A canvas note quoting a folder **refuses** a hiding export
+  (`scistack-gui/tests/test_bundle_hide_locations.py`); it is not rewritten.
+  Run history free text and logs are rewritten.
+- `[outputs] folder` (`scifor/project/outputs.py`) has no section of its own
+  in `project-files.md`: an open gap.
 
 ### CLI subcommands not named anywhere in the user docs
 

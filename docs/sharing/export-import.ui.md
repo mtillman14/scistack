@@ -59,7 +59,7 @@ MATLAB itself and its toolboxes aren't installed by an import. The export record
 
 1. Let any run finish first, so the export doesn't catch a run halfway through.
 2. Click **⇩ export project** at the right end of the hypothesis tab strip.
-3. Tick what to include besides the code, settings and canvases: **History**, **Data**, **Wheelhouse**.
+3. Tick what to include besides the code, settings and canvases: **History**, **Data**, **Wheelhouse** and **Logs**, and whether to **Hide PathInput folders** (see below).
 4. Click **Export…** and choose where to save the file.
 
 /// info | 📷 Screenshot
@@ -76,6 +76,16 @@ MATLAB itself and its toolboxes aren't installed by an import. The export record
 
 With **Data** on, the canvas opens on the other end exactly as you left it, every step green. With **History** but no data, the history is kept for checking (see [Check that the results reproduce](#check-that-the-results-reproduce)) and the steps start as not run.
 
+### Hide where your raw files are
+
+Folder names can say more than you mean to publish: a lab member's name, a drive layout, a participant's ID in a folder name. For a public release, tick **Hide PathInput folders (for a public release)**. It's off by default.
+
+With it on, no folder of yours appears anywhere in the bundle. Each path input keeps its name and the part of its template that says *which* files to read (`{subject}/{session}.csv`), but not the folder they're in. The history and logs travel with each folder replaced by the path input's name, such as `<PathInput RAW>`. Your own project is not changed. Only the bundle is.
+
+If a folder is still written somewhere SciStack can't rewrite, such as a path in your code or in a note on the canvas, the export stops and saves nothing. The message says which file and which path input, but never the folder itself. Remove the path there and export again.
+
+Whoever imports the bundle chooses their own folder for each path input.
+
 ## Import
 
 An import always makes a **new** project folder. It runs none of the bundle's code until you say you trust it, because running it (or installing its packages) runs code someone else wrote.
@@ -86,7 +96,7 @@ An import always makes a **new** project folder. It runs none of the bundle's co
     - **The new project's folder.**
     - **Your schema.** Keep the exporter's schema, or enter your own keys. With your own schema the exporter's history isn't loaded (it describes a dataset of a different shape), and every node starts as not run.
     - **Which of your keys each of the exporter's keys is**, for every exporter key that isn't in your schema: pick one of yours, or **drop it** if there's no counterpart. Path input templates, saved plots, saved tables and iteration settings that mention the key are renamed to yours; anything mentioning a dropped key loses that mention and is listed in the report.
-    - **Where your copy of each raw data folder is**, one question per path input: **Choose my folder…**, **Keep the exporter's folder**, or **Decide later** (set it in the sidebar).
+    - **Where your copy of each raw data folder is**, one question per path input: **Choose my folder…**, **Keep the exporter's folder**, or **Decide later (edit the entities file)**. If the exporter hid their folders, there's no folder to keep: choose yours. The report lists any you didn't.
     - **History** (when the bundle has it): **Import history** or **Skip history**. It's loaded into your database only when the bundle carries the data too and you kept the schema; otherwise it's kept as files, read-only, in `.scistack/imported/run-history/` for **✓ verify**.
     - **Will this project run on the same data as the exporter's?** Asked only when you import the history with the exporter's schema, and the project has rules that name the exporter's own values (an exclusion, an Expected / Not expected mark at a particular subject, declared key values). **Same data** applies them all. **Other data** applies only the rules about keys (such as key types). The rest are kept in the imported run history, unapplied, and listed as a warning in the report.
 4. A report opens when it's done: what was imported, any keys renamed, anything that needs a look (a plot or table that mentioned a renamed or dropped key, a path input you left pointing at the exporter's folder).

@@ -21,7 +21,10 @@ Both are created for you by `scistack init` or when the GUI creates a database (
      beside the entities file). Entities: scifor/project/entities_file.py (grammar, [library] table,
      empty-array parameter, list of path_inputs = alternatives), resolution
      scifor.project.entities_file.resolve_entities_path, default location default_entities_relpath.
-     Internal notes: docs/claude/config-file-formats.md, entities-toml-format.md. -->
+     Internal notes: docs/claude/config-file-formats.md, entities-toml-format.md.
+     Machine roots (verified 2026-11-21): scifor/project/machine.py, scifor/tests/test_machine.py;
+     not expanded: inspect/cli.py _config_db (db) and PathInput(root_folder=). -->
+
 
 ## TOML in two minutes
 
@@ -40,6 +43,32 @@ key = "value"                 # up to the next header, belongs to [section]
 The rule that trips people up: **a key written below a `[section]` header belongs to that section.** Top-level keys must come *before* the first header.
 
 Paths in either file are relative to the project root unless they're absolute. Write them with forward slashes (`src/my_study/pipeline.py`), which work on Windows, macOS and Linux. SciStack also reads backslashes correctly on any system, but an absolute Windows path such as `D:\data` cannot work on a Mac, and SciStack warns about these when it opens the project.
+
+### Folders that live somewhere different on each computer: machine roots
+
+A shared drive is often `Y:/` on one computer and `/mnt/lab` on another. Writing either one into a shared `scistack.toml` breaks the project on the other computer. Instead, start the path with a **machine root**, a name in curly braces:
+
+```toml
+# scistack.toml: committed, the same on every computer
+modules = ["{lab}/shared-code/emg_tools"]
+```
+
+Each computer says what `{lab}` means in its own file, outside every project:
+
+```toml
+# ~/.scistack/machine.toml   (Windows: %USERPROFILE%\.scistack\machine.toml)
+machine_id = "6f1c..."       # written for you; leave it alone
+[roots]
+lab = "Y:/"                  # on the Linux computer: lab = "/mnt/lab"
+```
+
+- SciStack creates `machine.toml` the first time it needs it (the GUI checks when it opens a project), or you can create it yourself. Add a `[roots]` line for each name you use. An edit takes effect the next time the project is read, with no restart.
+- A root must be at the very start of the path (`{lab}/...`). A name in braces anywhere else is an ordinary part of the path.
+- In the GUI, a folder you add in **📁 Paths…** that's inside a root you've mapped is written as `{lab}/...` for you. When several roots match, the longest wins.
+- A path that can't work on this computer isn't an error. That includes a root this computer hasn't mapped, or another system's absolute path, such as `D:/data` on a Mac. SciStack skips it. The GUI shows one notice when the project opens, naming the path and `machine.toml`.
+- If `machine.toml` isn't valid TOML, no roots are used and `scistack-debug.log` says so. To keep the file somewhere else, set the `SCISTACK_MACHINE_FILE` environment variable to its path.
+
+Machine roots work in the path settings of `scistack.toml`: `modules`, `entities_file`, `glue_dir`, the `[matlab]` paths, and `[outputs] folder`. They don't work yet in `db`, or in a path input's `root_folder` in the entities file. Give those a relative path, or set them on each computer.
 
 ---
 

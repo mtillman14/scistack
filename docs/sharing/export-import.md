@@ -5,7 +5,10 @@
      history on, data off, wheelhouse off, logs on; check_environment reads pyproject
      [project] dependencies), scidb/project/environment.py (install_project_requirements:
      only declared deps that are missing, at the exporter's versions),
-     scidb/project/init.py (_PYPROJECT template), design docs/claude/portability.md. -->
+     scidb/project/init.py (_PYPROJECT template), design docs/claude/portability.md.
+     Hidden folders (verified 2026-11-21): scidb/tests/test_path_redaction.py,
+     scistack-gui/tests/test_bundle_hide_locations.py. -->
+
 
 A whole project (its code, settings, pipelines and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 
@@ -75,6 +78,7 @@ scistack export my_study.scistack --data # also include every saved result
 scistack export --no-history             # code, settings and pipelines only
 scistack export --wheelhouse             # also a wheel of each library the project uses
 scistack export --no-logs                # leave out the end of the logs
+scistack export --hide-path-locations    # leave out where your raw files are (see below)
 ```
 
 `--db path/to/study.duckdb` picks the database when it isn't the one in `scistack.toml` or the only `.duckdb` in the folder.
@@ -82,6 +86,22 @@ scistack export --no-logs                # leave out the end of the logs
 ///
 
 Close any running scripts first, so the export doesn't catch a run halfway through.
+
+### Hide where your raw files are
+
+Folder names can say more than you mean to publish: a lab member's name, a drive layout, a participant's ID in a folder name. For a public release, tick **Hide PathInput folders (for a public release)** in the export popover, or pass `--hide-path-locations`. It's off by default.
+
+With it on, no folder of yours appears anywhere in the bundle:
+
+- Each `PathInput` keeps its name and the part of its template that says *which* files to read, but not *where* they are. `D:/study/raw/{subject}/{session}.csv` travels as `{subject}/{session}.csv`, and `root_folder` is dropped. Aliases and `key_regex` travel unchanged.
+- The run history and logs travel with each folder replaced by the name of its `PathInput`, such as `<PathInput RAW>`.
+- The bundle doesn't record your project's own folder either.
+
+Your own project and database are not changed. Only the bundle is.
+
+If a folder is still written somewhere SciStack can't rewrite, such as a path in your code (`DATA = "D:/study/raw"`) or in a canvas note, the export stops and writes nothing. The message names the file and the `PathInput` whose folder it found, but never the folder itself. Remove the path there, or read it through the `PathInput`, and export again.
+
+`scistack bundle-info` on a bundle made this way says its folders were hidden. Whoever imports it gives a folder for each `PathInput` (below).
 
 ## Import
 
@@ -105,7 +125,7 @@ scistack import my_study.scistack --into ~/projects/my_study \
     --trust --check-code
 ```
 
-- `--path-root NAME=FOLDER` gives your copy of one `PathInput`'s raw files. Repeat it for each one.
+- `--path-root NAME=FOLDER` gives your copy of one `PathInput`'s raw files. Repeat it for each one. A bundle exported with hidden folders has no folder to fall back on, so give one for every `PathInput`. The import report lists any you left out, and you can set them later in the entities file.
 - `--schema subject session` uses your own schema keys instead of the exporter's. `--map OLD=NEW` renames one key. If your schema differs, the history is kept as files in `.scistack/imported/run-history/`, not loaded.
 - `--trust` installs what the project lists in `pyproject.toml` and your environment lacks, at the exporter's versions. Add `--no-install` to skip that and run `scistack install` later.
 - `--check-code` loads the project's code after importing and lists any pipeline step whose code wasn't found.
