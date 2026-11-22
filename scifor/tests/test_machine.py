@@ -139,3 +139,72 @@ def test_invalid_toml_means_no_roots_not_a_crash(machine_file, caplog):
     machine._cache.clear()
     assert machine.machine_config().roots == {}
     assert "not valid TOML" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# PathInput root_folder (2026-11-21): a shared entities file says
+# root_folder = "{lab}/raw"; each machine finds the files under its own root.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lab_share(machine_file, tmp_path):
+    """A mapped {lab} root holding raw/S1.csv and raw/S2.csv."""
+    share = tmp_path / "share"
+    (share / "raw").mkdir(parents=True)
+    for s in ("S1", "S2"):
+        (share / "raw" / f"{s}.csv").write_text(s, encoding="utf-8")
+    _write(machine_file, {"lab": share.as_posix()})
+    return share
+
+
+def test_pathinput_root_folder_expands_a_machine_root_on_load(lab_share):
+    from scifor import PathInput
+
+    pi = PathInput("{subject}.csv", name="Raw", root_folder="{lab}/raw")
+    assert pi.load(subject="S1") == (lab_share / "raw" / "S1.csv").resolve()
+
+
+def test_pathinput_root_folder_expands_a_machine_root_on_discover(lab_share):
+    from scifor import PathInput
+
+    pi = PathInput("{subject}.csv", name="Raw", root_folder="{lab}/raw")
+    assert sorted(c["subject"] for c in pi.discover()) == ["S1", "S2"]
+
+
+def test_pathinput_root_folder_expands_a_machine_root_in_regex_mode(lab_share):
+    from scifor import PathInput
+
+    pi = PathInput(r"{subject}\.csv", name="Raw", root_folder="{lab}/raw", regex=True)
+    assert pi.load(subject="S2") == (lab_share / "raw" / "S2.csv").resolve()
+
+
+def test_pathinput_keeps_the_portable_root_folder_it_was_given(lab_share):
+    """Only file lookup expands; the spec, the GUI and the entities file see
+    what was written, so a save never bakes one machine's drive into it."""
+    import json
+
+    from scifor import PathInput
+
+    pi = PathInput("{subject}.csv", name="Raw", root_folder="{lab}/raw")
+    assert json.loads(pi.to_spec())["root_folder"] == "{lab}/raw"
+    assert pi.root_folder.as_posix() == "{lab}/raw"
+    assert PathInput.from_spec(pi.to_spec()).load(subject="S1") == (
+        lab_share / "raw" / "S1.csv"
+    ).resolve()
+
+
+def test_pathinput_unmapped_root_finds_nothing_and_says_why(machine_file, caplog):
+    import logging
+
+    from scifor import PathInput
+
+    _write(machine_file, {})
+    pi = PathInput("{subject}.csv", name="Raw", root_folder="{nas}/raw")
+    with caplog.at_level(logging.WARNING, logger="scifor"):
+        assert pi.discover() == []
+        pi.discover()
+    why = [r.getMessage() for r in caplog.records if "{nas}" in r.getMessage()
+           and "not mapped" in r.getMessage()]
+    assert len(why) == 1, caplog.text  # said once per PathInput, not per walk
+    assert "Raw" in why[0] and str(machine_file) in why[0]

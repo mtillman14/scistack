@@ -426,6 +426,14 @@ rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
   a mapped root (the longest root wins; case-insensitive for Windows paths).
   Dedup and `remove_path` compare resolved paths, so the `{root}` form and an
   absolute path to the same folder are one entry.
+- **PathInput `root_folder`** (2026-11-21): expanded by `PathInput._root_dir()`,
+  the one place file lookup reads it (`_resolve_regex`, `_absolutize`,
+  `_root_and_segments`). `pi.root_folder` keeps the written `{name}/rest`, so
+  `to_spec()`, the GUI graph and the MATLAB bridge carry the portable form and
+  every machine re-expands it. Unresolvable here: returned as written (the
+  lookup finds nothing, as for any missing folder) plus one WARN per
+  PathInput naming the reason. Tests: `scifor/tests/test_machine.py`
+  (`test_pathinput_*`). `db` is still read with `Path(db)` (not expanded).
 - **Unresolvable:** the reason comes from `unresolvable_here`. It covers an
   unmapped root; a Windows-absolute path on POSIX; and a POSIX-absolute
   `/home/...` on Windows, which Windows would otherwise read relative to the

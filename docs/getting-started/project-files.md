@@ -23,7 +23,8 @@ Both are created for you by `scistack init` or when the GUI creates a database (
      scifor.project.entities_file.resolve_entities_path, default location default_entities_relpath.
      Internal notes: docs/claude/config-file-formats.md, entities-toml-format.md.
      Machine roots (verified 2026-11-21): scifor/project/machine.py, scifor/tests/test_machine.py;
-     not expanded: inspect/cli.py _config_db (db) and PathInput(root_folder=). -->
+     PathInput(root_folder=) expands at file lookup only (PathInput._root_dir);
+     not expanded: inspect/cli.py _config_db (db). -->
 
 
 ## TOML in two minutes
@@ -68,7 +69,17 @@ lab = "Y:/"                  # on the Linux computer: lab = "/mnt/lab"
 - A path that can't work on this computer isn't an error. That includes a root this computer hasn't mapped, or another system's absolute path, such as `D:/data` on a Mac. SciStack skips it. The GUI shows one notice when the project opens, naming the path and `machine.toml`.
 - If `machine.toml` isn't valid TOML, no roots are used and `scistack-debug.log` says so. To keep the file somewhere else, set the `SCISTACK_MACHINE_FILE` environment variable to its path.
 
-Machine roots work in the path settings of `scistack.toml`: `modules`, `entities_file`, `glue_dir`, the `[matlab]` paths, and `[outputs] folder`. They don't work yet in `db`, or in a path input's `root_folder` in the entities file. Give those a relative path, or set them on each computer.
+Machine roots work in the path settings of `scistack.toml` (`modules`, `entities_file`, `glue_dir`, the `[matlab]` paths, and `[outputs] folder`), and in a path input's `root_folder`:
+
+```toml
+# scistack_entities.toml
+[path_inputs]
+RAW_FILE = { template = "{subject}/raw.csv", root_folder = "{lab}/study/raw" }
+```
+
+The `root_folder` is kept as you wrote it (`{lab}/...`), in the entities file, the GUI and the run history. Only finding the files uses this computer's `lab`. If `lab` isn't mapped here, the path input finds no files, and the log says once which root is missing and where to add it.
+
+Machine roots don't work yet in `db`. Give it a relative path, or set it on each computer.
 
 ---
 

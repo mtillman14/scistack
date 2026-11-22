@@ -11,6 +11,7 @@ from typing import Any
 
 from scistacklog import Log
 
+from .project.machine import expand_roots, unresolvable_here
 from .project.root import project_root
 
 #: ``{directory: (mtime_ns, sorted entries)}`` — directory listings shared by
@@ -348,6 +349,8 @@ class PathInput:
         self._dir_cache_racy = 0
         # Where the last discover() walk stopped; read by _log_zero_result.
         self._deepest_miss: "dict | None" = None
+        # _root_dir() says once per PathInput why root_folder names nothing here.
+        self._root_unresolvable_logged = False
         self.aliases = aliases or {}
         self._alias_reverse = self._build_alias_reverse(self.aliases)
         self.key_regex = self._validate_key_regex(key_regex or {})
@@ -710,10 +713,11 @@ class PathInput:
         else:
             dir_part, pattern = "", resolved_str
 
+        root_dir = self._root_dir()
         if Path(dir_part).is_absolute():
             dir_path = Path(dir_part)
-        elif self.root_folder is not None:
-            dir_path = self.root_folder / dir_part if dir_part else self.root_folder
+        elif root_dir is not None:
+            dir_path = root_dir / dir_part if dir_part else root_dir
         else:
             dir_path = (
                 self._base_root() / dir_part if dir_part else self._base_root()
@@ -739,11 +743,42 @@ class PathInput:
             )
         return matches[0].resolve(), {}
 
+    def _root_dir(self) -> "Path | None":
+        """``root_folder`` as a folder on THIS machine, or None.
+
+        A leading machine root (``{lab}/raw``) is expanded through
+        ``~/.scistack/machine.toml`` (``scifor.project.machine`` owns the
+        grammar and the file). ``root_folder`` itself keeps what was written,
+        so ``to_spec()``, the GUI and the entities file stay portable; only
+        file lookup goes through here. A value that cannot name anything here
+        (an unmapped root, another system's absolute path) is returned as
+        written: the lookup then finds nothing, as for any missing folder,
+        and one WARN says why.
+        """
+        if self.root_folder is None:
+            return None
+        raw = str(self.root_folder)
+        expanded = expand_roots(raw)
+        reason = unresolvable_here(raw)
+        if reason is not None and not self._root_unresolvable_logged:
+            self._root_unresolvable_logged = True
+            Log.warn(
+                "PathInput %r: root_folder %r cannot be found on this machine: %s",
+                self.name, raw, reason, layer="scifor",
+            )
+        elif expanded != raw:
+            Log.debug(
+                "PathInput %r: root_folder %r -> %r", self.name, raw, expanded,
+                layer="scifor",
+            )
+        return Path(expanded)
+
     def _absolutize(self, resolved_path: Path) -> Path:
         """Anchor a substituted template path exactly like the historical
         non-regex resolution: root_folder, else project root, else as-is."""
-        if self.root_folder is not None:
-            return (self.root_folder / resolved_path).resolve()
+        root_dir = self._root_dir()
+        if root_dir is not None:
+            return (root_dir / resolved_path).resolve()
         if not resolved_path.is_absolute():
             return (self._base_root() / resolved_path).resolve()
         return resolved_path.resolve()
@@ -786,8 +821,9 @@ class PathInput:
             return Path("/"), segments
         if segments and re.fullmatch(r"[A-Za-z]:", segments[0]):
             return Path(segments[0] + "/"), segments[1:]
-        if self.root_folder is not None:
-            return self.root_folder, segments
+        root_dir = self._root_dir()
+        if root_dir is not None:
+            return root_dir, segments
         return self._base_root(), segments
 
     def _fallback_segment_regex(
