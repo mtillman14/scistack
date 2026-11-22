@@ -49,7 +49,12 @@ def _config_db(start: Path) -> str | None:
     (``scifor.project.config.project_config_at``): the root itself, never a parent
     folder, and never a ``pyproject.toml`` (packaging only, 2026-10-08).
     """
-    from scifor.project.config import project_config_at, read_scistack_section
+    from scifor.project.config import (
+        project_config_at,
+        read_scistack_section,
+        resolve_config_path,
+    )
+    from scifor.project.machine import unresolvable_here
 
     config = project_config_at(start)
     if config is None:
@@ -61,7 +66,22 @@ def _config_db(start: Path) -> str | None:
     if not isinstance(db, str):
         Log.warn(f"scidb cli: {config} db must be a string, got {db!r}; ignoring it")
         return None
-    return db if Path(db).is_absolute() else str((config.parent / db).resolve())
+    # A configured db that names nothing on this machine (an unmapped
+    # `{root}`, another system's absolute path) is an error, never a reason
+    # to fall through to the next rule and open a different database.
+    reason = unresolvable_here(db)
+    if reason is not None:
+        raise CLIError(
+            f"{config}: db = {db!r} cannot be found on this machine: {reason}. "
+            "Pass --db PATH or set SCIDB_DATABASE."
+        )
+    # The one reader of config paths (scifor.project.config): machine roots,
+    # Windows separators, relative to the project root.
+    resolved = resolve_config_path(config.parent, db)
+    if not resolved.is_absolute():
+        resolved = resolved.resolve()
+    Log.debug(f"scidb cli: {config} db = {db!r} -> {resolved}")
+    return str(resolved)
 
 
 def resolve_db_path(db_flag: str | None, cwd: Path | None = None) -> tuple[str, str]:

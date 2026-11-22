@@ -137,6 +137,41 @@ class TestDiscovery:
         path, _ = resolve_db_path(None, cwd=tmp_path)
         assert Path(path) == (tmp_path / "data" / "x.duckdb").resolve()
 
+    @staticmethod
+    def _machine_roots(tmp_path, monkeypatch, roots: dict) -> Path:
+        from scifor.project import machine
+
+        path = tmp_path / "home" / ".scistack" / "machine.toml"
+        path.parent.mkdir(parents=True)
+        body = "".join(f'{k} = "{v}"\n' for k, v in roots.items())
+        path.write_text(f'machine_id = "abc"\n[roots]\n{body}', encoding="utf-8")
+        monkeypatch.setenv(machine.MACHINE_FILE_ENV, str(path))
+        machine._cache.clear()
+        return path
+
+    def test_scistack_toml_db_expands_a_machine_root(self, db_path, tmp_path, monkeypatch):
+        """2026-11-21: db = "{lab}/x.duckdb" in a shared scistack.toml."""
+        monkeypatch.delenv("SCIDB_DATABASE", raising=False)
+        self._machine_roots(tmp_path, monkeypatch, {"lab": db_path.parent.as_posix()})
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "scistack.toml").write_text(f'db = "{{lab}}/{db_path.name}"\n')
+        path, source = resolve_db_path(None, cwd=project)
+        assert Path(path) == db_path
+        assert "scistack.toml" in source
+
+    def test_scistack_toml_db_with_an_unmapped_root_says_why(self, db_path, tmp_path, monkeypatch):
+        """Never falls through to another database: names the root and the file."""
+        monkeypatch.delenv("SCIDB_DATABASE", raising=False)
+        machine_file = self._machine_roots(tmp_path, monkeypatch, {})
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "scistack.toml").write_text('db = "{nas}/x.duckdb"\n')
+        (project / "other.duckdb").touch()  # would be picked by the next rule
+        with pytest.raises(CLIError) as err:
+            resolve_db_path(None, cwd=project)
+        assert "{nas}" in str(err.value) and str(machine_file) in str(err.value)
+
     def test_a_pyproject_db_key_is_never_read(self, db_path, tmp_path, monkeypatch):
         """2026-10-08: pyproject.toml is packaging only."""
         monkeypatch.delenv("SCIDB_DATABASE", raising=False)

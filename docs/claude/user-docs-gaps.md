@@ -68,9 +68,8 @@ different on each computer").
 
 Found while writing them:
 
-- Machine roots are **not** expanded in `db` (`scidb/inspect/cli.py`
-  `_config_db` uses `Path(db)`). The user doc says so. A PathInput's
-  `root_folder` expands since 2026-11-21 (see `config-file-formats.md`).
+- Machine roots now expand in a PathInput's `root_folder` and in `db`
+  (2026-11-21, see `config-file-formats.md`).
 - A canvas note quoting a folder **refuses** a hiding export
   (`scistack-gui/tests/test_bundle_hide_locations.py`); it is not rewritten.
   Run history free text and logs are rewritten.

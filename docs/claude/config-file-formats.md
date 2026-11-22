@@ -433,7 +433,12 @@ rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
   every machine re-expands it. Unresolvable here: returned as written (the
   lookup finds nothing, as for any missing folder) plus one WARN per
   PathInput naming the reason. Tests: `scifor/tests/test_machine.py`
-  (`test_pathinput_*`). `db` is still read with `Path(db)` (not expanded).
+  (`test_pathinput_*`).
+- **`db`** (2026-11-21): `scidb.inspect.cli._config_db` reads it through
+  `resolve_config_path`. Unresolvable here raises `CLIError` (naming the root
+  and the machine file) instead of returning None, because None would fall
+  through to "single *.duckdb in cwd" and open a different database. Tests:
+  `scidb/tests/test_inspect_cli.py` `TestDiscovery`.
 - **Unresolvable:** the reason comes from `unresolvable_here`. It covers an
   unmapped root; a Windows-absolute path on POSIX; and a POSIX-absolute
   `/home/...` on Windows, which Windows would otherwise read relative to the
